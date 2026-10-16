@@ -107,13 +107,7 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 	}
 	fin := p.Finish(emit)
 	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr}
-	if fin.Err != "" {
-		return res, fmt.Errorf("%s", fin.Err)
-	}
-	if runErr != nil && res.Text == "" {
-		return res, fmt.Errorf("codex 실행 실패: %v: %s", runErr, lastLines(filterCodexStderr(stderr), 3))
-	}
-	return res, nil
+	return res, finishError("codex", fin, runErr, filterCodexStderr(stderr))
 }
 
 func filterCodexStderr(s string) string {
@@ -128,13 +122,14 @@ func filterCodexStderr(s string) string {
 }
 
 type codexParser struct {
-	thread  string
-	parts   []string
-	errText string
-	usage   map[string]any
-	names   map[string]string
-	context int
-	window  int
+	thread    string
+	parts     []string
+	errText   string
+	usage     map[string]any
+	names     map[string]string
+	context   int
+	window    int
+	completed bool
 }
 
 func newCodexParser() *codexParser { return &codexParser{names: map[string]string{}} }
@@ -154,6 +149,7 @@ func (p *codexParser) Line(line string, emit func(Event)) {
 		x.Text = p.thread
 		emit(x)
 	case "turn.completed":
+		p.completed = true
 		p.usage = obj(m, "usage")
 	case "turn.failed":
 		p.errText = firstNonEmpty(str(obj(m, "error"), "message"), "turn failed")
@@ -274,7 +270,7 @@ func (p *codexParser) Finish(emit func(Event)) Final {
 		x.Meta = p.usage
 		emit(x)
 	}
-	return Final{Text: strings.TrimSpace(strings.Join(p.parts, "\n\n")), SessionID: p.thread, Err: p.errText, Usage: p.usage}
+	return Final{Text: strings.TrimSpace(strings.Join(p.parts, "\n\n")), SessionID: p.thread, Err: p.errText, Usage: p.usage, Complete: p.completed}
 }
 
 // codexLimitsFromRollout reads the newest token_count event of the turn's own

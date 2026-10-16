@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Claude runs `claude -p --input-format stream-json --output-format stream-json`.
@@ -85,6 +85,7 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 	var once sync.Once
 	closeStdin := func() { once.Do(func() { _ = stdin.Close() }) }
 	done := make(chan struct{})
+	var steered atomic.Int32
 	go func() {
 		_, _ = stdin.Write(claudeUserLine(o.Prompt))
 		for {
@@ -95,9 +96,13 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 				if !ok {
 					return
 				}
+				if p.finished {
+					return // the turn already ended; the room redelivers it next turn
+				}
 				if _, err := stdin.Write(claudeUserLine(msg)); err != nil {
 					return
 				}
+				steered.Add(1)
 				x := ev(KindStatus)
 				x.Text = "조정 메시지 주입"
 				emit(x)
@@ -114,22 +119,24 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 	close(done)
 	closeStdin()
 	fin := p.Finish(emit)
-	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr}
-	if fin.Err != "" {
-		return res, fmt.Errorf("%s", fin.Err)
-	}
-	if runErr != nil && res.Text == "" {
-		return res, fmt.Errorf("claude 실행 실패: %v: %s", runErr, lastLines(stderr, 3))
-	}
-	return res, nil
+	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr, Steered: int(steered.Load())}
+	return res, finishError("claude", fin, runErr, stderr)
 }
 
-var _ io.WriteCloser = (*noopWC)(nil)
-
-type noopWC struct{}
-
-func (noopWC) Write(p []byte) (int, error) { return len(p), nil }
-func (noopWC) Close() error                { return nil }
+// finishError turns the parser's view plus the exit status into the turn error.
+// Output without a normal end-of-turn event is a crash, not an answer.
+func finishError(name string, fin Final, runErr error, stderr string) error {
+	if fin.Err != "" {
+		return fmt.Errorf("%s", fin.Err)
+	}
+	if runErr != nil && !fin.Complete {
+		return fmt.Errorf("%s 실행 실패: %v: %s", name, runErr, lastLines(stderr, 3))
+	}
+	if !fin.Complete {
+		return fmt.Errorf("%s 가 응답을 끝내지 못함 (완료 이벤트 없음): %s", name, lastLines(stderr, 3))
+	}
+	return nil
+}
 
 func workDir(o RunOptions) string {
 	if o.Mode == ModeChat || o.Workspace == "" {
@@ -413,7 +420,7 @@ func (p *claudeParser) Finish(emit func(Event)) Final {
 		x.Meta = p.usage
 		emit(x)
 	}
-	return Final{Text: text, SessionID: p.session, Err: p.errText, Usage: p.usage}
+	return Final{Text: text, SessionID: p.session, Err: p.errText, Usage: p.usage, Complete: p.finished}
 }
 
 func firstNonEmpty(vals ...string) string {

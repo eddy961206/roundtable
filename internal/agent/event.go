@@ -62,6 +62,7 @@ type Final struct {
 	SessionID string
 	Err       string
 	Usage     map[string]any
+	Complete  bool // the CLI reported a normal end of turn
 }
 
 // lineParser turns one stdout line into events and keeps the final answer.

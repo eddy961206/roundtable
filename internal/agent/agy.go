@@ -90,10 +90,17 @@ func agyArgs(o RunOptions) []string {
 	return args
 }
 
+// escapedLen estimates the Windows command-line length after argument quoting:
+// every quote becomes two characters and backslashes may double.
+func escapedLen(s string) int {
+	return len(s) + strings.Count(s, "\"")*2 + strings.Count(s, "\\")
+}
+
 func compactPrompt(s string, limit int) string {
-	if len(s) <= limit {
+	if escapedLen(s) <= limit {
 		return s
 	}
+	limit = limit * len(s) / escapedLen(s) // shrink the byte budget by the escape overhead
 	marker := "\n\n[명령줄 길이 한도로 이전 대화 일부 생략]\n\n"
 	head := 6000
 	tail := limit - len(marker) - head
@@ -120,27 +127,25 @@ func (a *Agy) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, 
 	stderr, runErr := runLines(ctx, cmd, "", func(line string) { p.Line(line, emit) })
 	fin := p.Finish(emit)
 	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr}
-	if fin.Err != "" {
-		return res, fmt.Errorf("%s", fin.Err)
+	if err := finishError("agy", fin, runErr, stderr); err != nil {
+		return res, err
 	}
-	if runErr != nil && res.Text == "" {
-		return res, fmt.Errorf("agy 실행 실패: %v: %s", runErr, lastLines(stderr, 3))
-	}
-	if res.Text == "" && runErr == nil {
+	if res.Text == "" {
 		return res, fmt.Errorf("agy가 빈 응답을 반환함 (사용량 한도나 로그인 상태를 확인)")
 	}
 	return res, nil
 }
 
 type agyParser struct {
-	conv     string
-	text     strings.Builder
-	response string
-	errText  string
-	usage    map[string]any
-	context  int
-	toolSeen map[string]bool
-	subs     map[string]*agySub // conversation_id -> state
+	conv      string
+	text      strings.Builder
+	response  string
+	errText   string
+	usage     map[string]any
+	context   int
+	completed bool
+	toolSeen  map[string]bool
+	subs      map[string]*agySub // conversation_id -> state
 }
 
 type agySub struct {
@@ -169,6 +174,7 @@ func (p *agyParser) Line(line string, emit func(Event)) {
 		p.step(obj(m, "step_update"), emit)
 	case "result":
 		r := obj(m, "result")
+		p.completed = true
 		p.response = str(r, "response")
 		if str(r, "status") != "SUCCESS" {
 			p.errText = firstNonEmpty(str(r, "error"), str(r, "status"))
@@ -363,5 +369,5 @@ func (p *agyParser) Finish(emit func(Event)) Final {
 		x.Meta = p.usage
 		emit(x)
 	}
-	return Final{Text: text, SessionID: p.conv, Err: p.errText, Usage: p.usage}
+	return Final{Text: text, SessionID: p.conv, Err: p.errText, Usage: p.usage, Complete: p.completed}
 }

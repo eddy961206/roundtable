@@ -30,8 +30,15 @@ func resolveCommand(name string) (string, error) {
 	if runtime.GOOS != "windows" {
 		return exec.LookPath(name)
 	}
+	hasExt := filepath.Ext(name) != ""
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
+			continue
+		}
+		if hasExt {
+			if p := filepath.Join(dir, name); fileExists(p) {
+				return p, nil
+			}
 			continue
 		}
 		if p := filepath.Join(dir, name+".exe"); fileExists(p) {
@@ -147,7 +154,9 @@ func killTree(cmd *exec.Cmd) {
 		_ = k.Run()
 		return
 	}
-	_ = cmd.Process.Kill()
+	if !killGroup(cmd) {
+		_ = cmd.Process.Kill()
+	}
 }
 
 // envWithout returns the current environment minus the given keys.

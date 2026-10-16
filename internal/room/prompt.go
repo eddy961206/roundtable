@@ -113,6 +113,10 @@ func renderHistory(r *Room, history []*Message) string {
 		}
 		total += len(line)
 		if total > maxHistoryChars {
+			if i == len(history)-1 { // the newest message always goes through, trimmed
+				lines = append(lines, clipRunes(line, maxHistoryChars)+"\n…[메시지가 너무 길어 뒷부분 생략]")
+				continue
+			}
 			lines = append(lines, "(이전 메시지 생략)")
 			break
 		}
@@ -125,4 +129,15 @@ func renderHistory(r *Room, history []*Message) string {
 		return "(없음)\n"
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func clipRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && s[cut]&0xC0 == 0x80 {
+		cut--
+	}
+	return s[:cut]
 }

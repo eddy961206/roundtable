@@ -33,6 +33,7 @@ type Result struct {
 	SessionID string
 	Usage     map[string]any
 	Stderr    string
+	Steered   int // steer messages actually written to the running CLI
 }
 
 // Provider is one vendor CLI.

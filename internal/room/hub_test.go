@@ -22,6 +22,7 @@ type fakeProvider struct {
 	reply   func(n int, prompt string) string
 	delay   time.Duration
 	steer   bool
+	drain   bool // read steer messages while delaying (a real CLI would)
 	fail    error
 }
 
@@ -40,7 +41,9 @@ func (f *fakeProvider) Run(ctx context.Context, o agent.RunOptions, emit func(ag
 	f.prompts = append(f.prompts, o.Prompt)
 	n := len(f.prompts)
 	f.mu.Unlock()
+	steered := 0
 	emit(agent.Event{Kind: agent.KindSession, Text: f.id + "-session"})
+	emit(agent.Event{Kind: agent.KindLimits, Meta: map[string]any{"limits": agent.Limits{Provider: f.id, At: 1, Windows: []agent.LimitWindow{{Label: "5시간", UsedPercent: 42}}}}})
 	if f.delay > 0 {
 		timer := time.NewTimer(f.delay)
 		defer timer.Stop()
@@ -48,10 +51,11 @@ func (f *fakeProvider) Run(ctx context.Context, o agent.RunOptions, emit func(ag
 			select {
 			case <-ctx.Done():
 				return agent.Result{}, ctx.Err()
-			case s := <-o.Steer:
+			case s := <-steerCh(o.Steer, f.drain):
 				f.mu.Lock()
 				f.steers = append(f.steers, s)
 				f.mu.Unlock()
+				steered++
 				continue
 			case <-timer.C:
 			}
@@ -67,7 +71,14 @@ func (f *fakeProvider) Run(ctx context.Context, o agent.RunOptions, emit func(ag
 	}
 	emit(agent.Event{Kind: agent.KindTextDelta, Text: text})
 	emit(agent.Event{Kind: agent.KindUsage, Meta: map[string]any{"input_tokens": 100.0, "output_tokens": 10.0, "context_tokens": 300.0}})
-	return agent.Result{Text: text, SessionID: f.id + "-session", Usage: map[string]any{"input_tokens": 100.0, "output_tokens": 10.0}}, nil
+	return agent.Result{Text: text, SessionID: f.id + "-session", Usage: map[string]any{"input_tokens": 100.0, "output_tokens": 10.0}, Steered: steered}, nil
+}
+
+func steerCh(ch <-chan string, drain bool) <-chan string {
+	if drain {
+		return ch
+	}
+	return nil
 }
 
 func newTestHub(t *testing.T, provs ...*fakeProvider) (*Hub, *Room) {
@@ -262,7 +273,7 @@ func TestStopCancelsRunning(t *testing.T) {
 }
 
 func TestSteerLiveAndQueued(t *testing.T) {
-	a := &fakeProvider{id: "claude", delay: 600 * time.Millisecond, steer: true}
+	a := &fakeProvider{id: "claude", delay: 600 * time.Millisecond, steer: true, drain: true}
 	b := &fakeProvider{id: "codex", delay: 600 * time.Millisecond}
 	hub, r := newTestHub(t, a, b)
 	hub.PostUser(r.ID, "시작", "")
@@ -347,6 +358,9 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	if len(hub2.Trace(r.ID, snap.Messages[1].ID)) == 0 {
 		t.Fatal("trace must persist")
 	}
+	if l := hub2.Limits()["claude"]; len(l.Windows) != 1 || l.Windows[0].UsedPercent != 42 {
+		t.Fatalf("limits must persist across restarts: %+v", l)
+	}
 	md, _ := hub2.ExportMarkdown(r.ID)
 	if !strings.Contains(md, "저장되나") || !strings.Contains(md, "답변 claude") {
 		t.Fatal("export missing content")
@@ -365,7 +379,16 @@ func TestSubscribeReceivesEvents(t *testing.T) {
 	waitIdle(t, hub, r.ID)
 	types := map[string]int{}
 	timeout := time.After(time.Second)
-	for len(types) < 5 {
+	want := []string{"message", "delta", "trace", "participant", "queue", "limits"}
+	have := func() bool {
+		for _, w := range want {
+			if types[w] == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	for !have() {
 		select {
 		case b := <-ch:
 			var ev struct{ Type string }
@@ -375,9 +398,9 @@ func TestSubscribeReceivesEvents(t *testing.T) {
 			t.Fatalf("event types so far: %v", types)
 		}
 	}
-	for _, want := range []string{"message", "delta", "trace", "participant", "queue"} {
-		if types[want] == 0 {
-			t.Errorf("missing event type %s (got %v)", want, types)
+	for _, w := range want {
+		if types[w] == 0 {
+			t.Errorf("missing event type %s (got %v)", w, types)
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -32,14 +33,16 @@ type Hub struct {
 }
 
 type roomState struct {
-	room    *Room
-	msgs    []*Message
-	traces  map[string][]agent.Event
-	queue   []*Turn
-	running map[string]*running
-	subs    map[chan []byte]struct{}
-	pumping bool
-	disc    *discussion
+	room     *Room
+	msgs     []*Message
+	traces   map[string][]agent.Event
+	queue    []*Turn
+	running  map[string]*running
+	subs     map[chan []byte]struct{}
+	pumping  bool
+	disc     *discussion
+	stopGen  int // bumped by Stop so a batch popped before the stop is not started after it
+	resetGen int // bumped by ResetSessions so a finishing turn does not resurrect the old session
 }
 
 type running struct {
@@ -62,6 +65,12 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 	rooms, msgs, traces, err := store.LoadAll()
 	if err != nil {
 		return nil, err
+	}
+	if err := store.LoadLimits(&h.limits); err != nil {
+		return nil, fmt.Errorf("limits.json: %w", err)
+	}
+	if h.limits == nil {
+		h.limits = map[string]agent.Limits{}
 	}
 	for _, r := range rooms {
 		rs := &roomState{room: r, msgs: msgs[r.ID], traces: map[string][]agent.Event{}, running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
@@ -201,6 +210,17 @@ func (h *Hub) Snapshot(id string) (*Snapshot, error) {
 	return &Snapshot{Room: rs.room, Messages: rs.msgs, Queue: rs.queueView(), Discussion: rs.discView(), Limits: h.limitsCopy()}, nil
 }
 
+// SnapshotJSON serialises under the lock so a running turn cannot mutate what the encoder reads.
+func (h *Hub) SnapshotJSON(id string) ([]byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	rs, ok := h.rooms[id]
+	if !ok {
+		return nil, fmt.Errorf("방 없음: %s", id)
+	}
+	return json.Marshal(&Snapshot{Room: rs.room, Messages: rs.msgs, Queue: rs.queueView(), Discussion: rs.discView(), Limits: h.limitsCopy()})
+}
+
 func (h *Hub) limitsCopy() map[string]agent.Limits {
 	out := map[string]agent.Limits{}
 	for k, v := range h.limits {
@@ -251,7 +271,7 @@ type RoomPatch struct {
 	Participants     []ParticipantPatch `json:"participants,omitempty"`
 }
 
-func (h *Hub) UpdateRoom(id string, patch RoomPatch) (*Room, error) {
+func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	rs, ok := h.rooms[id]
@@ -287,6 +307,9 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) (*Room, error) {
 		}
 		if pp.Enabled != nil {
 			p.Enabled = *pp.Enabled
+			if !p.Enabled {
+				rs.dropQueuedFor(h, p.ID)
+			}
 		}
 		if pp.Model != nil && *pp.Model != "" {
 			p.Model = *pp.Model
@@ -303,7 +326,27 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) (*Room, error) {
 		return nil, err
 	}
 	rs.broadcast("room", r)
-	return r, nil
+	return json.Marshal(r)
+}
+
+// dropQueuedFor removes a disabled participant's waiting turns; a discussion counts them as PASS.
+func (rs *roomState) dropQueuedFor(h *Hub, agentID string) {
+	kept := rs.queue[:0]
+	for _, t := range rs.queue {
+		if t.Agent != agentID {
+			kept = append(kept, t)
+			continue
+		}
+		if t.Reason == "discussion" {
+			h.discussionStep(rs, t.Agent, "PASS", "cancelled")
+		}
+	}
+	rs.queue = kept
+	if p := rs.room.participant(agentID); p != nil && p.Status == "queued" {
+		p.Status = "idle"
+		rs.broadcast("participant", p)
+	}
+	rs.broadcast("queue", rs.queueView())
 }
 
 // ResetSessions forgets the CLI sessions so every agent starts with a fresh context.
@@ -317,6 +360,7 @@ func (h *Hub) ResetSessions(id string) error {
 	for _, p := range rs.room.Participants {
 		p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
 	}
+	rs.resetGen++
 	rs.addSystem("세션을 초기화했어. 다음 턴부터 각 에이전트는 대화 전체를 새로 읽어.")
 	rs.broadcast("room", rs.room)
 	return h.store.SaveRoom(rs.room)
@@ -334,6 +378,7 @@ func (h *Hub) DeleteRoom(id string) error {
 	for ch := range rs.subs {
 		close(ch)
 	}
+	rs.subs = map[chan []byte]struct{}{} // late broadcasts from a finishing turn find nobody
 	h.mu.Unlock()
 	return h.store.DeleteRoom(id)
 }
@@ -422,12 +467,11 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
 	}
+	if target != "" && rs.room.participant(target) == nil {
+		return nil, fmt.Errorf("대상 없음: %s", target)
+	}
 	m := rs.nextMessage("user", "user", text)
 	if target != "" {
-		p := rs.room.participant(target)
-		if p == nil {
-			return nil, fmt.Errorf("대상 없음: %s", target)
-		}
 		m.Target = target
 		if run := rs.runningFor(target); run != nil && run.steer != nil {
 			select {
@@ -443,22 +487,39 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 			rs.enqueueFront(&Turn{ID: newID(), Agent: target, Reason: "mention", Group: m.ID, Created: nowMs(), Status: "queued"})
 			h.pump(rs)
 		}
-		return m, nil
+		mc := *m
+		return &mc, nil
 	}
 	rs.broadcast("message", m)
 	_ = h.store.AppendMessage(id, m)
 	_ = h.store.SaveRoom(rs.room)
 	ids := h.enabledIDs(rs)
-	targets := ParseMentions(text, ids)
+	var all []string
+	for _, p := range rs.room.Participants {
+		all = append(all, p.ID)
+	}
+	mentioned := ParseMentions(text, all)
+	var targets []string
+	for _, id := range mentioned {
+		if slices.Contains(ids, id) {
+			targets = append(targets, id)
+		}
+	}
 	reason := "mention"
-	if len(targets) == 0 {
+	switch {
+	case len(mentioned) > 0 && len(targets) == 0:
+		rs.addSystem(fmt.Sprintf("@%s 는 꺼져 있어서 아무도 답하지 않아. 오른쪽 패널에서 켜거나 다른 참가자를 불러.", strings.Join(mentioned, ", @")))
+		mc := *m
+		return &mc, nil
+	case len(mentioned) == 0:
 		targets, reason = ids, "broadcast"
 	}
 	for _, t := range targets {
 		rs.enqueue(&Turn{ID: newID(), Agent: t, Reason: reason, Group: m.ID, Created: nowMs(), Status: "queued"})
 	}
 	h.pump(rs)
-	return m, nil
+	mc := *m
+	return &mc, nil
 }
 
 func (rs *roomState) runningFor(agentID string) *running {
@@ -537,6 +598,7 @@ func (h *Hub) Stop(id string) error {
 func (rs *roomState) stopLocked(why string) {
 	dropped := len(rs.queue)
 	rs.queue = nil
+	rs.stopGen++
 	for _, r := range rs.running {
 		r.cancel()
 	}
@@ -569,6 +631,9 @@ func (h *Hub) CancelTurn(id, turnID string) error {
 	for i, t := range rs.queue {
 		if t.ID == turnID {
 			rs.queue = append(rs.queue[:i], rs.queue[i+1:]...)
+			if t.Reason == "discussion" {
+				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
+			}
 			if p := rs.room.participant(t.Agent); p != nil && p.Status == "queued" && rs.runningFor(t.Agent) == nil {
 				p.Status = "idle"
 				rs.broadcast("participant", p)
@@ -607,13 +672,12 @@ func (h *Hub) drain(rs *roomState) {
 			rest = rest[1:]
 		}
 		rs.queue = rest
-		h.mu.Unlock()
-
-		h.mu.Lock()
 		var preps []*prepared
 		for _, t := range batch {
 			if pr := h.prepareTurn(rs, t, len(batch) > 1); pr != nil {
 				preps = append(preps, pr)
+			} else if t.Reason == "discussion" {
+				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
 			}
 		}
 		h.mu.Unlock()
@@ -635,6 +699,7 @@ type prepared struct {
 	t        *Turn
 	p        *Participant
 	prevSeen int64 // LastSeen before this turn, restored when the turn fails
+	resetGen int
 	prov     agent.Provider
 	msg      *Message
 	opts     agent.RunOptions
@@ -671,7 +736,7 @@ func (h *Hub) prepareTurn(rs *roomState, t *Turn, parallel bool) *prepared {
 	rs.broadcast("participant", p)
 	rs.broadcast("queue", rs.queueView())
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, Steer: steer}
-	return &prepared{t: t, p: p, prevSeen: prevSeen, prov: prov, msg: msg, opts: opts, ctx: ctx, cancel: cancel}
+	return &prepared{t: t, p: p, prevSeen: prevSeen, resetGen: rs.resetGen, prov: prov, msg: msg, opts: opts, ctx: ctx, cancel: cancel}
 }
 
 func (h *Hub) runTurn(rs *roomState, pr *prepared) {
@@ -708,6 +773,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		case agent.KindLimits:
 			if raw, ok := e.Meta["limits"].(agent.Limits); ok {
 				h.limits[raw.Provider] = raw
+				_ = h.store.SaveLimits(h.limits)
 				rs.broadcast("limits", h.limitsCopy())
 			}
 		case agent.KindUsage:
@@ -726,7 +792,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	delete(rs.running, t.ID)
 	msg.Duration = time.Since(started).Milliseconds()
 	msg.Usage = res.Usage
-	if res.SessionID != "" {
+	if res.SessionID != "" && pr.resetGen == rs.resetGen {
 		p.SessionID = res.SessionID
 	}
 	text := strings.TrimSpace(res.Text)
@@ -756,6 +822,18 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		for _, m := range rs.msgs {
 			if m.Seq > pr.prevSeen && m.Live && m.Target == p.ID {
 				m.Live = false
+			}
+		}
+	} else {
+		// Steers that were queued but never written to the CLI are redelivered next turn.
+		delivered := res.Steered
+		for _, m := range rs.msgs {
+			if m.Seq > pr.prevSeen && m.Live && m.Target == p.ID {
+				if delivered > 0 {
+					delivered--
+				} else {
+					m.Live = false
+				}
 			}
 		}
 	}

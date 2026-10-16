@@ -76,6 +76,29 @@ func (s *Store) appendLine(path string, v any) error {
 	return err
 }
 
+// SaveLimits keeps the last known vendor limits so they survive a restart.
+func (s *Store) SaveLimits(v any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(s.root, "limits.json"), b, 0o600)
+}
+
+// LoadLimits returns the saved limits map, or nil when there is none yet.
+func (s *Store) LoadLimits(into any) error {
+	b, err := os.ReadFile(filepath.Join(s.root, "limits.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return json.Unmarshal(b, into)
+}
+
 // LoadAll reads every room with its messages and traces.
 func (s *Store) LoadAll() ([]*Room, map[string][]*Message, map[string][]TraceLine, error) {
 	entries, err := os.ReadDir(filepath.Join(s.root, "rooms"))

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"roundtable/internal/agent"
@@ -95,12 +94,13 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getRoom(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.hub.Snapshot(r.PathValue("id"))
+	b, err := s.hub.SnapshotJSON(r.PathValue("id"))
 	if err != nil {
 		writeErr(w, 404, err)
 		return
 	}
-	writeJSON(w, 200, snap)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(b)
 }
 
 func (s *Server) patchRoom(w http.ResponseWriter, r *http.Request) {
@@ -109,12 +109,13 @@ func (s *Server) patchRoom(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	rm, err := s.hub.UpdateRoom(r.PathValue("id"), patch)
+	b, err := s.hub.UpdateRoom(r.PathValue("id"), patch)
 	if err != nil {
 		writeErr(w, 400, err)
 		return
 	}
-	writeJSON(w, 200, rm)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(b)
 }
 
 func (s *Server) deleteRoom(w http.ResponseWriter, r *http.Request) {
@@ -231,7 +232,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "data: %s\n\n", strings.ReplaceAll(string(b), "\n", "\\n"))
+			fmt.Fprintf(w, "data: %s\n\n", b) // json.Marshal never emits raw newlines
 			fl.Flush()
 		}
 	}

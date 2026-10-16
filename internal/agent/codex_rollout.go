@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 // rolloutWatcher finds Codex sub-agent threads: every spawned agent gets its
 // own rollout-*.jsonl whose session_meta carries parent_thread_id.
 type rolloutWatcher struct {
+	mu      sync.Mutex
 	root    string
 	since   time.Time
 	known   map[string]*rolloutFile // path -> state
@@ -34,6 +36,8 @@ func newRolloutWatcher(root string, since time.Time) *rolloutWatcher {
 
 // scan looks for new child rollouts of thread and streams their new lines.
 func (w *rolloutWatcher) scan(thread string, emit func(Event)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.threads[thread] = true
 	for _, path := range w.candidates() {
 		rf, ok := w.known[path]
@@ -63,6 +67,8 @@ func (w *rolloutWatcher) scan(thread string, emit func(Event)) {
 
 // pathOf returns the rollout file of a thread id seen during scanning.
 func (w *rolloutWatcher) pathOf(thread string) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for path, rf := range w.known {
 		if rf.id == thread {
 			return path
@@ -78,6 +84,8 @@ func (w *rolloutWatcher) pathOf(thread string) string {
 
 // finish emits subagent_end for children that never wrote task_complete.
 func (w *rolloutWatcher) finish(emit func(Event)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for _, rf := range w.known {
 		if rf.started && !rf.ended {
 			rf.ended = true

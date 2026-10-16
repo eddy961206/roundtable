@@ -39,6 +39,16 @@
     if (last && state.rooms.some((r) => r.id === last)) openRoom(last);
     bindUI();
     setInterval(refreshLimits, 60000);
+    setInterval(watchdog, 5000);
+  }
+
+  // Watchdog: a closed EventSource is reopened, and a bubble that stays
+  // "streaming" without any event for 30s is checked against the server.
+  function watchdog() {
+    if (!state.roomId) return;
+    if (state.es && state.es.readyState === 2) { connect(state.roomId); openRoom(state.roomId, true); return; }
+    const streaming = state.order.some((id) => (state.messages.get(id) || {}).status === "streaming");
+    if (streaming && Date.now() - (state.lastEvent || 0) > 30000) { state.lastEvent = Date.now(); openRoom(state.roomId, true); }
   }
 
   async function refreshLimits() {
@@ -98,28 +108,39 @@
   }
 
   // ---------- room ----------
-  async function openRoom(id) {
-    if (state.es) { state.es.close(); state.es = null; }
-    state.roomId = id; localStorage.setItem("rt.room", id);
-    state.messages.clear(); state.order = []; state.traces.clear(); state.expanded.clear();
+  let openSeq = 0;
+  async function openRoom(id, resync) {
+    const my = ++openSeq;
+    if (!resync) {
+      if (state.es) { state.es.close(); state.es = null; }
+      state.roomId = id; localStorage.setItem("rt.room", id);
+    }
     const snap = await api("GET", "/api/rooms/" + id);
+    if (my !== openSeq || state.roomId !== id) return; // a later click won
+    state.messages.clear(); state.order = []; state.traces.clear(); if (!resync) state.expanded.clear();
     state.room = snap.room; state.queue = snap.queue || []; state.discussion = snap.discussion;
     if (snap.limits) { state.limits = snap.limits; renderLimits(); }
     for (const m of snap.messages || []) { state.messages.set(m.id, m); state.order.push(m.id); }
     $("#empty").hidden = true; $("#room").hidden = false;
     renderRoomHead(); renderTimeline(true); renderParticipants(); renderQueue(); renderDiscussion(); renderRoomList();
-    connect(id);
+    if (!resync) connect(id);
   }
 
   function connect(id) {
     const es = new EventSource("/api/rooms/" + id + "/stream");
-    state.es = es;
+    state.es = es; state.lastEvent = Date.now();
     es.onmessage = (ev) => {
-      let msg; try { msg = JSON.parse(ev.data.replace(/\\n/g, "\n")); } catch { return; }
+      state.lastEvent = Date.now();
+      let msg; try { msg = JSON.parse(ev.data); } catch { return; }
       handle(msg.type, msg.data);
     };
+    let connected = false;
     es.onerror = () => { $("#composer-hint").textContent = "연결 끊김 — 다시 연결 중…"; };
-    es.addEventListener("hello", () => { $("#composer-hint").textContent = ""; });
+    es.addEventListener("hello", () => {
+      $("#composer-hint").textContent = "";
+      if (connected) openRoom(id, true); // reconnected: events may have been missed, reload the snapshot
+      connected = true;
+    });
   }
 
   function handle(type, data) {
@@ -131,8 +152,14 @@
         scheduleRender(m.id); break;
       }
       case "trace": {
-        const list = state.traces.get(data.msg_id) || []; list.push(data.event); state.traces.set(data.msg_id, list);
-        const m = state.messages.get(data.msg_id); if (m) { m.trace = list.length; if (state.expanded.has(m.id)) renderTrace(m.id); else updateTraceCount(m.id); }
+        const m = state.messages.get(data.msg_id);
+        if (state.traces.has(data.msg_id)) {
+          const list = state.traces.get(data.msg_id); list.push(data.event);
+          if (m) m.trace = list.length;
+        } else if (m) {
+          m.trace = (m.trace || 0) + 1; // the full list is fetched when the user expands it
+        }
+        if (m) { if (state.expanded.has(m.id) && state.traces.has(m.id)) renderTrace(m.id); else updateTraceCount(m.id); }
         break;
       }
       case "participant": {
