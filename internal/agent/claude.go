@@ -1,0 +1,426 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os/exec"
+	"strings"
+	"sync"
+)
+
+// Claude runs `claude -p --input-format stream-json --output-format stream-json`.
+// Keeping stdin open lets the room inject a user message while the turn runs.
+type Claude struct{ cmd string }
+
+func NewClaude(cmd string) *Claude { return &Claude{cmd: cmd} }
+
+func (c *Claude) ID() string      { return "claude" }
+func (c *Claude) Label() string   { return "Claude Code" }
+func (c *Claude) Command() string { return c.cmd }
+func (c *Claude) Available() bool { return available(c.cmd) }
+func (c *Claude) CanSteer() bool  { return true }
+func (c *Claude) ContextWindow(model string) int {
+	if strings.Contains(model, "[1m]") {
+		return 1_000_000
+	}
+	return 200_000
+}
+func (c *Claude) Models() []ModelOption {
+	return []ModelOption{
+		{ID: "opus", Label: "Opus (최신)"},
+		{ID: "sonnet", Label: "Sonnet (최신)"},
+		{ID: "haiku", Label: "Haiku (최신)"},
+		{ID: "claude-fable-5-1", Label: "Fable 5.1"},
+		{ID: "claude-opus-5-5", Label: "Opus 5.5"},
+		{ID: "claude-sonnet-5-5", Label: "Sonnet 5.5"},
+	}
+}
+
+func claudeArgs(o RunOptions) []string {
+	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config"}
+	if o.Model != "" {
+		args = append(args, "--model", o.Model)
+	}
+	if o.Effort != "" {
+		args = append(args, "--effort", o.Effort)
+	}
+	if o.SessionID != "" {
+		args = append(args, "--resume", o.SessionID)
+	}
+	switch o.Mode {
+	case ModeRead:
+		args = append(args, "--tools", "Read,Grep,Glob,Agent,Task,WebSearch,WebFetch", "--add-dir", o.Workspace)
+	case ModeWrite:
+		args = append(args, "--permission-mode", "acceptEdits", "--add-dir", o.Workspace)
+	default:
+		args = append(args, "--tools", "")
+	}
+	return args
+}
+
+func claudeUserLine(text string) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"type":    "user",
+		"message": map[string]any{"role": "user", "content": []map[string]any{{"type": "text", "text": text}}},
+	})
+	return append(b, '\n')
+}
+
+func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, error) {
+	path, err := resolveCommand(c.cmd)
+	if err != nil {
+		return Result{}, fmt.Errorf("claude CLI를 찾지 못함: %w", err)
+	}
+	cmd := exec.Command(path, claudeArgs(o)...)
+	cmd.Dir = workDir(o)
+	// A nested Claude Code refuses to start when it thinks it is inside another session.
+	cmd.Env = envWithout("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return Result{}, err
+	}
+	p := newClaudeParser()
+	var once sync.Once
+	closeStdin := func() { once.Do(func() { _ = stdin.Close() }) }
+	done := make(chan struct{})
+	go func() {
+		_, _ = stdin.Write(claudeUserLine(o.Prompt))
+		for {
+			select {
+			case <-done:
+				return
+			case msg, ok := <-o.Steer:
+				if !ok {
+					return
+				}
+				if _, err := stdin.Write(claudeUserLine(msg)); err != nil {
+					return
+				}
+				x := ev(KindStatus)
+				x.Text = "조정 메시지 주입"
+				emit(x)
+			}
+		}
+	}()
+	onLine := func(line string) {
+		p.Line(line, emit)
+		if p.finished {
+			closeStdin()
+		}
+	}
+	stderr, runErr := runLines(ctx, cmd, "", onLine)
+	close(done)
+	closeStdin()
+	fin := p.Finish(emit)
+	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr}
+	if fin.Err != "" {
+		return res, fmt.Errorf("%s", fin.Err)
+	}
+	if runErr != nil && res.Text == "" {
+		return res, fmt.Errorf("claude 실행 실패: %v: %s", runErr, lastLines(stderr, 3))
+	}
+	return res, nil
+}
+
+var _ io.WriteCloser = (*noopWC)(nil)
+
+type noopWC struct{}
+
+func (noopWC) Write(p []byte) (int, error) { return len(p), nil }
+func (noopWC) Close() error                { return nil }
+
+func workDir(o RunOptions) string {
+	if o.Mode == ModeChat || o.Workspace == "" {
+		return o.ScratchDir
+	}
+	return o.Workspace
+}
+
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, " | ")
+}
+
+// claudeParser follows the stream-json protocol of `claude -p`.
+type claudeParser struct {
+	session    string
+	parts      []string // top-level assistant text blocks
+	result     string
+	errText    string
+	usage      map[string]any
+	context    int // tokens in the last API call = current context size
+	finished   bool
+	toolNames  map[string]string // tool_use id -> name
+	subagents  map[string]bool   // tool_use ids that spawned subagents
+	taskToTool map[string]string // task_id -> tool_use id
+}
+
+func newClaudeParser() *claudeParser {
+	return &claudeParser{toolNames: map[string]string{}, subagents: map[string]bool{}, taskToTool: map[string]string{}}
+}
+
+func (p *claudeParser) Line(line string, emit func(Event)) {
+	m := parseLine(line)
+	if m == nil {
+		return
+	}
+	parent := str(m, "parent_tool_use_id")
+	switch str(m, "type") {
+	case "system":
+		p.system(m, emit)
+	case "rate_limit_event":
+		p.limits(obj(m, "rate_limit_info"), emit)
+	case "stream_event":
+		e := obj(m, "event")
+		if str(e, "type") == "content_block_delta" && parent == "" {
+			d := obj(e, "delta")
+			if str(d, "type") == "text_delta" && str(d, "text") != "" {
+				x := ev(KindTextDelta)
+				x.Text = str(d, "text")
+				emit(x)
+			}
+		}
+	case "assistant":
+		p.assistant(m, parent, emit)
+	case "user":
+		p.user(m, parent, emit)
+	case "result":
+		p.finished = true
+		if s := str(m, "session_id"); s != "" {
+			p.session = s
+		}
+		p.result = str(m, "result")
+		if isErr, _ := m["is_error"].(bool); isErr {
+			p.errText = firstNonEmpty(str(m, "result"), contentText(m["errors"]), str(m, "subtype"))
+		}
+		p.usage = map[string]any{}
+		for _, k := range []string{"total_cost_usd", "duration_ms", "duration_api_ms", "num_turns"} {
+			if v, ok := m[k]; ok {
+				p.usage[k] = v
+			}
+		}
+		if u := obj(m, "usage"); u != nil {
+			for _, k := range []string{"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"} {
+				if v, ok := u[k]; ok {
+					p.usage[k] = v
+				}
+			}
+		}
+		if p.context > 0 {
+			p.usage["context_tokens"] = p.context
+		}
+	}
+}
+
+func (p *claudeParser) limits(info map[string]any, emit func(Event)) {
+	if info == nil {
+		return
+	}
+	l := Limits{Provider: "claude", At: now()}
+	labels := map[string]string{"five_hour": "5시간", "seven_day": "7일", "seven_day_sonnet": "7일·Sonnet", "seven_day_opus": "7일·Opus"}
+	order := []string{"five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"}
+	wins := obj(info, "unifiedWindows")
+	for _, k := range order {
+		w := obj(wins, k)
+		if w == nil {
+			continue
+		}
+		util, _ := w["utilization"].(float64)
+		reset, _ := w["resetsAt"].(float64)
+		l.Windows = append(l.Windows, LimitWindow{Label: labels[k], UsedPercent: util * 100, ResetsAt: int64(reset)})
+	}
+	if len(l.Windows) == 0 {
+		return
+	}
+	if s := str(info, "status"); s != "" && s != "allowed" {
+		l.Note = s
+	}
+	x := ev(KindLimits)
+	x.Meta = map[string]any{"limits": l}
+	emit(x)
+}
+
+func (p *claudeParser) system(m map[string]any, emit func(Event)) {
+	sub := str(m, "subtype")
+	if s := str(m, "session_id"); s != "" && p.session == "" {
+		p.session = s
+	}
+	switch sub {
+	case "init":
+		x := ev(KindSession)
+		x.Text = p.session
+		x.Meta = map[string]any{"model": str(m, "model")}
+		emit(x)
+	case "task_started":
+		tool := str(m, "tool_use_id")
+		p.taskToTool[str(m, "task_id")] = tool
+		if !p.subagents[tool] {
+			p.subagents[tool] = true
+			x := ev(KindSubagentStart)
+			x.Parent = tool
+			x.Name = firstNonEmpty(str(m, "subagent_type"), "subagent")
+			x.Input = str(m, "prompt")
+			x.Meta = map[string]any{"description": str(m, "description"), "async": true}
+			emit(x)
+		}
+	case "task_progress":
+		x := ev(KindSubagentMsg)
+		x.Parent = str(m, "tool_use_id")
+		x.Role = "status"
+		x.Text = str(m, "description")
+		if u := obj(m, "usage"); u != nil {
+			x.Meta = u
+		}
+		emit(x)
+	case "task_notification":
+		x := ev(KindSubagentEnd)
+		x.Parent = str(m, "tool_use_id")
+		x.Output = str(m, "summary")
+		x.Meta = map[string]any{"status": str(m, "status")}
+		emit(x)
+	case "permission_denied":
+		x := ev(KindStatus)
+		x.Text = "권한 거부: " + str(m, "tool_name")
+		if a := str(m, "agent_id"); a != "" {
+			if tool, ok := p.taskToTool[a]; ok {
+				x.Kind = KindSubagentMsg
+				x.Parent = tool
+				x.Role = "status"
+			}
+		}
+		emit(x)
+	case "hook_started", "hook_response", "commands_changed", "background_tasks_changed", "task_updated", "status":
+		// noise for the chat view
+	default:
+		x := ev(KindStatus)
+		x.Text = sub
+		emit(x)
+	}
+}
+
+func (p *claudeParser) assistant(m map[string]any, parent string, emit func(Event)) {
+	msg := obj(m, "message")
+	if parent == "" {
+		if u := obj(msg, "usage"); u != nil {
+			in, _ := u["input_tokens"].(float64)
+			cr, _ := u["cache_read_input_tokens"].(float64)
+			cc, _ := u["cache_creation_input_tokens"].(float64)
+			if total := int(in + cr + cc); total > 0 {
+				p.context = total
+			}
+		}
+	}
+	for _, b := range arr(msg, "content") {
+		blk, _ := b.(map[string]any)
+		switch str(blk, "type") {
+		case "text":
+			t := str(blk, "text")
+			if t == "" {
+				continue
+			}
+			if parent == "" {
+				p.parts = append(p.parts, t)
+			} else {
+				x := ev(KindSubagentMsg)
+				x.Parent, x.Role, x.Text = parent, "assistant", t
+				emit(x)
+			}
+		case "thinking":
+			if parent == "" {
+				x := ev(KindThinking)
+				x.Text = clip(str(blk, "thinking"), 4000)
+				emit(x)
+			}
+		case "tool_use":
+			id, name := str(blk, "id"), str(blk, "name")
+			p.toolNames[id] = name
+			input := obj(blk, "input")
+			if parent != "" {
+				x := ev(KindSubagentMsg)
+				x.Parent, x.Role, x.ID, x.Name, x.Input = parent, "tool_call", id, name, compactJSON(input)
+				emit(x)
+				continue
+			}
+			if name == "Agent" || name == "Task" {
+				if !p.subagents[id] {
+					p.subagents[id] = true
+					x := ev(KindSubagentStart)
+					x.Parent = id
+					x.Name = firstNonEmpty(str(input, "subagent_type"), "subagent")
+					x.Input = str(input, "prompt")
+					x.Meta = map[string]any{"description": str(input, "description")}
+					emit(x)
+				}
+				continue
+			}
+			x := ev(KindToolCall)
+			x.ID, x.Name, x.Input = id, name, compactJSON(input)
+			emit(x)
+		}
+	}
+}
+
+func (p *claudeParser) user(m map[string]any, parent string, emit func(Event)) {
+	msg := obj(m, "message")
+	for _, b := range arr(msg, "content") {
+		blk, _ := b.(map[string]any)
+		if str(blk, "type") != "tool_result" {
+			continue
+		}
+		id := str(blk, "tool_use_id")
+		out := contentText(blk["content"])
+		isErr, _ := blk["is_error"].(bool)
+		if parent != "" {
+			x := ev(KindSubagentMsg)
+			x.Parent, x.Role, x.ID, x.Output = parent, "tool_result", id, out
+			x.Name = p.toolNames[id]
+			if isErr {
+				x.Meta = map[string]any{"error": true}
+			}
+			emit(x)
+			continue
+		}
+		if p.subagents[id] {
+			if strings.Contains(out, "Async agent launched") {
+				continue // the real report arrives as task_notification
+			}
+			x := ev(KindSubagentEnd)
+			x.Parent, x.Output = id, out
+			emit(x)
+			continue
+		}
+		x := ev(KindToolResult)
+		x.ID, x.Name, x.Output = id, p.toolNames[id], out
+		if isErr {
+			x.Meta = map[string]any{"error": true}
+		}
+		emit(x)
+	}
+}
+
+func (p *claudeParser) Finish(emit func(Event)) Final {
+	text := strings.TrimSpace(strings.Join(p.parts, "\n\n"))
+	if text == "" {
+		text = strings.TrimSpace(p.result)
+	}
+	if p.usage != nil {
+		x := ev(KindUsage)
+		x.Meta = p.usage
+		emit(x)
+	}
+	return Final{Text: text, SessionID: p.session, Err: p.errText, Usage: p.usage}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}

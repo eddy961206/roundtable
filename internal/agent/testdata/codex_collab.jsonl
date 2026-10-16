@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"01a143d1-3003-7e93-87b6-88454c387ce7"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Under-development features enabled: local_thread_store_compression. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in C:\\Users\\dev\\.codex\\config.toml."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"서브에이전트 하나에게 `note.txt`를 읽게 하고, 보고받은 내용을 한 줄로 전달할게.\n"}}
+{"type":"item.started","item":{"id":"item_2","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a143d1-3003-7e93-87b6-88454c387ce7","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a143d1-3003-7e93-87b6-88454c387ce7","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"서브에이전트가 확인한 `note.txt` 내용은 `hello probe`야."}}
+{"type":"turn.completed","usage":{"input_tokens":76938,"cached_input_tokens":59136,"cache_write_input_tokens":0,"output_tokens":199,"reasoning_output_tokens":0}}

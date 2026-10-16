@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"01a143d0-5491-7f11-8241-62db0dcc8673"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Under-development features enabled: local_thread_store_compression. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in C:\\Users\\dev\\.codex\\config.toml."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"note.txt를 읽고 한 줄로 요약할게.\n"}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"\"C:\\\\Users\\\\dev\\\\AppData\\\\Local\\\\Programs\\\\PowerShell\\\\7\\\\pwsh.exe\" -Command \"Get-Content -LiteralPath .\\\\note.txt\"","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"\"C:\\\\Users\\\\dev\\\\AppData\\\\Local\\\\Programs\\\\PowerShell\\\\7\\\\pwsh.exe\" -Command \"Get-Content -LiteralPath .\\\\note.txt\"","aggregated_output":"hello probe\r\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"note.txt에는 “hello probe”라고 적혀 있어."}}
+{"type":"turn.completed","usage":{"input_tokens":51028,"cached_input_tokens":38784,"cache_write_input_tokens":0,"output_tokens":78,"reasoning_output_tokens":0}}
