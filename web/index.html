@@ -16,7 +16,6 @@
     <div class="side-head">
       <div class="brand-row">
         <h1>Roundtable</h1>
-        <span class="ver-badge">v2</span>
       </div>
       <div class="side-head-actions">
         <button type="button" id="btn-theme" class="icon-btn" aria-label="테마 전환 (다크/라이트)" title="다크 / 라이트 테마 전환">🌓</button>
@@ -29,10 +28,7 @@
     </div>
     <ul id="room-list" aria-label="채팅방 목록"></ul>
     <div id="provider-panel">
-      <div class="panel-head-row">
-        <h2>공급사 CLI 상태</h2>
-        <span class="muted small-note">상세 한도는 상단 띠·참가자 카드</span>
-      </div>
+      <h2>공급사 CLI</h2>
       <div id="limits"></div>
     </div>
   </nav>
@@ -107,15 +103,20 @@
             <label class="rounds" for="rounds">라운드 <input id="rounds" type="number" min="1" max="10" value="3" aria-label="토론 라운드 수"></label>
             <button type="button" id="btn-discuss" title="활성 참가자들이 라운드별로 순서대로 토론합니다">토론 시작</button>
             <button type="button" id="btn-stop" class="danger" title="실행 중인 모든 턴을 끊고 대기열과 토론을 비웁니다 (Ctrl+.)">모두 중지</button>
-            <label class="auto-trace-label" title="실행 중이거나 새로 올라오는 답변의 작업 기록을 자동으로 펼칩니다">
-              <input type="checkbox" id="chk-auto-trace">
-              <span>작업 기록 자동 펼침</span>
-            </label>
-            <button type="button" id="btn-reset" title="각 에이전트의 CLI 세션을 버리고 다음 턴부터 대화 전체를 새로 읽게 합니다">세션 초기화</button>
-            <a id="btn-export" class="button" download title="대화 전체를 마크다운 파일로 저장합니다">내보내기</a>
-            <button type="button" id="btn-settings" title="방 설정 및 공지 수정">설정</button>
-            <button type="button" id="btn-delete" class="danger ghost" title="방과 기록을 영구 삭제합니다">방 삭제</button>
             <button type="button" id="btn-right" class="tablet-only" aria-label="참가자 및 대기열 서랍 열기/닫기" title="참가자·대기열 패널 보이기/숨기기">참가자</button>
+            <details id="more-actions" class="more-menu">
+              <summary class="button more-summary" aria-label="추가 동작 메뉴">더보기 ▾</summary>
+              <div class="more-pop" role="group" aria-label="방 추가 동작">
+                <label class="auto-trace-label" title="실행 중이거나 새로 올라오는 답변의 작업 기록을 자동으로 펼칩니다">
+                  <input type="checkbox" id="chk-auto-trace">
+                  <span>작업 기록 자동 펼침</span>
+                </label>
+                <button type="button" id="btn-reset" title="각 에이전트의 CLI 세션을 버리고 다음 턴부터 대화 전체를 새로 읽게 합니다">세션 초기화</button>
+                <a id="btn-export" class="button" download title="대화 전체를 마크다운 파일로 저장합니다">내보내기</a>
+                <button type="button" id="btn-settings" title="방 설정 및 공지 수정">설정</button>
+                <button type="button" id="btn-delete" class="danger ghost" title="방과 기록을 영구 삭제합니다">방 삭제</button>
+              </div>
+            </details>
           </div>
         </div>
         <div id="token-strip" class="token-strip" role="region" aria-label="사용량 대시보드 띠"></div>
@@ -135,7 +136,7 @@
           </select>
         </div>
         <div class="composer-row">
-          <textarea id="input" rows="2" aria-label="메시지 입력" placeholder="메시지… (@claude @codex @agy @all 호출, 멘션 없으면 전원에게 · Enter 전송, Shift+Enter 줄바꿈, / 포커스)"></textarea>
+          <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" placeholder="메시지… (@claude @codex @agy @all 호출, 멘션 없으면 전원에게 · Enter 전송, Shift+Enter 줄바꿈, / 포커스)"></textarea>
           <button type="submit" id="btn-send" class="primary">보내기</button>
         </div>
         <div id="composer-hint" class="composer-hint muted"></div>

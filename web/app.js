@@ -3,7 +3,8 @@
   "use strict";
 
   const DOM_CAP_STEP = 200;
-  const STREAM_THROTTLE_MS = 125; // max 8 renders/sec per message
+  const DOM_PAGE_SHIFT = 100;
+  const STREAM_THROTTLE_MS = 125; // max 8 renders/sec per message/trace
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -38,11 +39,110 @@
     return h >= 24 ? Math.round(h / 24) + "일 후" : h + "시간 후";
   };
 
+  // Compact window label for chips and participant card grid (V4, V5)
+  const shortWinLabel = (label) => {
+    const s = String(label || "").trim();
+    return s
+      .replace(/^외부\s*모델\s*/i, "3P ")
+      .replace(/^Gemini\s*/i, "Gem ")
+      .replace(/7일[·\s]*Opus/i, "Opus 7d")
+      .replace(/7일[·\s]*Sonnet/i, "Sonnet 7d")
+      .replace(/5\s*시간/g, "5h")
+      .replace(/7\s*일/g, "7d");
+  };
+
   const LABEL = { claude: "Claude", codex: "Codex", agy: "Antigravity", user: "나", system: "시스템" };
 
-  if (typeof marked !== "undefined") {
-    marked.use({ gfm: true, breaks: true, renderer: { html({ text }) { return esc(text); } } });
+  // ---------- Safe Markdown Rendering (Fix P1 #1: XSS & file:// handling) ----------
+  function decodeHtmlEntities(str) {
+    return String(str ?? "").replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (_, ent) => {
+      if (ent[0] === "#") {
+        const code = ent[1].toLowerCase() === "x" ? parseInt(ent.slice(2), 16) : parseInt(ent.slice(1), 10);
+        return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
+      }
+      const map = { colon: ":", tab: "\t", newline: "\n", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+      return map[ent.toLowerCase()] || "";
+    });
   }
+
+  function classifyMarkdownUrl(rawHref) {
+    const raw = String(rawHref ?? "").trim();
+    if (!raw) return { kind: "unsafe", url: "" };
+    const decoded = decodeHtmlEntities(raw).replace(/[\u0000-\u0020\u007f-\u009f]+/g, "");
+    if (!decoded) return { kind: "unsafe", url: "" };
+    if (/^file:/i.test(decoded)) {
+      return { kind: "file", url: raw };
+    }
+    if (decoded.startsWith("//")) {
+      return { kind: "unsafe", url: raw };
+    }
+    const schemeMatch = decoded.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+    if (schemeMatch) {
+      const proto = schemeMatch[1].toLowerCase();
+      if (proto === "http" || proto === "https" || proto === "mailto") {
+        return { kind: "safe", proto, url: raw };
+      }
+      return { kind: "unsafe", url: raw };
+    }
+    if (
+      decoded.startsWith("#") ||
+      decoded.startsWith("/") ||
+      decoded.startsWith("./") ||
+      decoded.startsWith("../") ||
+      !decoded.includes(":")
+    ) {
+      return { kind: "safe", proto: "relative", url: raw };
+    }
+    return { kind: "unsafe", url: raw };
+  }
+
+  if (typeof marked !== "undefined") {
+    marked.use({
+      gfm: true,
+      breaks: true,
+      renderer: {
+        html({ text }) {
+          return esc(text);
+        },
+        link(token) {
+          const href = token && token.href != null ? String(token.href) : "";
+          const text = token && token.text != null ? String(token.text) : "";
+          const title = token && token.title != null ? String(token.title) : "";
+          const check = classifyMarkdownUrl(href);
+          if (check.kind === "file") {
+            const pathTxt = href.replace(/^file:\/\/\/?/i, "");
+            const cleanText = text.trim();
+            if (cleanText && cleanText !== href && cleanText !== pathTxt) {
+              return esc(cleanText) + ' <code class="file-path">(' + esc(pathTxt) + ")</code>";
+            }
+            return '<code class="file-path">' + esc(pathTxt || href) + "</code>";
+          }
+          if (check.kind !== "safe") {
+            return esc(text || href);
+          }
+          const labelHtml =
+            this && this.parser && Array.isArray(token.tokens)
+              ? this.parser.parseInline(token.tokens)
+              : esc(text || href);
+          const titleAttr = title ? ' title="' + esc(title) + '"' : "";
+          const extAttr = !href.trim().startsWith("#") ? ' target="_blank" rel="noopener noreferrer"' : "";
+          return '<a href="' + esc(href.trim()) + '"' + titleAttr + extAttr + ">" + labelHtml + "</a>";
+        },
+        image(token) {
+          const href = token && token.href != null ? String(token.href) : "";
+          const text = token && token.text != null ? String(token.text) : "";
+          const title = token && token.title != null ? String(token.title) : "";
+          const check = classifyMarkdownUrl(href);
+          if (check.kind !== "safe" || check.proto === "mailto") {
+            return esc(text ? "[이미지: " + text + "]" : href);
+          }
+          const titleAttr = title ? ' title="' + esc(title) + '"' : "";
+          return '<img src="' + esc(href.trim()) + '" alt="' + esc(text) + '"' + titleAttr + ' loading="lazy">';
+        },
+      },
+    });
+  }
+
   const md = (text) => {
     try {
       return typeof marked !== "undefined" ? marked.parse(text || "") : "<p>" + esc(text) + "</p>";
@@ -72,18 +172,22 @@
     room: null,
     messages: new Map(),
     order: [],
-    visibleCount: DOM_CAP_STEP,
+    winStart: 0,
+    winEnd: 0,
     queue: [],
     discussion: null,
     traces: new Map(),
     traceFetching: new Set(),
+    traceErrors: new Map(),
     expanded: new Set(),
+    userCollapsed: new Set(),
     autoTrace: localStorage.getItem("rt.autoTrace") === "1",
     target: "",
     mentionCands: [],
     mentionIdx: 0,
     es: null,
     renderTimers: new Map(),
+    traceTimers: new Map(),
     lastEvent: 0,
   };
 
@@ -91,7 +195,9 @@
     const box = $("#live-announcer");
     if (!box || !msg) return;
     box.textContent = "";
-    setTimeout(() => { box.textContent = msg; }, 20);
+    setTimeout(() => {
+      box.textContent = msg;
+    }, 20);
   }
 
   // ---------- theme ----------
@@ -148,7 +254,6 @@
     setInterval(tickElapsed, 1000);
   }
 
-  // Watchdog: reopen closed EventSource and resync stalled streaming turns
   function watchdog() {
     if (!state.roomId) return;
     if (state.es && state.es.readyState === 2) {
@@ -163,7 +268,6 @@
     }
   }
 
-  // Update live elapsed time badges and 10m burn rate without full DOM rebuilds
   function tickElapsed() {
     if (!state.roomId || !state.room) return;
     let anyRunning = false;
@@ -224,7 +328,9 @@
     if (!ul) return;
     ul.innerHTML = "";
     const q = state.roomSearch.trim().toLowerCase();
-    const filtered = state.rooms.filter((r) => !q || (r.title || "").toLowerCase().includes(q) || (r.mode || "").toLowerCase().includes(q));
+    const filtered = state.rooms.filter(
+      (r) => !q || (r.title || "").toLowerCase().includes(q) || (r.mode || "").toLowerCase().includes(q)
+    );
     if (!filtered.length) {
       const emptyLi = el("li", "muted small-note", q ? "검색 결과 없음" : "생성된 방이 없습니다");
       emptyLi.style.padding = "8px 10px";
@@ -256,28 +362,20 @@
     }
   }
 
-  // Compact provider CLI summary in left sidebar (detailed gauges live in #token-strip and #participants)
+  // V2: Single-line provider CLI summary in left sidebar
   function renderLimits() {
     const box = $("#limits");
     if (!box) return;
     box.innerHTML = "";
     for (const p of state.providers) {
       const row = el("div", "prov-mini");
-      const name = el("span", "prov-name " + p.id, LABEL[p.id] || p.label || p.id);
-      row.appendChild(name);
-      const statusText = !p.available
-        ? "CLI 없음"
-        : p.can_steer
-        ? "준비됨 · 즉시 조정"
-        : "준비됨";
-      const st = el("span", p.available ? "muted" : "unavailable", statusText);
-      row.appendChild(st);
+      row.appendChild(el("span", "prov-name " + p.id, LABEL[p.id] || p.label || p.id));
+      const statusText = !p.available ? "CLI 없음" : p.can_steer ? "CLI 있음 · 즉시 조정" : "CLI 있음";
+      row.appendChild(el("span", p.available ? "muted" : "unavailable", statusText));
       box.appendChild(row);
     }
   }
 
-  // Gauge helpers:
-  // usageGauge(usedPct): higher % is worse (>=90 bad, >=80 warn)
   function usageGauge(usedPct, mini) {
     const pct = Math.min(100, Math.max(0, Number(usedPct) || 0));
     const cls = "gauge" + (pct >= 90 ? " bad" : pct >= 80 ? " warn" : "") + (mini ? " mini" : "");
@@ -288,7 +386,6 @@
     return g;
   }
 
-  // remainGauge(remainPct): lower remaining % is worse (<=15 bad, <=30 warn)
   function remainGauge(remainPct, mini) {
     const rem = Math.min(100, Math.max(0, Number(remainPct) || 0));
     const cls = "gauge" + (rem <= 15 ? " bad" : rem <= 30 ? " warn" : "") + (mini ? " mini" : "");
@@ -309,17 +406,21 @@
         state.es = null;
       }
       state.roomId = id;
-      state.visibleCount = DOM_CAP_STEP;
       state.target = "";
+      state.expanded.clear();
+      state.userCollapsed.clear();
       localStorage.setItem("rt.room", id);
+      const pbox = $("#participants");
+      if (pbox) pbox.innerHTML = "";
     }
     const snap = await api("GET", "/api/rooms/" + id);
-    if (my !== openSeq || state.roomId !== id) return; // race guard: a newer room selection won
+    if (my !== openSeq || state.roomId !== id) return;
+
     state.messages.clear();
     state.order = [];
     state.traces.clear();
     state.traceFetching.clear();
-    if (!resync) state.expanded.clear();
+    state.traceErrors.clear();
     state.room = snap.room;
     state.queue = snap.queue || [];
     state.discussion = snap.discussion;
@@ -330,10 +431,18 @@
     for (const m of snap.messages || []) {
       state.messages.set(m.id, m);
       state.order.push(m.id);
-      if (state.autoTrace && m.kind === "agent" && (m.status === "streaming" || m.trace > 0)) {
+      if (
+        state.autoTrace &&
+        !state.userCollapsed.has(m.id) &&
+        m.kind === "agent" &&
+        (m.status === "streaming" || m.trace > 0)
+      ) {
         state.expanded.add(m.id);
       }
     }
+    state.winEnd = state.order.length;
+    state.winStart = Math.max(0, state.winEnd - DOM_CAP_STEP);
+
     $("#empty").hidden = true;
     const roomSec = $("#room");
     roomSec.hidden = false;
@@ -373,7 +482,7 @@
     };
     es.addEventListener("hello", () => {
       updateHint();
-      if (connected) openRoom(id, true); // reconnected: reload snapshot so missed events are recovered
+      if (connected) openRoom(id, true);
       connected = true;
     });
   }
@@ -400,13 +509,13 @@
           m.trace = (m.trace || 0) + 1;
         }
         if (m) {
-          if (state.autoTrace && !state.expanded.has(m.id)) {
+          // Fix #4: Only auto-expand if the user has not manually collapsed this message's trace
+          if (state.autoTrace && !state.userCollapsed.has(m.id) && !state.expanded.has(m.id)) {
             state.expanded.add(m.id);
           }
+          updateTraceCount(m.id);
           if (state.expanded.has(m.id)) {
-            ensureAndRenderTrace(m.id);
-          } else {
-            updateTraceCount(m.id);
+            scheduleTraceRender(m.id);
           }
           if (m.status === "streaming") scheduleRender(m.id);
         }
@@ -461,7 +570,7 @@
       if (m.kind === "agent" && m.status === "streaming" && !m.trace) {
         state.traces.set(m.id, []);
       }
-      if (state.autoTrace && m.kind === "agent") {
+      if (state.autoTrace && m.kind === "agent" && !state.userCollapsed.has(m.id)) {
         state.expanded.add(m.id);
       }
     }
@@ -469,7 +578,6 @@
     if (state.room) renderTokenStrip();
     if (!existed) loadRooms();
 
-    // Announce to screen readers only on completion or non-streaming messages (Section 7)
     if (m.kind === "system" && !existed) {
       announce("시스템 알림: " + m.text);
     } else if (m.kind === "user" && !existed) {
@@ -487,7 +595,7 @@
     if (!r) return;
     $("#room-title").textContent = r.title;
     const badge = $("#room-mode");
-    const modeLabel = r.mode === "write" ? "⚠ write (수정 허용)" : r.mode;
+    const modeLabel = r.mode === "write" ? "⚠ write" : r.mode;
     badge.textContent = modeLabel;
     badge.className = "badge " + r.mode;
     badge.title =
@@ -516,7 +624,7 @@
     renderTokenStrip();
   }
 
-  // ---------- steering target controls (1-shot chip + Esc + select sync) ----------
+  // ---------- steering target controls ----------
   function renderTargetControls() {
     const r = state.room;
     if (!r) return;
@@ -595,7 +703,7 @@
     if (focusInput && $("#input")) $("#input").focus();
   }
 
-  // ---------- Usage Dashboard Strip (Brief Section 4) ----------
+  // ---------- Usage Dashboard Strip (Brief Section 4 + Fix V4) ----------
   function messageInputTokens(u) {
     if (!u || u.input_tokens == null) return 0;
     return (
@@ -625,7 +733,6 @@
     return maxTok;
   }
 
-  // Recent 10-minute token burn rate (tokens / min)
   function calcRecentBurnRate() {
     const cutoff = Date.now() - 10 * 60 * 1000;
     let recentTokens = 0;
@@ -639,17 +746,6 @@
     return Math.round(recentTokens / 10);
   }
 
-  function findWindow(windows, type) {
-    if (!Array.isArray(windows)) return null;
-    if (type === "5h") {
-      return windows.find((w) => /5\s*시간|5\s*h|300/i.test(w.label || ""));
-    }
-    if (type === "7d") {
-      return windows.find((w) => /7\s*일|주간|7\s*d|week/i.test(w.label || ""));
-    }
-    return null;
-  }
-
   function renderTokenStrip() {
     const strip = $("#token-strip");
     if (!strip || !state.room) return;
@@ -659,7 +755,7 @@
       ? state.providers.map((p) => p.id)
       : state.room.participants.map((p) => p.id);
 
-    // 1. One chip per provider (Section 4)
+    // 1. One chip per provider — V4: render ONLY windows actually present in lim.windows
     for (const pid of providerOrder) {
       const part = state.room.participants.find((x) => x.id === pid);
       const lim = state.limits[pid];
@@ -667,7 +763,6 @@
       const warns = [];
       let isBad = false;
 
-      // Warning condition 1: remaining limit <= 15%
       for (const w of wins) {
         const rem = Math.max(0, 100 - Number(w.used_percent || 0));
         if (rem <= 15) {
@@ -675,7 +770,6 @@
           if (rem <= 5) isBad = true;
         }
       }
-      // Warning condition 2: context >= 80%
       if (part && part.context_window > 0) {
         const ctxPct = (part.context_tokens / part.context_window) * 100;
         if (ctxPct >= 80) {
@@ -683,13 +777,15 @@
           if (ctxPct >= 90) isBad = true;
         }
       }
-      // Warning condition 3: single-turn input >= 150,000 tokens
       const maxTurnIn = maxTurnInputForAgent(pid);
       if (maxTurnIn >= 150000) {
         warns.push("한 턴 입력 " + fmtK(maxTurnIn) + " 토큰 (≥150k)");
       }
 
-      const chip = el("div", "chip" + (warns.length ? (isBad ? " bad" : " warn") : "") + (part && !part.enabled ? " muted" : ""));
+      const chip = el(
+        "div",
+        "chip" + (warns.length ? (isBad ? " bad" : " warn") : "") + (part && !part.enabled ? " muted" : "")
+      );
       if (warns.length) {
         chip.appendChild(el("span", "chip-warn-icon", "⚠"));
       }
@@ -700,32 +796,20 @@
         chip.appendChild(el("span", "muted", "아직 관측 안 됨"));
         tipLines.push((LABEL[pid] || pid) + ": 한도 데이터 아직 관측 안 됨");
       } else {
-        const w5 = findWindow(wins, "5h");
-        const w7 = findWindow(wins, "7d");
-
-        const appendWinMetric = (label, w) => {
-          const span = el("span", "win-metric");
-          if (w) {
-            const rem = Math.max(0, Math.min(100, 100 - Number(w.used_percent || 0)));
-            span.appendChild(el("span", "muted", label));
-            span.appendChild(remainGauge(rem, true));
-            span.appendChild(el("span", "", Math.round(rem) + "%"));
-            const rtxt = w.resets_at ? " (리셋: " + fmtReset(w.resets_at) + ")" : "";
-            tipLines.push(w.label + ": 남음 " + rem.toFixed(0) + "% / 사용 " + Number(w.used_percent || 0).toFixed(0) + "%" + rtxt);
-          } else {
-            span.appendChild(el("span", "muted", label + " -"));
-          }
-          chip.appendChild(span);
-        };
-
-        appendWinMetric("5시간", w5);
-        appendWinMetric("주간", w7);
-
         for (const w of wins) {
-          if (w !== w5 && w !== w7) {
-            const rem = Math.max(0, Math.min(100, 100 - Number(w.used_percent || 0)));
-            tipLines.push(w.label + ": 남음 " + rem.toFixed(0) + "%" + (w.resets_at ? " (리셋: " + fmtReset(w.resets_at) + ")" : ""));
-          }
+          const rem = Math.max(0, Math.min(100, 100 - Number(w.used_percent || 0)));
+          const span = el("span", "win-metric");
+          const lbl = el("span", "muted", shortWinLabel(w.label));
+          lbl.title = w.label;
+          span.appendChild(lbl);
+          span.appendChild(remainGauge(rem, true));
+          span.appendChild(el("span", "", Math.round(rem) + "%"));
+          chip.appendChild(span);
+
+          const rtxt = w.resets_at ? " (리셋: " + fmtReset(w.resets_at) + ")" : "";
+          tipLines.push(
+            w.label + ": 남음 " + rem.toFixed(0) + "% / 사용 " + Number(w.used_percent || 0).toFixed(0) + "%" + rtxt
+          );
         }
         if (lim.plan) tipLines.push("플랜: " + lim.plan);
         if (lim.credits) tipLines.push("크레딧: " + lim.credits);
@@ -735,9 +819,10 @@
 
       if (part && part.context_window > 0) {
         const ctxPct = (part.context_tokens / part.context_window) * 100;
-        const ctxSpan = el("span", "win-metric muted", "ctx " + Math.round(ctxPct) + "%");
-        chip.appendChild(ctxSpan);
-        tipLines.push("컨텍스트: " + fmtK(part.context_tokens) + " / " + fmtK(part.context_window) + " (" + ctxPct.toFixed(0) + "%)");
+        chip.appendChild(el("span", "win-metric muted", "ctx " + Math.round(ctxPct) + "%"));
+        tipLines.push(
+          "컨텍스트: " + fmtK(part.context_tokens) + " / " + fmtK(part.context_window) + " (" + ctxPct.toFixed(0) + "%)"
+        );
       }
 
       if (warns.length) {
@@ -747,7 +832,7 @@
       strip.appendChild(chip);
     }
 
-    // 2. Room Total Chip (입력·출력 합계, 비용, 최근 10분 소모 속도 토큰/분)
+    // 2. Room Total Chip
     let sumIn = 0;
     let sumOut = 0;
     let sumCost = 0;
@@ -775,15 +860,11 @@
       el(
         "span",
         "",
-        "입력 " +
-          fmtK(sumIn) +
-          " · 출력 " +
-          fmtK(sumOut) +
-          (sumCost > 0 ? " · $" + sumCost.toFixed(2) : "")
+        "입력 " + fmtK(sumIn) + " · 출력 " + fmtK(sumOut) + (sumCost > 0 ? " · $" + sumCost.toFixed(2) : "")
       )
     );
     const rateWrap = el("span", "muted");
-    rateWrap.appendChild(document.createTextNode("최근 10분 "));
+    rateWrap.appendChild(document.createTextNode("10분 "));
     const rateVal = el("b", "", fmtK(burnRate) + " 토큰/분");
     rateVal.id = "room-burn-rate";
     rateWrap.appendChild(rateVal);
@@ -792,7 +873,9 @@
     const totalTips = [
       "방 누적 입력 토큰: " + Math.round(sumIn).toLocaleString("ko-KR"),
       "방 누적 출력 토큰: " + Math.round(sumOut).toLocaleString("ko-KR"),
-      sumCost > 0 ? "누적 비용(보고된 공급사 합산): $" + sumCost.toFixed(4) : "비용: CLI가 비용을 보고한 턴이 아직 없음",
+      sumCost > 0
+        ? "누적 비용(보고된 공급사 합산): $" + sumCost.toFixed(4)
+        : "비용: CLI가 비용을 보고한 턴이 아직 없음",
       "최근 10분 소모 속도: 분당 약 " + burnRate.toLocaleString("ko-KR") + " 토큰",
     ];
     if (roomWarns.length) totalTips.unshift("⚠ 경고: " + roomWarns.join(" · "));
@@ -800,35 +883,98 @@
     strip.appendChild(totalChip);
   }
 
-  // ---------- timeline (with 200 DOM cap & upward scroll pagination) ----------
+  // ---------- timeline (Fix P2 #2: Strict 200 DOM cap in all scroll positions) ----------
   function renderTimeline(scrollToBottom) {
     const tl = $("#timeline");
     if (!tl) return;
     tl.innerHTML = "";
 
-    if (!state.order.length) {
+    const total = state.order.length;
+    if (!total) {
+      state.winStart = 0;
+      state.winEnd = 0;
       renderRoomEmptyGuide(tl);
       return;
     }
 
-    const total = state.order.length;
-    const startIdx = Math.max(0, total - state.visibleCount);
-    if (startIdx > 0) {
-      const moreBtn = el(
-        "button",
-        "load-more-btn",
-        "↑ 이전 메시지 더 보기 (" + startIdx + "개 숨겨짐 · 위로 스크롤 또는 클릭)"
-      );
-      moreBtn.type = "button";
-      moreBtn.id = "timeline-more";
-      moreBtn.onclick = () => loadMoreMessages();
-      tl.appendChild(moreBtn);
+    if (scrollToBottom || state.winEnd > total || state.winEnd <= state.winStart) {
+      state.winEnd = total;
+      state.winStart = Math.max(0, total - DOM_CAP_STEP);
+    }
+    if (state.winEnd - state.winStart > DOM_CAP_STEP) {
+      state.winStart = state.winEnd - DOM_CAP_STEP;
     }
 
-    for (let i = startIdx; i < total; i++) {
-      renderMessage(state.order[i], true, true);
+    updateTimelineBanners(tl);
+    const newerBtn = $("#timeline-newer", tl);
+    for (let i = state.winStart; i < state.winEnd; i++) {
+      renderMessage(state.order[i], true, true, newerBtn);
     }
+    updateTimelineBanners(tl);
+
     if (scrollToBottom) tl.scrollTop = tl.scrollHeight;
+  }
+
+  function updateTimelineBanners(tl) {
+    tl = tl || $("#timeline");
+    if (!tl) return;
+    const total = state.order.length;
+
+    let moreBtn = $("#timeline-more", tl);
+    if (state.winStart > 0) {
+      if (!moreBtn) {
+        moreBtn = el("button", "load-more-btn");
+        moreBtn.type = "button";
+        moreBtn.id = "timeline-more";
+        moreBtn.onclick = () => loadOlderMessages();
+        tl.insertBefore(moreBtn, tl.firstChild);
+      }
+      moreBtn.textContent = "↑ 이전 메시지 더 보기 (" + state.winStart + "개 · 위로 스크롤 또는 클릭)";
+    } else if (moreBtn) {
+      moreBtn.remove();
+    }
+
+    let newerBtn = $("#timeline-newer", tl);
+    const hiddenAfter = Math.max(0, total - state.winEnd);
+    if (hiddenAfter > 0) {
+      if (!newerBtn) {
+        newerBtn = el("button", "load-more-btn primary");
+        newerBtn.type = "button";
+        newerBtn.id = "timeline-newer";
+        newerBtn.onclick = () => jumpToLatestMessages();
+        tl.appendChild(newerBtn);
+      }
+      newerBtn.textContent = "↓ 새 메시지 " + hiddenAfter + "개 보기 (최신으로 이동)";
+    } else if (newerBtn) {
+      newerBtn.remove();
+    }
+  }
+
+  function loadOlderMessages() {
+    const tl = $("#timeline");
+    if (!tl || state.winStart <= 0) return;
+    const prevHeight = tl.scrollHeight;
+    const prevTop = tl.scrollTop;
+    const nextStart = Math.max(0, state.winStart - DOM_PAGE_SHIFT);
+    state.winStart = nextStart;
+    state.winEnd = Math.min(state.order.length, state.winStart + DOM_CAP_STEP);
+    renderTimeline(false);
+    tl.scrollTop = Math.max(40, prevTop + (tl.scrollHeight - prevHeight));
+  }
+
+  function loadNewerMessages() {
+    const tl = $("#timeline");
+    if (!tl || state.winEnd >= state.order.length) return;
+    const nextEnd = Math.min(state.order.length, state.winEnd + DOM_PAGE_SHIFT);
+    state.winEnd = nextEnd;
+    state.winStart = Math.max(0, state.winEnd - DOM_CAP_STEP);
+    renderTimeline(false);
+  }
+
+  function jumpToLatestMessages() {
+    state.winEnd = state.order.length;
+    state.winStart = Math.max(0, state.winEnd - DOM_CAP_STEP);
+    renderTimeline(true);
   }
 
   function renderRoomEmptyGuide(tl) {
@@ -865,18 +1011,6 @@
     tl.appendChild(box);
   }
 
-  function loadMoreMessages() {
-    const tl = $("#timeline");
-    if (!tl) return;
-    const total = state.order.length;
-    if (state.visibleCount >= total) return;
-    const prevHeight = tl.scrollHeight;
-    const prevTop = tl.scrollTop;
-    state.visibleCount = Math.min(total, state.visibleCount + DOM_CAP_STEP);
-    renderTimeline(false);
-    tl.scrollTop = prevTop + (tl.scrollHeight - prevHeight);
-  }
-
   function scheduleRender(id) {
     if (state.renderTimers.has(id)) return;
     state.renderTimers.set(
@@ -884,6 +1018,17 @@
       setTimeout(() => {
         state.renderTimers.delete(id);
         renderMessage(id, false);
+      }, STREAM_THROTTLE_MS)
+    );
+  }
+
+  function scheduleTraceRender(id) {
+    if (state.traceTimers.has(id)) return;
+    state.traceTimers.set(
+      id,
+      setTimeout(() => {
+        state.traceTimers.delete(id);
+        ensureAndRenderTrace(id);
       }, STREAM_THROTTLE_MS)
     );
   }
@@ -952,7 +1097,7 @@
     }
   }
 
-  function renderMessage(id, isNew, batch) {
+  function renderMessage(id, isNew, batch, insertBeforeNode) {
     const m = state.messages.get(id);
     if (!m) return;
     const tl = $("#timeline");
@@ -961,16 +1106,38 @@
     const emptyGuide = $("#timeline-empty");
     if (emptyGuide) emptyGuide.remove();
 
-    const idx = state.order.indexOf(id);
-    const startIdx = Math.max(0, state.order.length - state.visibleCount);
-    if (idx !== -1 && idx < startIdx) return;
-
     const atBottom = tl.scrollHeight - tl.scrollTop - tl.clientHeight < 80;
+    const total = state.order.length;
+    const idx = state.order.indexOf(id);
+
+    // Fix #2: Maintain strict [winStart, winEnd) window of max DOM_CAP_STEP (200)
+    if (!batch && isNew) {
+      const wasAtEnd = state.winEnd >= total - 1;
+      if (atBottom || m.kind === "user") {
+        state.winEnd = total;
+        state.winStart = Math.max(0, state.winEnd - DOM_CAP_STEP);
+      } else if (wasAtEnd && state.winEnd - state.winStart < DOM_CAP_STEP) {
+        state.winEnd = total;
+      } else {
+        // User is scrolled up reading older messages and window is full (200 items):
+        // Do not mount new bottom DOM node; update bottom banner instead.
+        updateTimelineBanners(tl);
+        return;
+      }
+    }
+
+    if (idx !== -1 && (idx < state.winStart || idx >= state.winEnd)) {
+      if (!batch) updateTimelineBanners(tl);
+      return;
+    }
+
     let node = $("#m-" + id);
     if (!node) {
       node = el("div");
       node.id = "m-" + id;
-      tl.appendChild(node);
+      const newerBtn = insertBeforeNode || $("#timeline-newer", tl);
+      if (newerBtn) tl.insertBefore(node, newerBtn);
+      else tl.appendChild(node);
     }
     node.className =
       "msg " +
@@ -1034,9 +1201,10 @@
       if (u.total_cost_usd) foot.push("$" + Number(u.total_cost_usd).toFixed(3));
       if (u.context_tokens) foot.push("ctx " + fmtK(u.context_tokens));
 
-      // Preserve existing trace container so open <details> aren't lost during streaming deltas
       let bubble = node.querySelector(".bubble");
+      let isInitialMount = false;
       if (!bubble) {
+        isInitialMount = true;
         node.innerHTML =
           '<div class="avatar ' +
           esc(m.author) +
@@ -1058,21 +1226,25 @@
       bubble.querySelector(".meta").innerHTML = meta.join("");
       const bodyEl = bubble.querySelector(".body");
       bodyEl.className = "body" + (m.status === "streaming" ? " cursor" : "");
-      bodyEl.innerHTML = bodyHtml;
-
-      bodyEl.querySelectorAll("pre").forEach((preEl) => {
-        const b = el("button", "copy", "복사");
-        b.type = "button";
-        b.setAttribute("aria-label", "코드 블록 복사");
-        b.onclick = () => {
-          const codeNode = preEl.querySelector("code");
-          const raw = codeNode ? codeNode.innerText : preEl.innerText.replace(/^복사\n?/, "");
-          navigator.clipboard.writeText(raw);
-          b.textContent = "복사됨";
-          setTimeout(() => { b.textContent = "복사"; }, 1200);
-        };
-        preEl.appendChild(b);
-      });
+      if (bodyEl.dataset.rawText !== (m.text || "") || isInitialMount) {
+        bodyEl.dataset.rawText = m.text || "";
+        bodyEl.innerHTML = bodyHtml;
+        bodyEl.querySelectorAll("pre").forEach((preEl) => {
+          const b = el("button", "copy", "복사");
+          b.type = "button";
+          b.setAttribute("aria-label", "코드 블록 복사");
+          b.onclick = () => {
+            const codeNode = preEl.querySelector("code");
+            const raw = codeNode ? codeNode.innerText : preEl.innerText.replace(/^복사\n?/, "");
+            navigator.clipboard.writeText(raw);
+            b.textContent = "복사됨";
+            setTimeout(() => {
+              b.textContent = "복사";
+            }, 1200);
+          };
+          preEl.appendChild(b);
+        });
+      }
 
       const errSlot = bubble.querySelector(".err-slot");
       errSlot.innerHTML = "";
@@ -1090,35 +1262,38 @@
       }
 
       const footEl = bubble.querySelector(".foot");
+      let tb = footEl.querySelector(".trace-btn");
       footEl.innerHTML = foot.map((f) => "<span>" + esc(f) + "</span>").join("");
       if (m.kind === "agent") {
         const isExp = state.expanded.has(id);
-        const tb = el(
-          "button",
-          "trace-btn",
-          (isExp ? "▾ 작업 기록 접기 (" : "▸ 작업 기록 (") + (m.trace || 0) + ")"
-        );
-        tb.type = "button";
-        tb.dataset.id = id;
+        if (!tb) {
+          tb = el("button", "trace-btn");
+          tb.type = "button";
+          tb.dataset.id = id;
+          tb.onclick = () => toggleTrace(id);
+        }
+        tb.textContent = (isExp ? "▾ 작업 기록 접기 (" : "▸ 작업 기록 (") + (m.trace || 0) + ")";
         tb.setAttribute("aria-expanded", isExp ? "true" : "false");
-        tb.onclick = () => toggleTrace(id);
         footEl.appendChild(tb);
       }
 
-      if (state.expanded.has(id)) {
+      // Fix #5: Only trigger trace render on initial mount if expanded (not on every text delta!)
+      const traceBox = $("#t-" + id, bubble);
+      if (state.expanded.has(id) && traceBox && (isInitialMount || traceBox.hidden)) {
         ensureAndRenderTrace(id);
       }
     }
 
-    // Enforce DOM cap when at bottom and new messages arrive
-    if (!batch && atBottom) {
+    // Fix #2: Always enforce DOM_CAP_STEP (200) regardless of atBottom
+    if (!batch) {
       const msgNodes = tl.querySelectorAll(".msg");
-      if (msgNodes.length > state.visibleCount) {
-        const excess = msgNodes.length - state.visibleCount;
+      if (msgNodes.length > DOM_CAP_STEP) {
+        const excess = msgNodes.length - DOM_CAP_STEP;
         for (let i = 0; i < excess; i++) {
           msgNodes[i].remove();
         }
       }
+      updateTimelineBanners(tl);
     }
 
     if (!batch && (atBottom || (isNew && m.kind === "user"))) {
@@ -1136,6 +1311,7 @@
     }
   }
 
+  // Fix #3: Do not cache empty array when GET /trace/{id} fails; allow retry
   async function ensureAndRenderTrace(id) {
     if (!state.traces.has(id)) {
       if (state.traceFetching.has(id)) return;
@@ -1143,8 +1319,12 @@
       try {
         const events = await api("GET", "/api/rooms/" + state.roomId + "/trace/" + id);
         state.traces.set(id, events || []);
-      } catch {
-        state.traces.set(id, []);
+        state.traceErrors.delete(id);
+      } catch (err) {
+        state.traceErrors.set(id, err.message || "조회 실패");
+        renderTraceError(id);
+        updateTraceCount(id);
+        return;
       } finally {
         state.traceFetching.delete(id);
       }
@@ -1153,74 +1333,37 @@
     updateTraceCount(id);
   }
 
+  function renderTraceError(id) {
+    const box = $("#t-" + id);
+    if (!box) return;
+    box.hidden = false;
+    const msg = state.traceErrors.get(id) || "작업 기록을 불러오지 못했습니다.";
+    box.innerHTML = "";
+    const errDiv = el("div", "err-box");
+    errDiv.appendChild(el("span", "", "⚠ 작업 기록 조회 실패: " + msg));
+    const retryBtn = el("button", "retry-btn", "↻ 다시 불러오기");
+    retryBtn.type = "button";
+    retryBtn.onclick = () => ensureAndRenderTrace(id);
+    errDiv.appendChild(retryBtn);
+    box.appendChild(errDiv);
+  }
+
+  // Fix #4: Record manual collapse in state.userCollapsed so autoTrace doesn't override user choice
   async function toggleTrace(id) {
     const box = $("#t-" + id);
     if (state.expanded.has(id)) {
       state.expanded.delete(id);
+      state.userCollapsed.add(id);
       if (box) box.hidden = true;
       updateTraceCount(id);
       return;
     }
+    state.userCollapsed.delete(id);
     state.expanded.add(id);
     await ensureAndRenderTrace(id);
   }
 
-  // Trace: tool calls merged with their results, sub-agents as nested blocks.
-  function renderTrace(id) {
-    const box = $("#t-" + id);
-    if (!box) return;
-    box.hidden = false;
-    const events = state.traces.get(id) || [];
-    const items = [];
-    const byCall = new Map();
-    const subs = new Map();
-    for (const e of events) {
-      switch (e.kind) {
-        case "tool_call": {
-          const it = { type: "tool", call: e };
-          items.push(it);
-          if (e.id) byCall.set(e.id, it);
-          break;
-        }
-        case "tool_result": {
-          const it = e.id && byCall.get(e.id);
-          if (it) it.result = e;
-          else items.push({ type: "tool", result: e });
-          break;
-        }
-        case "subagent_start": {
-          const s = { type: "sub", start: e, lines: [] };
-          items.push(s);
-          subs.set(e.parent, s);
-          break;
-        }
-        case "subagent_msg": {
-          let s = subs.get(e.parent);
-          if (!s) {
-            s = { type: "sub", start: { name: e.parent, parent: e.parent }, lines: [] };
-            items.push(s);
-            subs.set(e.parent, s);
-          }
-          s.lines.push(e);
-          break;
-        }
-        case "subagent_end": {
-          const s = subs.get(e.parent);
-          if (s) s.end = e;
-          else items.push({ type: "plain", e });
-          break;
-        }
-        case "text_delta":
-        case "text":
-          break;
-        default:
-          items.push({ type: "plain", e });
-      }
-    }
-    const html = items.map(renderItem).join("");
-    box.innerHTML = html || '<div class="muted">기록 없음</div>';
-  }
-
+  // ---------- Fix #5: Incremental Trace DOM Updates (preserve <details open> & focus) ----------
   const pre = (s) => (s ? "<pre>" + esc(String(s).slice(0, 20000)) + "</pre>" : "");
   const inputPretty = (s) => {
     try {
@@ -1230,50 +1373,218 @@
       return s;
     }
   };
+  function summarize(s) {
+    if (!s) return "";
+    s = String(s).replace(/\s+/g, " ");
+    return s.length > 90 ? s.slice(0, 90) + "…" : s;
+  }
 
-  function renderItem(it) {
+  function renderTrace(id) {
+    const box = $("#t-" + id);
+    if (!box) return;
+    box.hidden = false;
+    const events = state.traces.get(id) || [];
+    const items = [];
+    const byCall = new Map();
+    const subs = new Map();
+    let seq = 0;
+
+    for (const e of events) {
+      seq++;
+      switch (e.kind) {
+        case "tool_call": {
+          const key = "tool:" + (e.id || seq);
+          const it = { type: "tool", key, call: e };
+          items.push(it);
+          if (e.id) byCall.set(e.id, it);
+          break;
+        }
+        case "tool_result": {
+          const it = e.id && byCall.get(e.id);
+          if (it) it.result = e;
+          else items.push({ type: "tool", key: "tool:res:" + (e.id || seq), result: e });
+          break;
+        }
+        case "subagent_start": {
+          const key = "sub:" + (e.parent || seq);
+          let s = subs.get(e.parent);
+          if (!s) {
+            s = { type: "sub", key, start: e, lines: [] };
+            items.push(s);
+            if (e.parent) subs.set(e.parent, s);
+          } else {
+            s.start = e;
+          }
+          break;
+        }
+        case "subagent_msg": {
+          let s = subs.get(e.parent);
+          if (!s) {
+            s = {
+              type: "sub",
+              key: "sub:" + (e.parent || seq),
+              start: { name: e.parent, parent: e.parent },
+              lines: [],
+            };
+            items.push(s);
+            if (e.parent) subs.set(e.parent, s);
+          }
+          s.lines.push(e);
+          break;
+        }
+        case "subagent_end": {
+          const s = subs.get(e.parent);
+          if (s) s.end = e;
+          else items.push({ type: "plain", key: "plain:" + seq, e });
+          break;
+        }
+        case "text_delta":
+        case "text":
+          break;
+        default:
+          items.push({ type: "plain", key: "plain:" + seq, e });
+      }
+    }
+
+    if (!items.length) {
+      if (!box.querySelector(".trace-empty")) {
+        box.innerHTML = '<div class="muted trace-empty">기록 없음</div>';
+      }
+      return;
+    }
+    const emptyEl = box.querySelector(".trace-empty");
+    if (emptyEl) emptyEl.remove();
+    const errEl = box.querySelector(".err-box");
+    if (errEl) errEl.remove();
+
+    for (const it of items) {
+      let existing = null;
+      for (const child of box.children) {
+        if (child.dataset && child.dataset.traceKey === it.key) {
+          existing = child;
+          break;
+        }
+      }
+      if (!existing) {
+        const created = createTraceItemElement(it);
+        created.dataset.traceKey = it.key;
+        box.appendChild(created);
+      } else {
+        patchTraceItemElement(existing, it);
+      }
+    }
+  }
+
+  function toolSig(it) {
+    const c = it.call || {};
+    const r = it.result || {};
+    return (c.name || "") + "|" + (c.input || "") + "|" + (r.kind || "") + "|" + (r.output ? r.output.length : 0);
+  }
+
+  function createTraceItemElement(it) {
     if (it.type === "tool") {
-      const c = it.call || {},
-        r = it.result || {};
-      const name = c.name || r.name || "도구";
-      const err = r.meta && (r.meta.error || (r.meta.exit_code != null && r.meta.exit_code !== 0));
-      const st = r.kind ? (err ? "⚠ 실패" : "✓ 완료") : "⏳ 실행 중";
-      return (
-        '<details class="item"><summary>🔧 <b>' +
-        esc(name) +
-        "</b> " +
-        st +
-        ' <span class="muted">' +
-        esc(summarize(c.input || r.input)) +
-        "</span></summary>" +
-        (c.input || r.input ? '<div class="k">입력</div>' + pre(inputPretty(c.input || r.input)) : "") +
-        (r.output ? '<div class="k">결과</div>' + pre(r.output) : "") +
-        "</details>"
-      );
+      const det = el("details", "item");
+      det.dataset.sig = toolSig(it);
+      det.innerHTML = buildToolInnerHtml(it);
+      return det;
     }
     if (it.type === "sub") {
-      const s = it.start,
-        e = it.end;
-      const title =
-        "🧩 서브에이전트 <b>" +
-        esc(s.name || s.parent) +
-        "</b> " +
-        (e ? "✓ 종료" : "⏳ 진행 중") +
-        (s.meta && s.meta.description ? ' <span class="muted">' + esc(s.meta.description) + "</span>" : "");
-      const lines = it.lines.map(renderSubLine).join("");
-      return (
-        '<details class="item sub" open><summary>' +
-        title +
-        "</summary>" +
-        (s.input ? '<div class="line"><span class="k">과제</span>' + pre(s.input) + "</div>" : "") +
-        '<div class="lines">' +
-        lines +
-        "</div>" +
-        (e && e.output ? '<div class="line"><span class="k">보고</span>' + pre(e.output) + "</div>" : "") +
-        "</details>"
-      );
+      const det = el("details", "item sub");
+      det.open = true;
+      const sum = el("summary");
+      sum.innerHTML = buildSubSummaryHtml(it);
+      det.appendChild(sum);
+      const s = it.start || {};
+      if (s.input) {
+        const taskDiv = el("div", "line sub-task");
+        taskDiv.innerHTML = '<span class="k">과제</span>' + pre(s.input);
+        det.appendChild(taskDiv);
+      }
+      const linesBox = el("div", "lines");
+      det.appendChild(linesBox);
+      syncSubLines(linesBox, it.lines);
+      const repBox = el("div", "sub-report");
+      if (it.end && it.end.output) {
+        repBox.innerHTML = '<div class="line"><span class="k">보고</span>' + pre(it.end.output) + "</div>";
+      }
+      det.appendChild(repBox);
+      return det;
     }
-    const e = it.e;
+    const wrap = el("div");
+    wrap.innerHTML = renderPlainTraceHtml(it.e);
+    return wrap.firstElementChild || wrap;
+  }
+
+  function patchTraceItemElement(node, it) {
+    if (it.type === "tool") {
+      const sig = toolSig(it);
+      if (node.dataset.sig === sig) return;
+      const wasOpen = node.open;
+      node.dataset.sig = sig;
+      node.innerHTML = buildToolInnerHtml(it);
+      node.open = wasOpen;
+      return;
+    }
+    if (it.type === "sub") {
+      const sum = node.querySelector(":scope > summary");
+      const newSumHtml = buildSubSummaryHtml(it);
+      if (sum && sum.innerHTML !== newSumHtml) {
+        sum.innerHTML = newSumHtml;
+      }
+      const linesBox = node.querySelector(":scope > .lines");
+      if (linesBox) {
+        syncSubLines(linesBox, it.lines);
+      }
+      const repBox = node.querySelector(":scope > .sub-report");
+      if (repBox && it.end && it.end.output && !repBox.hasChildNodes()) {
+        repBox.innerHTML = '<div class="line"><span class="k">보고</span>' + pre(it.end.output) + "</div>";
+      }
+    }
+  }
+
+  function buildToolInnerHtml(it) {
+    const c = it.call || {},
+      r = it.result || {};
+    const name = c.name || r.name || "도구";
+    const err = r.meta && (r.meta.error || (r.meta.exit_code != null && r.meta.exit_code !== 0));
+    const st = r.kind ? (err ? "⚠ 실패" : "✓ 완료") : "⏳ 실행 중";
+    return (
+      "<summary>🔧 <b>" +
+      esc(name) +
+      "</b> " +
+      st +
+      ' <span class="muted">' +
+      esc(summarize(c.input || r.input)) +
+      "</span></summary>" +
+      (c.input || r.input ? '<div class="k">입력</div>' + pre(inputPretty(c.input || r.input)) : "") +
+      (r.output ? '<div class="k">결과</div>' + pre(r.output) : "")
+    );
+  }
+
+  function buildSubSummaryHtml(it) {
+    const s = it.start || {},
+      e = it.end;
+    return (
+      "🧩 서브에이전트 <b>" +
+      esc(s.name || s.parent || "subagent") +
+      "</b> " +
+      (e ? "✓ 종료" : "⏳ 진행 중") +
+      (s.meta && s.meta.description ? ' <span class="muted">' + esc(s.meta.description) + "</span>" : "")
+    );
+  }
+
+  // Append only new subagent lines so open <details class="line"> inside subagents stay open
+  function syncSubLines(linesBox, lines) {
+    const renderedCount = linesBox.children.length;
+    for (let i = renderedCount; i < lines.length; i++) {
+      const wrap = el("div");
+      wrap.innerHTML = renderSubLine(lines[i]);
+      const child = wrap.firstElementChild || wrap;
+      linesBox.appendChild(child);
+    }
+  }
+
+  function renderPlainTraceHtml(e) {
     switch (e.kind) {
       case "status":
         return '<div class="item status">· ' + esc(e.text) + "</div>";
@@ -1340,13 +1651,7 @@
     }
   }
 
-  function summarize(s) {
-    if (!s) return "";
-    s = String(s).replace(/\s+/g, " ");
-    return s.length > 90 ? s.slice(0, 90) + "…" : s;
-  }
-
-  // ---------- Right Panel: Participant Cards & Queue (Brief Section 3 & 5) ----------
+  // ---------- Right Panel: In-place Participant Cards (Fix #6 & V5) ----------
   function getEffortsForModel(info, modelId) {
     if (info && info.model_efforts && Array.isArray(info.model_efforts[modelId])) {
       return info.model_efforts[modelId];
@@ -1362,98 +1667,172 @@
   function renderParticipants() {
     const box = $("#participants");
     if (!box || !state.room) return;
-    box.innerHTML = "";
+
+    const validIds = new Set(state.room.participants.map((p) => p.id));
+    Array.from(box.children).forEach((child) => {
+      if (child.dataset && child.dataset.pid && !validIds.has(child.dataset.pid)) {
+        child.remove();
+      }
+    });
 
     for (const p of state.room.participants) {
       const info = state.providers.find((x) => x.id === p.id) || {};
-      const card = el("div", "pcard" + (p.enabled ? "" : " off"));
+      let card = $("#pcard-" + p.id, box);
+      if (!card) {
+        card = buildParticipantCardSkeleton(p, info);
+        box.appendChild(card);
+      }
+      updateParticipantCardInPlace(card, p, info);
+    }
+  }
 
-      // 1. Header: Name + Steer shortcut + Switch
-      const top = el("div", "top");
-      top.appendChild(el("span", "name " + p.id, (LABEL[p.id] || p.label || p.id) + " @" + p.id));
-      const steerBtn = el("button", "ghost", "🎯 조정");
-      steerBtn.type = "button";
-      steerBtn.style.padding = "2px 8px";
-      steerBtn.style.minHeight = "24px";
-      steerBtn.style.fontSize = "11px";
-      steerBtn.title = "@" + p.id + " 에게만 1회성 조정 메시지 보내기";
-      steerBtn.onclick = () => {
-        closeDrawers();
-        setTarget(p.id, true);
-      };
-      top.appendChild(steerBtn);
+  function buildParticipantCardSkeleton(p, info) {
+    const card = el("div", "pcard");
+    card.id = "pcard-" + p.id;
+    card.dataset.pid = p.id;
 
-      const sw = el("button", "switch" + (p.enabled ? " on" : ""));
-      sw.type = "button";
-      sw.setAttribute("role", "switch");
+    const top = el("div", "top");
+    top.appendChild(el("span", "name " + p.id, (LABEL[p.id] || p.label || p.id) + " @" + p.id));
+
+    const steerBtn = el("button", "ghost steer-btn", "🎯 조정");
+    steerBtn.type = "button";
+    steerBtn.style.padding = "2px 8px";
+    steerBtn.style.minHeight = "24px";
+    steerBtn.style.fontSize = "11px";
+    steerBtn.title = "@" + p.id + " 에게만 1회성 조정 메시지 보내기";
+    steerBtn.onclick = () => {
+      closeDrawers();
+      setTarget(p.id, true);
+    };
+    top.appendChild(steerBtn);
+
+    const sw = el("button", "switch");
+    sw.type = "button";
+    sw.setAttribute("role", "switch");
+    sw.setAttribute("aria-label", (LABEL[p.id] || p.id) + " 참여 켜기/끄기");
+    sw.onclick = () => {
+      const cur = state.room && state.room.participants.find((x) => x.id === p.id);
+      if (cur) patchParticipant(p.id, { enabled: !cur.enabled });
+    };
+    top.appendChild(sw);
+    card.appendChild(top);
+
+    const unavailSlot = el("div", "unavail-slot");
+    card.appendChild(unavailSlot);
+
+    const selRow = el("div", "sel");
+    const ms = el("select", "model-sel");
+    ms.title = "모델 선택";
+    ms.setAttribute("aria-label", (LABEL[p.id] || p.id) + " 모델");
+    selRow.appendChild(ms);
+
+    const es = el("select", "effort-sel");
+    es.title = "추론 노력 선택";
+    es.setAttribute("aria-label", (LABEL[p.id] || p.id) + " 추론 노력");
+    selRow.appendChild(es);
+    card.appendChild(selRow);
+
+    es.onchange = () => patchParticipant(p.id, { effort: es.value });
+    ms.onchange = () => {
+      const curInfo = state.providers.find((x) => x.id === p.id) || info;
+      const curPart = (state.room && state.room.participants.find((x) => x.id === p.id)) || p;
+      const newModel = ms.value;
+      const curEff = es.hidden ? curPart.effort : es.value;
+      const effList = getEffortsForModel(curInfo, newModel);
+      syncEffortSelect(es, effList, curEff);
+      const selected = effList.length ? es.value : "";
+      patchParticipant(p.id, { model: newModel, effort: selected });
+    };
+
+    const stLine = el("div", "status-line");
+    card.appendChild(stLine);
+
+    const stats = el("div", "stats");
+    card.appendChild(stats);
+
+    const limBox = el("div", "pcard-limits");
+    card.appendChild(limBox);
+
+    return card;
+  }
+
+  function syncEffortSelect(es, effList, currentEffort) {
+    if (!effList.length) {
+      es.hidden = true;
+      es.dataset.effKey = "";
+      es.innerHTML = "";
+      return "";
+    }
+    es.hidden = false;
+    const key = effList.join("|");
+    if (es.dataset.effKey !== key) {
+      es.dataset.effKey = key;
+      es.innerHTML = "";
+      for (const e of effList) {
+        const o = el("option", "", e);
+        o.value = e;
+        es.appendChild(o);
+      }
+    }
+    const selected = effList.includes(currentEffort) ? currentEffort : pickFallbackEffort(effList);
+    if (document.activeElement !== es && es.value !== selected) {
+      es.value = selected;
+    } else if (!effList.includes(es.value)) {
+      es.value = selected;
+    }
+    return es.value;
+  }
+
+  function updateParticipantCardInPlace(card, p, info) {
+    card.className = "pcard" + (p.enabled ? "" : " off");
+
+    const sw = card.querySelector(".switch");
+    if (sw) {
+      sw.className = "switch" + (p.enabled ? " on" : "");
       sw.setAttribute("aria-checked", p.enabled ? "true" : "false");
-      sw.setAttribute("aria-label", (LABEL[p.id] || p.id) + " 참여 켜기/끄기");
       sw.title = p.enabled ? "참여 중 (클릭하여 끄기)" : "꺼짐 (클릭하여 켜기)";
-      sw.onclick = () => patchParticipant(p.id, { enabled: !p.enabled });
-      top.appendChild(sw);
-      card.appendChild(top);
+    }
 
+    const unavailSlot = card.querySelector(".unavail-slot");
+    if (unavailSlot) {
       if (info.available === false) {
-        card.appendChild(el("div", "unavailable", "⚠ CLI를 찾지 못함 (" + (info.command || p.id) + ")"));
+        unavailSlot.innerHTML = '<div class="unavailable">⚠ CLI를 찾지 못함 (' + esc(info.command || p.id) + ")</div>";
+      } else if (unavailSlot.hasChildNodes()) {
+        unavailSlot.innerHTML = "";
       }
+    }
 
-      // 2. Model & Reasoning Effort selectors (Brief Section 5: model_efforts[model] -> efforts)
-      const selRow = el("div", "sel");
-      const ms = el("select");
-      ms.title = "모델 선택";
-      ms.setAttribute("aria-label", (LABEL[p.id] || p.id) + " 모델");
-      for (const m of info.models || []) {
-        const o = el("option", "", m.label);
-        o.value = m.id;
-        ms.appendChild(o);
+    const ms = card.querySelector(".model-sel");
+    if (ms) {
+      const models = [...(info.models || [])];
+      if (p.model && !models.some((m) => m.id === p.model)) {
+        models.push({ id: p.model, label: p.model });
       }
-      if (p.model && ![...ms.options].some((o) => o.value === p.model)) {
-        const o = el("option", "", p.model);
-        o.value = p.model;
-        ms.appendChild(o);
-      }
-      ms.value = p.model;
-      selRow.appendChild(ms);
-
-      const es = el("select");
-      es.title = "추론 노력 선택";
-      es.setAttribute("aria-label", (LABEL[p.id] || p.id) + " 추론 노력");
-
-      const populateEfforts = (modelId, currentEffort) => {
-        const effList = getEffortsForModel(info, modelId);
-        es.innerHTML = "";
-        if (!effList.length) {
-          es.hidden = true;
-          return { effList, selected: "" };
+      const mKey = models.map((m) => m.id + ":" + m.label).join("|");
+      if (ms.dataset.mKey !== mKey) {
+        ms.dataset.mKey = mKey;
+        ms.innerHTML = "";
+        for (const m of models) {
+          const o = el("option", "", m.label);
+          o.value = m.id;
+          ms.appendChild(o);
         }
-        es.hidden = false;
-        for (const e of effList) {
-          const o = el("option", "", e);
-          o.value = e;
-          es.appendChild(o);
-        }
-        const selected = effList.includes(currentEffort)
-          ? currentEffort
-          : pickFallbackEffort(effList);
-        es.value = selected;
-        return { effList, selected };
-      };
+      }
+      if (document.activeElement !== ms && ms.value !== p.model) {
+        ms.value = p.model;
+      }
+    }
 
-      populateEfforts(p.model, p.effort || info.default_effort);
-      es.onchange = () => patchParticipant(p.id, { effort: es.value });
+    const es = card.querySelector(".effort-sel");
+    if (es) {
+      const effList = getEffortsForModel(info, p.model);
+      syncEffortSelect(es, effList, p.effort || info.default_effort);
+    }
 
-      ms.onchange = () => {
-        const newModel = ms.value;
-        const curEff = es.hidden ? p.effort : es.value;
-        const { selected } = populateEfforts(newModel, curEff);
-        patchParticipant(p.id, { model: newModel, effort: selected });
-      };
-
-      selRow.appendChild(es);
-      card.appendChild(selRow);
-
-      // 3. Single-line Status · Current Tool · Elapsed Time (Brief J1 & Section 2.1)
-      const stLine = el("div", "status-line " + (p.status || "idle"));
+    const stLine = card.querySelector(".status-line");
+    if (stLine) {
+      stLine.className = "status-line " + (p.status || "idle");
+      stLine.innerHTML = "";
       const stMain = el("span", "status-main");
       if (p.status === "running") {
         stMain.appendChild(el("span", "spin"));
@@ -1470,18 +1849,18 @@
         stMain.textContent = p.enabled ? "✓ 대기 (idle)" : "⏸ 비활성 (꺼짐)";
         stLine.appendChild(stMain);
       }
-      card.appendChild(stLine);
+    }
 
-      // 4. Stats: Context gauge + Room cumulative tokens
-      const t = p.totals || {};
-      const stats = el("div", "stats");
+    const t = p.totals || {};
+    const stats = card.querySelector(".stats");
+    if (stats) {
+      stats.innerHTML = "";
       const addStatRow = (k, v) => {
         const r = el("div", "stat-row");
         r.appendChild(el("span", "", k));
         r.appendChild(el("b", "", v));
         stats.appendChild(r);
       };
-
       if (p.context_window > 0) {
         const pct = (p.context_tokens / p.context_window) * 100;
         addStatRow(
@@ -1490,17 +1869,21 @@
         );
         stats.appendChild(usageGauge(pct, false));
       }
-
       addStatRow(
         "이 방 누적",
         "입력 " + fmtK(t.input) + " · 출력 " + fmtK(t.output) + " · 캐시 " + fmtK(t.cached)
       );
       if (t.cost_usd) addStatRow("누적 비용", "$" + t.cost_usd.toFixed(3));
-      addStatRow("완료 턴", (p.turns || 0) + "턴" + (p.session_id ? " · 세션 " + p.session_id.slice(0, 8) + "…" : ""));
-      card.appendChild(stats);
+      addStatRow(
+        "완료 턴",
+        (p.turns || 0) + "턴" + (p.session_id ? " · 세션 " + p.session_id.slice(0, 8) + "…" : "")
+      );
+    }
 
-      // 5. Provider 5h & Weekly Remaining Limits inside participant card (Brief Section 3)
-      const limBox = el("div", "pcard-limits");
+    // V5: Grid-aligned limit rows with shortened labels and full tooltip
+    const limBox = card.querySelector(".pcard-limits");
+    if (limBox) {
+      limBox.innerHTML = "";
       const lim = state.limits[p.id];
       const wins = (lim && lim.windows) || [];
       if (!lim || !wins.length) {
@@ -1512,11 +1895,17 @@
         for (const w of wins) {
           const rem = Math.max(0, Math.min(100, 100 - Number(w.used_percent || 0)));
           const wRow = el("div", "limit-win-row");
-          wRow.appendChild(el("span", "muted", w.label));
+          const lbl = el("span", "muted limit-win-label", shortWinLabel(w.label));
+          lbl.title = w.label + " (남음 " + rem.toFixed(0) + "%)";
+          wRow.appendChild(lbl);
           wRow.appendChild(remainGauge(rem, false));
-          wRow.appendChild(
-            el("span", "", "남음 " + rem.toFixed(0) + "%" + (w.resets_at ? " · " + fmtReset(w.resets_at) : ""))
+          const val = el(
+            "span",
+            "limit-win-val",
+            rem.toFixed(0) + "%" + (w.resets_at ? " · " + fmtReset(w.resets_at) : "")
           );
+          val.title = w.label + ": 남음 " + rem.toFixed(0) + "%" + (w.resets_at ? " (리셋 " + fmtReset(w.resets_at) + ")" : "");
+          wRow.appendChild(val);
           limBox.appendChild(wRow);
         }
         const extra = [lim.plan ? "플랜 " + lim.plan : "", lim.credits ? "크레딧 " + lim.credits : "", lim.note || ""]
@@ -1526,9 +1915,6 @@
           limBox.appendChild(el("div", "small-note muted", extra));
         }
       }
-      card.appendChild(limBox);
-
-      box.appendChild(card);
     }
   }
 
@@ -1601,6 +1987,19 @@
     if (bd) bd.hidden = true;
   }
 
+  function closeMoreMenu() {
+    const more = $("#more-actions");
+    if (more && more.open) more.open = false;
+  }
+
+  function closeMentionPop() {
+    const pop = $("#mention-pop");
+    const input = $("#input");
+    if (pop) pop.hidden = true;
+    if (input) input.removeAttribute("aria-activedescendant");
+    state.mentionCands = [];
+  }
+
   function toggleDrawer(side) {
     const cls = side === "left" ? "show-left" : "show-right";
     const other = side === "left" ? "show-right" : "show-left";
@@ -1655,12 +2054,14 @@
           e.preventDefault();
           state.mentionIdx = (state.mentionIdx + 1) % state.mentionCands.length;
           renderMentionButtons();
+          announce(state.mentionCands[state.mentionIdx].label);
           return;
         }
         if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
           e.preventDefault();
           state.mentionIdx = (state.mentionIdx - 1 + state.mentionCands.length) % state.mentionCands.length;
           renderMentionButtons();
+          announce(state.mentionCands[state.mentionIdx].label);
           return;
         }
         if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.isComposing)) {
@@ -1670,7 +2071,7 @@
         }
         if (e.key === "Escape") {
           e.preventDefault();
-          pop.hidden = true;
+          closeMentionPop();
           return;
         }
       }
@@ -1696,11 +2097,12 @@
         state.autoTrace = autoChk.checked;
         localStorage.setItem("rt.autoTrace", state.autoTrace ? "1" : "0");
         if (state.autoTrace && state.room) {
+          state.userCollapsed.clear();
           for (const id of state.order) {
             const m = state.messages.get(id);
             if (m && m.kind === "agent" && (m.status === "streaming" || m.trace > 0)) {
               state.expanded.add(id);
-              ensureAndRenderTrace(id);
+              if ($("#m-" + id)) ensureAndRenderTrace(id);
             }
           }
         }
@@ -1713,11 +2115,28 @@
       }).catch((e) => alert(e.message));
     $("#btn-stop").onclick = () =>
       state.roomId && api("POST", "/api/rooms/" + state.roomId + "/stop").catch((e) => alert(e.message));
-    $("#btn-reset").onclick = () =>
-      state.roomId &&
-      confirm("각 에이전트의 CLI 세션을 버릴까요? 다음 턴부터 대화 전체를 새로 읽습니다.") &&
-      api("POST", "/api/rooms/" + state.roomId + "/reset").catch((e) => alert(e.message));
-    $("#btn-settings").onclick = () => openRoomDialog(state.room);
+    $("#btn-reset").onclick = () => {
+      closeMoreMenu();
+      if (
+        state.roomId &&
+        confirm("각 에이전트의 CLI 세션을 버릴까요? 다음 턴부터 대화 전체를 새로 읽습니다.")
+      ) {
+        api("POST", "/api/rooms/" + state.roomId + "/reset").catch((e) => alert(e.message));
+      }
+    };
+    $("#btn-export").onclick = () => closeMoreMenu();
+    $("#btn-settings").onclick = () => {
+      closeMoreMenu();
+      openRoomDialog(state.room);
+    };
+
+    // Close more-actions menu when clicking outside
+    document.addEventListener("click", (e) => {
+      const more = $("#more-actions");
+      if (more && more.open && !more.contains(e.target)) {
+        more.open = false;
+      }
+    });
 
     // Responsive drawers
     $("#btn-right").onclick = () => toggleDrawer("right");
@@ -1735,6 +2154,7 @@
     if (backdrop) backdrop.onclick = closeDrawers;
 
     $("#btn-delete").onclick = async () => {
+      closeMoreMenu();
       if (!confirm("방과 대화 기록을 영구 삭제할까요? 되돌릴 수 없습니다.")) return;
       await api("DELETE", "/api/rooms/" + state.roomId);
       state.roomId = null;
@@ -1746,17 +2166,22 @@
       loadRooms();
     };
 
-    // Timeline scroll-up pagination for >200 messages
+    // Timeline scroll pagination (both upward and downward within 200 DOM cap)
     const tl = $("#timeline");
     if (tl) {
       tl.addEventListener("scroll", () => {
-        if (tl.scrollTop <= 36 && state.order.length > state.visibleCount) {
-          loadMoreMessages();
+        if (tl.scrollTop <= 36 && state.winStart > 0) {
+          loadOlderMessages();
+        } else if (
+          tl.scrollHeight - tl.scrollTop - tl.clientHeight <= 36 &&
+          state.winEnd < state.order.length
+        ) {
+          loadNewerMessages();
         }
       });
     }
 
-    // Global keyboard shortcuts (Section 2 Principle 7: Ctrl+. stop all, / focus input, Esc clear target/drawers)
+    // Global keyboard shortcuts
     document.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === ".") {
         if (state.roomId) {
@@ -1769,7 +2194,12 @@
       if (e.key === "Escape") {
         const pop = $("#mention-pop");
         if (pop && !pop.hidden) {
-          pop.hidden = true;
+          closeMentionPop();
+          return;
+        }
+        const more = $("#more-actions");
+        if (more && more.open) {
+          more.open = false;
           return;
         }
         if (document.body.classList.contains("show-left") || document.body.classList.contains("show-right")) {
@@ -1812,7 +2242,6 @@
     const t = state.target;
     const targetParticipant = t ? state.room.participants.find((x) => x.id === t) : null;
 
-    // Warn immediately while typing if a disabled participant is mentioned or targeted (Section 2 Principle 5)
     if (targetParticipant && !targetParticipant.enabled) {
       hint.className = "composer-hint warn";
       hint.textContent =
@@ -1844,6 +2273,7 @@
     }
   }
 
+  // Fix #7: Connect mention candidates to accessibility tree via option IDs & aria-activedescendant
   function mentionPopup() {
     const input = $("#input");
     const pop = $("#mention-pop");
@@ -1851,8 +2281,7 @@
     const before = input.value.slice(0, input.selectionStart);
     const m = before.match(/(?:^|\s)@([\w-]*)$/);
     if (!m) {
-      pop.hidden = true;
-      state.mentionCands = [];
+      closeMentionPop();
       return;
     }
     const q = m[1].toLowerCase();
@@ -1866,41 +2295,45 @@
     ].filter((item) => item.id.startsWith(q));
 
     if (!cands.length) {
-      pop.hidden = true;
-      state.mentionCands = [];
+      closeMentionPop();
       return;
     }
     state.mentionCands = cands;
     if (state.mentionIdx >= cands.length) state.mentionIdx = 0;
-    renderMentionButtons();
     pop.hidden = false;
+    renderMentionButtons();
   }
 
   function renderMentionButtons() {
     const pop = $("#mention-pop");
+    const input = $("#input");
     if (!pop) return;
     pop.innerHTML = "";
     state.mentionCands.forEach((cand, idx) => {
-      const b = el("button", idx === state.mentionIdx ? "active" : "", cand.label);
+      const optId = "mention-opt-" + idx;
+      const isSelected = idx === state.mentionIdx;
+      const b = el("button", isSelected ? "active" : "", cand.label);
       b.type = "button";
+      b.id = optId;
       b.setAttribute("role", "option");
-      b.setAttribute("aria-selected", idx === state.mentionIdx ? "true" : "false");
+      b.setAttribute("aria-selected", isSelected ? "true" : "false");
       b.onclick = () => applyMention(cand);
       pop.appendChild(b);
+      if (isSelected && input && !pop.hidden) {
+        input.setAttribute("aria-activedescendant", optId);
+      }
     });
   }
 
   function applyMention(cand) {
     if (!cand) return;
     const input = $("#input");
-    const pop = $("#mention-pop");
     const before = input.value.slice(0, input.selectionStart);
     const after = input.value.slice(input.selectionStart);
     const replaced = before.replace(/@[\w-]*$/, "@" + cand.id + " ");
     input.value = replaced + after;
     input.selectionStart = input.selectionEnd = replaced.length;
-    pop.hidden = true;
-    state.mentionCands = [];
+    closeMentionPop();
     input.focus();
     updateHint();
   }
@@ -1911,12 +2344,11 @@
     if (!text || !state.roomId) return;
     const target = state.target;
     input.value = "";
-    $("#mention-pop").hidden = true;
-    state.mentionCands = [];
+    closeMentionPop();
     try {
       await api("POST", "/api/rooms/" + state.roomId + "/messages", { text, target });
       if (target) {
-        setTarget("", false); // one-shot: automatically reset target after sending
+        setTarget("", false);
       } else {
         updateHint();
       }
