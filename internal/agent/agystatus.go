@@ -22,6 +22,7 @@ import (
 // AgyStatus is the stored statusLine payload.
 type AgyStatus struct {
 	ObservedAt int64           `json:"observed_at"` // unix ms when agy sent it
+	QuotaAt    int64           `json:"quota_at"`    // unix ms of the payload the quota came from
 	Data       json.RawMessage `json:"data"`
 }
 
@@ -42,11 +43,31 @@ func WriteAgyStatus(path string, payload []byte, now time.Time) error {
 			kept[k] = v
 		}
 	}
+	st := AgyStatus{ObservedAt: now.UnixMilli(), QuotaAt: now.UnixMilli()}
+	if _, ok := kept["quota"]; !ok {
+		// agy also redraws its status line before it knows the quota (for example
+		// while `agy models` runs). That means "not known yet", not "no quota":
+		// keep the last observed quota together with the time it was observed.
+		prev, err := readAgyStatus(path)
+		switch {
+		case err == nil:
+			var old map[string]json.RawMessage
+			if json.Unmarshal(prev.Data, &old) == nil {
+				if q, ok := old["quota"]; ok {
+					kept["quota"] = q
+					st.QuotaAt = prev.QuotaAt
+				}
+			}
+		case !os.IsNotExist(err):
+			return err
+		}
+	}
 	data, err := json.Marshal(kept)
 	if err != nil {
 		return err
 	}
-	b, err := json.Marshal(AgyStatus{ObservedAt: now.UnixMilli(), Data: data})
+	st.Data = data
+	b, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
@@ -90,7 +111,7 @@ func ParseAgyLimits(st AgyStatus) (Limits, error) {
 	if err := json.Unmarshal(st.Data, &d); err != nil {
 		return Limits{}, err
 	}
-	l := Limits{Provider: "agy", At: st.ObservedAt, Plan: d.PlanTier}
+	l := Limits{Provider: "agy", At: st.QuotaAt, Plan: d.PlanTier}
 	for _, w := range agyQuotaWindows {
 		q, ok := d.Quota[w.key]
 		if !ok || q.Remaining == nil {
@@ -105,7 +126,7 @@ func ParseAgyLimits(st AgyStatus) (Limits, error) {
 			}
 			win.ResetsAt = t.Unix()
 		case q.ResetIn != nil:
-			win.ResetsAt = st.ObservedAt/1000 + int64(*q.ResetIn)
+			win.ResetsAt = st.QuotaAt/1000 + int64(*q.ResetIn)
 		}
 		l.Windows = append(l.Windows, win)
 	}
@@ -121,12 +142,8 @@ func (a *Agy) CurrentLimits() (Limits, bool) {
 	if a.statusPath == "" {
 		return Limits{}, false
 	}
-	b, err := os.ReadFile(a.statusPath)
+	st, err := readAgyStatus(a.statusPath)
 	if err != nil {
-		return Limits{}, false
-	}
-	var st AgyStatus
-	if err := json.Unmarshal(b, &st); err != nil {
 		return Limits{}, false
 	}
 	l, err := ParseAgyLimits(st)
@@ -134,4 +151,16 @@ func (a *Agy) CurrentLimits() (Limits, bool) {
 		return Limits{}, false
 	}
 	return l, true
+}
+
+func readAgyStatus(path string) (AgyStatus, error) {
+	var st AgyStatus
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return st, err
+	}
+	if err := json.Unmarshal(b, &st); err != nil {
+		return st, fmt.Errorf("%s 손상: %w", path, err)
+	}
+	return st, nil
 }

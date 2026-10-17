@@ -90,6 +90,14 @@ func TestAgyStatusRoundTrip(t *testing.T) {
 	if w := l.Windows[0]; w.Label != "Gemini 5시간" || w.UsedPercent < 27.9 || w.UsedPercent > 28.1 || w.ResetsAt != now.Unix()+9660 {
 		t.Fatalf("5h window %+v", w)
 	}
+	// A redraw without quota (agy does this while `agy models` runs) keeps the last quota and its time.
+	later := now.Add(10 * time.Minute)
+	if err := WriteAgyStatus(path, []byte(`{"model":{"id":"x"},"context_window":{}}`), later); err != nil {
+		t.Fatal(err)
+	}
+	if l, ok := a.CurrentLimits(); !ok || len(l.Windows) != 2 || l.At != now.UnixMilli() || l.Windows[0].ResetsAt != now.Unix()+9660 {
+		t.Fatalf("quota must survive a quota-less redraw with its own time: %+v ok=%v", l, ok)
+	}
 	abs := []byte(`{"quota":{"gemini-weekly":{"remaining_fraction":0.4,"reset_time":"2026-10-20T00:00:00Z"}}}`)
 	WriteAgyStatus(path, abs, now)
 	if l, ok := a.CurrentLimits(); !ok || l.Windows[0].Label != "Gemini 주간" || l.Windows[0].ResetsAt != 1792454400 {
@@ -101,7 +109,7 @@ func TestAgyStatusRoundTrip(t *testing.T) {
 	if _, ok := NewAgy("agy", filepath.Join(t.TempDir(), "missing.json")).CurrentLimits(); ok {
 		t.Fatal("missing file must report not ok")
 	}
-	os.WriteFile(path, []byte(`{"observed_at":1,"data":{"model":{}}}`), 0o600)
+	os.WriteFile(path, []byte(`{"observed_at":1,"quota_at":1,"data":{"model":{}}}`), 0o600)
 	if _, ok := a.CurrentLimits(); ok {
 		t.Fatal("status without quota must report not ok")
 	}
