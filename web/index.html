@@ -12,7 +12,7 @@
 <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
 
 <div id="app">
-  <nav id="sidebar" aria-label="방 목록 및 공급사 상태">
+  <nav id="sidebar" aria-label="방 목록 및 계정 사용량">
     <div class="side-head">
       <div class="brand-row">
         <h1>Roundtable</h1>
@@ -27,10 +27,24 @@
       <input id="room-search" type="search" placeholder="방 이름·폴더 검색…" aria-label="방 목록 검색">
     </div>
     <ul id="room-list" aria-label="채팅방 목록"></ul>
-    <div id="provider-panel">
-      <h2>공급사 CLI</h2>
-      <div id="limits"></div>
-    </div>
+    <section id="provider-panel" aria-labelledby="usage-title">
+      <div class="usage-panel-head">
+        <h2 id="usage-title" tabindex="-1">남은 사용량</h2>
+        <button type="button" id="btn-refresh-usage" class="ghost" title="이 방에 추가한 공급사의 사용량 갱신">새로고침</button>
+      </div>
+      <p class="usage-scope muted">이 방의 공급사 · 계정 기준</p>
+      <div id="token-strip" class="token-strip"></div>
+      <div id="usage-status" class="muted" role="status"></div>
+      <details id="usage-detail" class="usage-detail">
+        <summary>관측 정보 · 상세</summary>
+        <div id="usage-detail-content"></div>
+      </details>
+      <details id="provider-details">
+        <summary>CLI 설치 상태</summary>
+        <p class="small-note muted">실행 프로그램을 찾았는지만 확인해. 로그인·구독 여부는 별도로 확인해야 해.</p>
+        <div id="limits"></div>
+      </details>
+    </section>
   </nav>
 
   <main id="main" aria-label="대화 및 작업 영역">
@@ -103,6 +117,7 @@
             <label class="rounds" for="rounds">라운드 <input id="rounds" type="number" min="1" max="10" value="3" aria-label="토론 라운드 수"></label>
             <button type="button" id="btn-discuss" title="활성 참가자들이 라운드별로 순서대로 토론합니다">토론 시작</button>
             <button type="button" id="btn-stop" class="danger" title="실행 중인 모든 턴을 끊고 대기열과 토론을 비웁니다 (Ctrl+.)">모두 중지</button>
+            <button type="button" id="btn-usage" class="mobile-only" aria-label="남은 사용량 열기" aria-controls="provider-panel">사용량</button>
             <button type="button" id="btn-right" class="tablet-only" aria-label="참가자 및 대기열 서랍 열기/닫기" title="참가자·대기열 패널 보이기/숨기기">참가자</button>
             <details id="more-actions" class="more-menu">
               <summary class="button more-summary" aria-label="추가 동작 메뉴">더보기 ▾</summary>
@@ -118,15 +133,6 @@
               </div>
             </details>
           </div>
-        </div>
-        <div class="usage-bar" aria-label="계정 사용량">
-          <div id="token-strip" class="token-strip"></div>
-          <details id="usage-detail" class="usage-detail">
-            <summary>사용량 상세</summary>
-            <div id="usage-detail-content"></div>
-          </details>
-          <button type="button" id="btn-refresh-usage" class="ghost" title="이 방에서 참여 중인 공급사의 사용량만 갱신">새로고침</button>
-          <span id="usage-status" class="muted" role="status"></span>
         </div>
       </header>
 
