@@ -110,12 +110,15 @@
           const title = token && token.title != null ? String(token.title) : "";
           const check = classifyMarkdownUrl(href);
           if (check.kind === "file") {
-            const pathTxt = href.replace(/^file:\/\/\/?/i, "");
-            const cleanText = text.trim();
-            if (cleanText && cleanText !== href && cleanText !== pathTxt) {
-              return esc(cleanText) + ' <code class="file-path">(' + esc(pathTxt) + ")</code>";
-            }
-            return '<code class="file-path">' + esc(pathTxt || href) + "</code>";
+            // Agents cite local files as file:///abs/path#L10-L20. A browser cannot open
+            // them, and the absolute path drowns the sentence: show the agent's label
+            // (or file name + lines) and keep the full path in the tooltip.
+            const pathTxt = decodeURIComponent(href.replace(/^file:\/\/\/?/i, ""));
+            const m = pathTxt.match(/^(.*?)(?:#L(\d+)(?:-L(\d+))?)?$/);
+            const file = m[1].split(/[\\/]/).pop();
+            const lines = m[2] ? ":" + m[2] + (m[3] ? "-" + m[3] : "") : "";
+            const label = text.trim() && text.trim() !== href ? text.trim() : file + lines;
+            return '<code class="file-path" title="' + esc(pathTxt) + '">' + esc(label) + "</code>";
           }
           if (check.kind !== "safe") {
             return esc(text || href);
