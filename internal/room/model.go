@@ -90,16 +90,17 @@ type Message struct {
 
 // Turn is a queued request for one agent to speak.
 type Turn struct {
-	ID       string     `json:"id"`
-	Agent    string     `json:"agent"`
-	Reason   string     `json:"reason"`
-	Group    string     `json:"group"` // turns sharing a group use one conversation snapshot
-	Depth    int        `json:"depth"`
-	Round    int        `json:"round,omitempty"`
-	Status   string     `json:"status"` // queued | running
-	Created  int64      `json:"created"`
-	input    *turnInput // shared frozen conversation; waiting turns are not persisted
-	priority bool       // targeted user messages precede ordinary waiting turns
+	ID       string `json:"id"`
+	Agent    string `json:"agent"`
+	Reason   string `json:"reason"`
+	Group    string `json:"group"` // broadcast members share the trigger message cap
+	Cap      int64  `json:"cap"`   // inclusive message sequence boundary; discussion reads current history
+	Depth    int    `json:"depth"`
+	Round    int    `json:"round,omitempty"`
+	Status   string `json:"status"` // queued | running
+	Created  int64  `json:"created"`
+	parallel bool   // broadcast prompt instructions survive independent start times
+	priority bool   // targeted user messages precede ordinary waiting turns
 }
 
 // TraceLine binds an agent event to the message it belongs to.

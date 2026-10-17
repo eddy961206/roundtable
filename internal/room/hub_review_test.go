@@ -96,11 +96,14 @@ func TestUndeliveredSteerIsRedelivered(t *testing.T) {
 		t.Fatal("steer should be accepted live while running")
 	}
 	waitIdle(t, hub, r.ID)
+	if a.calls() != 2 || !strings.Contains(a.prompts[1], "[User] 조정") {
+		t.Fatalf("undelivered steer must immediately get a retry turn: %v", a.prompts)
+	}
 	hub.PostUser(r.ID, "셋째", "")
 	waitIdle(t, hub, r.ID)
 	last := a.prompts[len(a.prompts)-1]
-	if !strings.Contains(last, "[User] 조정") {
-		t.Fatalf("undelivered steer must be redelivered next turn:\n%s", last)
+	if strings.Contains(last, "[User] 조정") {
+		t.Fatalf("retried steer must not be delivered again:\n%s", last)
 	}
 }
 

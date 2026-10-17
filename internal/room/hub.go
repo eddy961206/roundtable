@@ -78,9 +78,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		for _, t := range traces[r.ID] {
 			rs.traces[t.MsgID] = append(rs.traces[t.MsgID], t.Event)
 		}
-		for _, p := range r.Participants {
-			p.Status, p.StatusText = "idle", ""
-		}
+		rs.refreshParticipantStates()
 		h.rooms[r.ID] = rs
 	}
 	return h, nil
@@ -345,10 +343,7 @@ func (rs *roomState) dropQueuedFor(h *Hub, agentID string) {
 			h.discussionStep(rs, t.Agent, "PASS", "cancelled")
 		}
 	}
-	if p := rs.room.participant(agentID); p != nil && p.Status == "queued" {
-		p.Status = "idle"
-		rs.broadcast("participant", p)
-	}
+	rs.refreshParticipantStates()
 	rs.broadcast("queue", rs.queueView())
 }
 
@@ -365,9 +360,6 @@ func (h *Hub) ResetSessions(id string) error {
 		p.Unseen = nil
 	}
 	rs.resetGen++
-	for _, t := range rs.queue {
-		t.input = nil // the next session must read a fresh group snapshot
-	}
 	rs.addSystem("세션을 초기화했어. 다음 턴부터 각 에이전트는 대화 전체를 새로 읽어.")
 	rs.broadcast("room", rs.room)
 	return h.store.SaveRoom(rs.room)
@@ -492,7 +484,7 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 		_ = h.store.AppendMessage(id, m)
 		_ = h.store.SaveRoom(rs.room)
 		if !m.Live {
-			rs.enqueueFront(&Turn{ID: newID(), Agent: target, Reason: "mention", Group: m.ID, Created: nowMs(), Status: "queued"})
+			rs.enqueueFront(&Turn{ID: newID(), Agent: target, Reason: "mention", Group: m.ID, Cap: m.Seq, Created: nowMs(), Status: "queued"})
 			h.pump(rs)
 		}
 		mc := *m
@@ -523,7 +515,7 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 		targets, reason = ids, "broadcast"
 	}
 	for _, t := range targets {
-		rs.enqueue(&Turn{ID: newID(), Agent: t, Reason: reason, Group: m.ID, Created: nowMs(), Status: "queued"})
+		rs.enqueue(&Turn{ID: newID(), Agent: t, Reason: reason, Group: m.ID, Cap: m.Seq, parallel: len(targets) > 1, Created: nowMs(), Status: "queued"})
 	}
 	h.pump(rs)
 	mc := *m
@@ -541,10 +533,6 @@ func (rs *roomState) runningFor(agentID string) *running {
 
 func (rs *roomState) enqueue(t *Turn) {
 	rs.queue = append(rs.queue, t)
-	if p := rs.room.participant(t.Agent); p != nil && p.Status == "idle" {
-		p.Status = "queued"
-		rs.broadcast("participant", p)
-	}
 	rs.broadcast("queue", rs.queueView())
 }
 
@@ -559,10 +547,6 @@ func (rs *roomState) enqueueFront(t *Turn) {
 		}
 	}
 	rs.queue = slices.Insert(rs.queue, at, t)
-	if p := rs.room.participant(t.Agent); p != nil && p.Status == "idle" {
-		p.Status = "queued"
-		rs.broadcast("participant", p)
-	}
 	rs.broadcast("queue", rs.queueView())
 }
 
@@ -620,12 +604,7 @@ func (rs *roomState) stopLocked(why string) {
 		r.cancel()
 	}
 	rs.disc = nil
-	for _, p := range rs.room.Participants {
-		if p.Status == "queued" {
-			p.Status = "idle"
-			rs.broadcast("participant", p)
-		}
-	}
+	rs.refreshParticipantStates()
 	if dropped > 0 || len(rs.running) > 0 {
 		rs.addSystem(fmt.Sprintf("중지: %s (대기 %d건 취소, 실행 중 %d건 중단)", why, dropped, len(rs.running)))
 	}
@@ -643,6 +622,7 @@ func (h *Hub) CancelTurn(id, turnID string) error {
 	}
 	if r, ok := rs.running[turnID]; ok {
 		r.cancel()
+		rs.refreshParticipantStates()
 		return nil
 	}
 	for i, t := range rs.queue {
@@ -650,10 +630,6 @@ func (h *Hub) CancelTurn(id, turnID string) error {
 			rs.queue = append(rs.queue[:i], rs.queue[i+1:]...)
 			if t.Reason == "discussion" {
 				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
-			}
-			if p := rs.room.participant(t.Agent); p != nil && p.Status == "queued" && rs.runningFor(t.Agent) == nil {
-				p.Status = "idle"
-				rs.broadcast("participant", p)
 			}
 			rs.broadcast("queue", rs.queueView())
 			h.pump(rs)
@@ -665,65 +641,64 @@ func (h *Hub) CancelTurn(id, turnID string) error {
 
 // ---- turn execution --------------------------------------------------------
 
-// turnInput freezes a group's conversation before any member opens a reply.
-// Busy members keep this same snapshot until their own participant is free.
-type turnInput struct {
-	messages []*Message
-	parallel bool
-}
-
-// pump schedules every runnable participant. Caller holds h.mu; reserving the
-// participant and building every group member's prompt happen under this lock.
-func (h *Hub) pump(rs *roomState) {
-	inputs := map[string]*turnInput{}
+// refreshParticipantStates is the only runtime writer of participant Status.
+// Caller holds h.mu; running reservations take precedence over waiting turns.
+func (rs *roomState) refreshParticipantStates() {
+	states := map[string]string{}
 	for _, t := range rs.queue {
-		if t.input != nil {
-			inputs[t.Group] = t.input
-		}
+		states[t.Agent] = "queued"
 	}
-	for _, t := range rs.queue {
-		if t.input != nil || t.Reason == "discussion" {
+	for _, r := range rs.running {
+		states[r.turn.Agent] = "running"
+	}
+	for _, p := range rs.room.Participants {
+		status := states[p.ID]
+		if status == "" {
+			status = "idle"
+		}
+		statusText := ""
+		if status == "running" {
+			statusText = p.StatusText
+			if p.Status != "running" || rs.runningFor(p.ID).msg.Trace == 0 {
+				statusText = "생각 중"
+			}
+		}
+		if p.Status == status && p.StatusText == statusText {
 			continue
 		}
-		input := inputs[t.Group]
-		if input == nil {
-			input = &turnInput{}
-			for _, m := range rs.msgs {
-				copy := *m
-				input.messages = append(input.messages, &copy)
-			}
-			inputs[t.Group] = input
-		}
-		t.input = input
+		p.Status, p.StatusText = status, statusText
+		rs.broadcast("participant", p)
 	}
-	counts := map[*turnInput]int{}
-	for _, t := range rs.queue {
-		counts[t.input]++
-	}
-	// Render all members together, including those still waiting for their own
-	// previous turn. A waiting member is rendered again against the frozen
-	// conversation when its session/delivery state has settled.
-	drafts := map[*Turn]*prepared{}
-	for _, t := range rs.queue {
-		if t.Reason != "discussion" {
-			if counts[t.input] > 1 {
-				t.input.parallel = true
-			}
-			drafts[t] = h.buildTurn(rs, t, t.input.messages, t.input.parallel)
-		}
-	}
-	blocked := map[string]bool{}
+}
+
+// pump reserves runnable participants and builds only the turns that can start.
+// Broadcast members share a cap, not a copy of mutable streaming messages.
+// Caller holds h.mu throughout prompt construction and participant reservation.
+func (h *Hub) pump(rs *roomState) {
 	discussionBlocked := false
 	for _, run := range rs.running {
 		if run.turn.Reason == "discussion" && run.stopGen == rs.stopGen {
 			discussionBlocked = true
 		}
 	}
+	skipped := false
 	for i := 0; i < len(rs.queue); {
 		t := rs.queue[i]
-		if blocked[t.Agent] || rs.runningFor(t.Agent) != nil ||
-			(t.Reason == "discussion" && discussionBlocked) {
-			blocked[t.Agent] = true
+		p := rs.room.participant(t.Agent)
+		if p == nil || !p.Enabled || h.reg.Get(t.Agent) == nil {
+			rs.queue = slices.Delete(rs.queue, i, i+1)
+			if t.Reason == "discussion" {
+				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
+			}
+			continue
+		}
+		// Ordinary priority turns must not block a later discussion turn for
+		// the same participant, or the discussion would never finish.
+		if rs.disc != nil && t.Reason != "discussion" {
+			i++
+			continue
+		}
+		if rs.runningFor(t.Agent) != nil || (t.Reason == "discussion" && discussionBlocked) {
 			if t.Reason == "discussion" {
 				discussionBlocked = true
 			}
@@ -731,15 +706,9 @@ func (h *Hub) pump(rs *roomState) {
 			continue
 		}
 		rs.queue = slices.Delete(rs.queue, i, i+1)
-		pr := drafts[t]
-		if t.Reason == "discussion" {
-			// Discussion history must include the preceding speaker's answer.
-			pr = h.buildTurn(rs, t, rs.msgs, false)
-		}
+		pr := h.buildTurn(rs, t)
 		if pr == nil {
-			if t.Reason == "discussion" {
-				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
-			}
+			skipped = true
 			continue
 		}
 		h.prepareTurn(rs, pr)
@@ -748,10 +717,14 @@ func (h *Hub) pump(rs *roomState) {
 		}
 		go h.runTurn(rs, pr)
 	}
+	rs.refreshParticipantStates()
+	rs.broadcast("queue", rs.queueView())
+	if skipped {
+		_ = h.store.SaveRoom(rs.room)
+	}
 }
 
-// prepared is a turn whose prompt was built under the lock, so every member of
-// a parallel batch sees the same snapshot of the conversation.
+// prepared contains a prompt rendered from live messages up to the turn's cap.
 type prepared struct {
 	t        *Turn
 	p        *Participant
@@ -767,15 +740,25 @@ type prepared struct {
 }
 
 // buildTurn renders a prompt without reserving a participant. Caller holds h.mu.
-func (h *Hub) buildTurn(rs *roomState, t *Turn, messages []*Message, parallel bool) *prepared {
+func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	p := rs.room.participant(t.Agent)
 	prov := h.reg.Get(t.Agent)
 	if p == nil || !p.Enabled || prov == nil {
 		return nil
 	}
 	first := p.SessionID == ""
-	hist, seen, unseen := rs.deltaFor(p, first, messages)
-	tc := turnContext{Reason: t.Reason, Parallel: parallel && t.Reason != "discussion", Round: t.Round, FirstTurn: first}
+	cap := t.Cap
+	if t.Reason == "discussion" {
+		cap = rs.room.Seq
+	}
+	hist, seen, unseen := rs.deltaFor(p, first, cap)
+	if len(hist) == 0 && t.Reason != "discussion" {
+		// No CLI call is needed to acknowledge own/filtered messages. Keep
+		// unfinished replies as holes for a later cap to deliver exactly once.
+		p.LastSeen, p.Unseen = seen, unseen
+		return nil
+	}
+	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first}
 	if rs.disc != nil && t.Reason == "discussion" {
 		tc.TotalRounds = rs.disc.Total
 	}
@@ -796,10 +779,7 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	}
 	t.Status = "running"
 	rs.running[t.ID] = &running{turn: t, msg: msg, cancel: cancel, steer: steer, stopGen: rs.stopGen}
-	p.Status, p.StatusText = "running", "생각 중"
 	rs.broadcast("message", msg)
-	rs.broadcast("participant", p)
-	rs.broadcast("queue", rs.queueView())
 	pr.opts.Steer = steer
 	pr.msg, pr.ctx, pr.cancel = msg, ctx, cancel
 }
@@ -893,19 +873,21 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	for i, m := range run.live {
 		if msg.Status != "done" || i >= res.Steered {
 			m.Live = false
+			if err := h.store.AppendMessage(rs.room.ID, m); err != nil {
+				msg.Status, msg.Error = "error", fmt.Sprintf("미전달 조정 메시지 저장 실패: %v", err)
+			}
+			rs.broadcast("message", m)
+			// Stop still cancels all pending work. Persist the undelivered input,
+			// but never restart a turn from an older stop generation.
+			if pr.stopGen == rs.stopGen && p.Enabled {
+				rs.enqueueFront(&Turn{ID: newID(), Agent: p.ID, Reason: "mention", Group: m.ID, Cap: m.Seq, Created: nowMs(), Status: "queued"})
+			}
 		}
 	}
 	p.Turns++
-	p.Status, p.StatusText = "idle", ""
-	if rs.runningFor(p.ID) != nil || rs.queuedFor(p.ID) {
-		p.Status = "queued"
-	}
 	rs.room.UpdatedAt = nowMs()
 	_ = h.store.AppendMessage(rs.room.ID, msg)
-	_ = h.store.SaveRoom(rs.room)
 	rs.broadcast("message", msg)
-	rs.broadcast("participant", p)
-	rs.broadcast("queue", rs.queueView())
 	if h.Log != nil {
 		h.Log.Printf("turn %s %s/%s status=%s %dms err=%v", rs.room.ID, p.ID, p.Model, msg.Status, msg.Duration, err)
 	}
@@ -916,7 +898,14 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if pr.stopGen == rs.stopGen && t.Reason == "discussion" {
 		h.discussionStep(rs, p.ID, signal, msg.Status)
 	}
+	previousStatus, previousText := p.Status, p.StatusText
 	h.pump(rs)
+	_ = h.store.SaveRoom(rs.room)
+	if p.Status == previousStatus && p.StatusText == previousText {
+		// The state helper already publishes transitions. Publish unchanged
+		// state here only to deliver the updated turn/session/usage counters.
+		rs.broadcast("participant", p)
+	}
 }
 
 func applyUsage(p *Participant, prov agent.Provider, u map[string]any) {
@@ -948,18 +937,10 @@ func applyUsage(p *Participant, prov agent.Provider, u map[string]any) {
 	}
 }
 
-func (rs *roomState) queuedFor(agentID string) bool {
-	for _, t := range rs.queue {
-		if t.Agent == agentID {
-			return true
-		}
-	}
-	return false
-}
-
-// deltaFor reads past unfinished replies without losing them. Unseen retains
-// holes below LastSeen; delivery is committed only after a successful turn.
-func (rs *roomState) deltaFor(p *Participant, first bool, messages []*Message) ([]*Message, int64, []int64) {
+// deltaFor reads current message contents up to cap. Unfinished peer replies
+// remain holes below LastSeen; own replies never become undelivered holes.
+// Delivery is committed only after success (or when no CLI input is needed).
+func (rs *roomState) deltaFor(p *Participant, first bool, cap int64) ([]*Message, int64, []int64) {
 	last := p.LastSeen
 	if first {
 		last = 0
@@ -967,39 +948,26 @@ func (rs *roomState) deltaFor(p *Participant, first bool, messages []*Message) (
 	seen := last
 	var unseen []int64
 	var out []*Message
-	var snapshotEnd int64
-	if len(messages) > 0 {
-		snapshotEnd = messages[len(messages)-1].Seq
-	}
-	// An intervening discussion may have advanced delivery beyond this frozen
-	// snapshot. Keep any later holes until a snapshot can actually include them.
 	for _, seq := range p.Unseen {
-		if seq > snapshotEnd {
+		if seq > cap {
 			unseen = append(unseen, seq)
 		}
 	}
-	live := map[int64]bool{}
 	for _, m := range rs.msgs {
-		if m.Live {
-			live[m.Seq] = true
+		if m.Seq > cap {
+			break
 		}
-	}
-	for _, m := range messages {
 		if m.Seq <= last && !slices.Contains(p.Unseen, m.Seq) {
 			continue
 		}
 		if m.Seq > seen {
 			seen = m.Seq
 		}
+		if m.Author == p.ID || m.Live || (m.Target != "" && m.Target != p.ID) {
+			continue
+		}
 		if m.Status == "streaming" {
 			unseen = append(unseen, m.Seq)
-			continue
-		}
-		// Live acknowledgement can settle after the group snapshot was frozen.
-		if m.Author == p.ID || (m.Live && live[m.Seq]) {
-			continue
-		}
-		if m.Target != "" && m.Target != p.ID {
 			continue
 		}
 		if m.Status == "cancelled" && m.Text == "" {
@@ -1027,7 +995,7 @@ func (h *Hub) chainMentions(rs *roomState, msg *Message, t *Turn) {
 		return
 	}
 	for _, id := range targets {
-		rs.enqueue(&Turn{ID: newID(), Agent: id, Reason: "mention", Group: msg.ID, Depth: t.Depth + 1, Created: nowMs(), Status: "queued"})
+		rs.enqueue(&Turn{ID: newID(), Agent: id, Reason: "mention", Group: msg.ID, Cap: msg.Seq, parallel: len(targets) > 1, Depth: t.Depth + 1, Created: nowMs(), Status: "queued"})
 	}
 }
 
