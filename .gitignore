@@ -1,3 +1,4 @@
 roundtable.exe
 *.exe
 /data/
+.cache/

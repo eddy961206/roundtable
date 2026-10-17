@@ -21,6 +21,11 @@ func (c *Claude) Label() string   { return "Claude Code" }
 func (c *Claude) Command() string { return c.cmd }
 func (c *Claude) Available() bool { return available(c.cmd) }
 func (c *Claude) CanSteer() bool  { return true }
+
+// Efforts are the values `claude --effort` accepts (claude --help, 2.1.299).
+func (c *Claude) Efforts() []string                 { return []string{"low", "medium", "high", "xhigh", "max"} }
+func (c *Claude) ModelEfforts() map[string][]string { return nil }
+func (c *Claude) DefaultModel() (string, string)    { return "opus", "high" }
 func (c *Claude) ContextWindow(model string) int {
 	if strings.Contains(model, "[1m]") {
 		return 1_000_000

@@ -15,11 +15,20 @@ import (
 
 	"roundtable"
 	"roundtable/internal/agent"
+	"roundtable/internal/agyhook"
 	"roundtable/internal/room"
 	"roundtable/internal/server"
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case agyhook.Marker:
+			os.Exit(runAgyStatusline(os.Args[2:]))
+		case "agy-hook":
+			os.Exit(runAgyHook(os.Args[2:]))
+		}
+	}
 	home, _ := os.UserHomeDir()
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address")
 	data := flag.String("data", filepath.Join(home, ".roundtable"), "data directory")
@@ -27,7 +36,11 @@ func main() {
 	codexCmd := flag.String("codex", "codex", "Codex command")
 	agyCmd := flag.String("agy", "agy", "Antigravity command")
 	open := flag.Bool("open", false, "open the browser after start")
+	agyStatus := flag.String("agy-status", "", "Gemini quota file written by `roundtable agy-statusline` (default <data>/agy-status.json)")
 	flag.Parse()
+	if *agyStatus == "" {
+		*agyStatus = filepath.Join(*data, "agy-status.json")
+	}
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	store, err := room.NewStore(*data)
@@ -38,7 +51,7 @@ func main() {
 	if err := os.MkdirAll(scratch, 0o700); err != nil {
 		logger.Fatalf("scratch dir: %v", err)
 	}
-	reg := agent.DefaultRegistry(*claudeCmd, *codexCmd, *agyCmd)
+	reg := agent.DefaultRegistry(*claudeCmd, *codexCmd, *agyCmd, *agyStatus)
 	hub, err := room.NewHub(store, reg, scratch, logger)
 	if err != nil {
 		logger.Fatalf("load rooms: %v", err)
@@ -83,4 +96,72 @@ func openBrowser(url string) {
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "browser:", err)
 	}
+}
+
+// runAgyStatusline is what agy executes as its statusLine command once the hook
+// is installed. It must stay fast and must not print anything of its own.
+func runAgyStatusline(args []string) int {
+	fs := flag.NewFlagSet(agyhook.Marker, flag.ContinueOnError)
+	cfg := fs.String("config", "", "hook config written by `roundtable agy-hook install`")
+	if err := fs.Parse(args); err != nil || *cfg == "" {
+		fmt.Fprintln(os.Stderr, "사용법: roundtable agy-statusline --config <path>")
+		return 2
+	}
+	return agyhook.Run(*cfg, os.Stdin, os.Stdout, os.Stderr)
+}
+
+// runAgyHook installs, removes or shows the Gemini quota hook.
+func runAgyHook(args []string) int {
+	home, _ := os.UserHomeDir()
+	fs := flag.NewFlagSet("agy-hook", flag.ContinueOnError)
+	data := fs.String("data", filepath.Join(home, ".roundtable"), "roundtable data directory")
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "사용법: roundtable agy-hook install|uninstall|status [-data dir]")
+		return 2
+	}
+	action := args[0]
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	settings, err := agyhook.SettingsPath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	cfgPath := filepath.Join(*data, "agy-statusline.json")
+	out := filepath.Join(*data, "agy-status.json")
+	switch action {
+	case "install":
+		exe, err := os.Executable()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		command, err := agyhook.Install(settings, exe, cfgPath, out)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "설치 실패:", err)
+			return 1
+		}
+		fmt.Printf("설치함: %s\n  statusLine.command = %s\n  원본 백업 = %s.roundtable-backup\n  agy가 상태표시줄을 그릴 때마다 %s 가 갱신됨\n", settings, command, settings, out)
+	case "uninstall":
+		if err := agyhook.Uninstall(settings, cfgPath); err != nil {
+			fmt.Fprintln(os.Stderr, "제거 실패:", err)
+			return 1
+		}
+		fmt.Println("제거함: 원래 statusLine 으로 되돌림")
+	case "status":
+		a := agent.NewAgy("agy", out)
+		l, ok := a.CurrentLimits()
+		if !ok {
+			fmt.Println("아직 수집된 Gemini 한도 없음:", out)
+			return 1
+		}
+		for _, w := range l.Windows {
+			fmt.Printf("%-16s 남음 %5.1f%%\n", w.Label, 100-w.UsedPercent)
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "알 수 없는 동작:", action)
+		return 2
+	}
+	return 0
 }

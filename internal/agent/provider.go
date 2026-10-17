@@ -42,6 +42,11 @@ type Provider interface {
 	Label() string
 	Command() string
 	Models() []ModelOption
+	// ModelEfforts lists the reasoning efforts per model when they differ by
+	// model; nil means every model accepts Efforts().
+	ModelEfforts() map[string][]string
+	Efforts() []string
+	DefaultModel() (model, effort string)
 	Available() bool
 	CanSteer() bool // true when a message can be injected into a running turn
 	ContextWindow(model string) int
@@ -56,16 +61,17 @@ type ModelOption struct {
 
 // Info is the serialisable view of a provider for the UI.
 type Info struct {
-	ID            string        `json:"id"`
-	Label         string        `json:"label"`
-	Command       string        `json:"command"`
-	Available     bool          `json:"available"`
-	Path          string        `json:"path"`
-	Models        []ModelOption `json:"models"`
-	Efforts       []string      `json:"efforts"`
-	Default       string        `json:"default_model"`
-	DefaultEffort string        `json:"default_effort"`
-	CanSteer      bool          `json:"can_steer"`
+	ID            string              `json:"id"`
+	Label         string              `json:"label"`
+	Command       string              `json:"command"`
+	Available     bool                `json:"available"`
+	Path          string              `json:"path"`
+	Models        []ModelOption       `json:"models"`
+	Efforts       []string            `json:"efforts"`
+	ModelEfforts  map[string][]string `json:"model_efforts,omitempty"`
+	Default       string              `json:"default_model"`
+	DefaultEffort string              `json:"default_effort"`
+	CanSteer      bool                `json:"can_steer"`
 }
 
 // Registry holds the configured providers in display order.
@@ -77,8 +83,15 @@ type Registry struct {
 func NewRegistry(ps ...Provider) *Registry { return &Registry{providers: ps} }
 
 // DefaultRegistry builds the three built-in providers from command names.
-func DefaultRegistry(claudeCmd, codexCmd, agyCmd string) *Registry {
-	return NewRegistry(NewClaude(claudeCmd), NewCodex(codexCmd), NewAgy(agyCmd))
+// agyStatus is the file `roundtable agy-statusline` writes Gemini quota into.
+func DefaultRegistry(claudeCmd, codexCmd, agyCmd, agyStatus string) *Registry {
+	return NewRegistry(NewClaude(claudeCmd), NewCodex(codexCmd), NewAgy(agyCmd, agyStatus))
+}
+
+// LimitSource is implemented by providers whose account limits can be read at
+// any time, not only at the end of a turn.
+type LimitSource interface {
+	CurrentLimits() (Limits, bool)
 }
 
 func (r *Registry) Get(id string) Provider {
@@ -96,34 +109,11 @@ func (r *Registry) Infos() []Info {
 	var out []Info
 	for _, p := range r.providers {
 		path, _ := resolveCommand(p.Command())
-		in := Info{ID: p.ID(), Label: p.Label(), Command: p.Command(), Available: p.Available(), Path: path, Models: p.Models(), Efforts: efforts(p.ID()), CanSteer: p.CanSteer()}
-		in.Default, in.DefaultEffort = defaults(p.ID())
+		in := Info{ID: p.ID(), Label: p.Label(), Command: p.Command(), Available: p.Available(), Path: path, Models: p.Models(), Efforts: p.Efforts(), ModelEfforts: p.ModelEfforts(), CanSteer: p.CanSteer()}
+		in.Default, in.DefaultEffort = p.DefaultModel()
 		out = append(out, in)
 	}
 	return out
-}
-
-func efforts(id string) []string {
-	switch id {
-	case "codex":
-		return []string{"low", "medium", "high", "xhigh"}
-	case "agy":
-		return nil // effort is part of the agy model slug
-	default:
-		return []string{"low", "medium", "high", "max"}
-	}
-}
-
-func defaults(id string) (model, effort string) {
-	switch id {
-	case "claude":
-		return "opus", "high"
-	case "codex":
-		return "gpt-6.1-sol", "high"
-	case "agy":
-		return "gemini-3.8-flash-high", ""
-	}
-	return "", ""
 }
 
 func available(cmd string) bool {

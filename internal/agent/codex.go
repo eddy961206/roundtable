@@ -26,12 +26,18 @@ func NewCodex(cmd string) *Codex {
 	return &Codex{cmd: cmd, sessionsDir: dir}
 }
 
-func (c *Codex) ID() string                     { return "codex" }
-func (c *Codex) Label() string                  { return "Codex" }
-func (c *Codex) Command() string                { return c.cmd }
-func (c *Codex) Available() bool                { return available(c.cmd) }
-func (c *Codex) CanSteer() bool                 { return false }
-func (c *Codex) ContextWindow(model string) int { return 475_000 }
+func (c *Codex) ID() string      { return "codex" }
+func (c *Codex) Label() string   { return "Codex" }
+func (c *Codex) Command() string { return c.cmd }
+func (c *Codex) Available() bool { return available(c.cmd) }
+func (c *Codex) CanSteer() bool  { return false }
+
+// Efforts: gpt-6.1-sol answers "Supported values are: low, medium, high, xhigh, max"
+// and rejects minimal (observed 2026-10-17).
+func (c *Codex) Efforts() []string                 { return []string{"low", "medium", "high", "xhigh", "max"} }
+func (c *Codex) ModelEfforts() map[string][]string { return nil }
+func (c *Codex) DefaultModel() (string, string)    { return "gpt-6.1-sol", "high" }
+func (c *Codex) ContextWindow(model string) int    { return 475_000 }
 func (c *Codex) Models() []ModelOption {
 	return []ModelOption{
 		{ID: "gpt-6.1-sol", Label: "GPT-6.1 Sol"},

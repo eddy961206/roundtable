@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,19 +20,32 @@ const agyPromptLimit = 24 * 1024 // Windows command line budget
 
 // Agy runs Google's Antigravity CLI in print mode.
 type Agy struct {
-	cmd    string
-	mu     sync.Mutex
-	models []ModelOption
-	loaded time.Time
+	cmd        string
+	statusPath string // written by `roundtable agy-statusline` (see agystatus.go)
+	mu         sync.Mutex
+	models     []ModelOption
+	efforts    map[string][]string
+	loaded     time.Time
 }
 
-func NewAgy(cmd string) *Agy { return &Agy{cmd: cmd} }
+func NewAgy(cmd, statusPath string) *Agy { return &Agy{cmd: cmd, statusPath: statusPath} }
 
 func (a *Agy) ID() string      { return "agy" }
 func (a *Agy) Label() string   { return "Antigravity" }
 func (a *Agy) Command() string { return a.cmd }
 func (a *Agy) Available() bool { return available(a.cmd) }
 func (a *Agy) CanSteer() bool  { return false }
+
+// Efforts is the union `agy --effort` accepts; ModelEfforts narrows it per model.
+func (a *Agy) Efforts() []string              { return []string{"low", "medium", "high", "xhigh", "max"} }
+func (a *Agy) DefaultModel() (string, string) { return "gemini-3.8-flash", "high" }
+
+func (a *Agy) ModelEfforts() map[string][]string {
+	a.Models()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.efforts
+}
 func (a *Agy) ContextWindow(model string) int {
 	switch {
 	case strings.HasPrefix(model, "claude"):
@@ -41,36 +56,69 @@ func (a *Agy) ContextWindow(model string) int {
 	return 1_048_576
 }
 
-// Models asks `agy models` (cached for 10 minutes); the slug already encodes the effort.
+// Models asks `agy models` (cached for 10 minutes). Its slugs carry the effort
+// ("gemini-4-argon-high"); agy also accepts the base name with --effort, which is
+// what roundtable uses so effort is chosen independently of the model.
 func (a *Agy) Models() []ModelOption {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if len(a.models) > 0 && time.Since(a.loaded) < 10*time.Minute {
 		return a.models
 	}
-	var out []ModelOption
-	for _, l := range listOutput(a.cmd, "models") {
-		parts := strings.SplitN(l, "\t", 2)
-		if len(parts) != 2 || strings.Contains(parts[0], " ") {
-			continue
-		}
-		out = append(out, ModelOption{ID: strings.TrimSpace(parts[0]), Label: strings.TrimSpace(parts[1])})
-	}
-	if len(out) == 0 {
-		out = []ModelOption{
-			{ID: "gemini-3.8-flash-high", Label: "Gemini 3.8 Flash (High)"},
-			{ID: "gemini-4-argon-high", Label: "Gemini 4 Argon (High)"},
-			{ID: "claude-opus-5-5-high", Label: "Claude Opus 5.5 (High)"},
-		}
-	}
-	a.models, a.loaded = out, time.Now()
-	return out
+	a.models, a.efforts = groupAgyModels(listOutput(a.cmd, "models"))
+	a.loaded = time.Now()
+	return a.models
 }
 
+var agySlugRe = regexp.MustCompile(`^(.+)-(low|medium|high|xhigh|max)$`)
+var agyLabelEffortRe = regexp.MustCompile(`\s*\((Low|Medium|High|XHigh|Max)\)\s*$`)
+
+// groupAgyModels turns "gemini-4-argon-high\tGemini 4 Argon (High)" lines into
+// base models with their effort lists, keeping agy's order.
+func groupAgyModels(lines []string) ([]ModelOption, map[string][]string) {
+	rank := map[string]int{"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
+	var models []ModelOption
+	efforts := map[string][]string{}
+	for _, l := range lines {
+		parts := strings.SplitN(l, "\t", 2)
+		if len(parts) != 2 || strings.Contains(strings.TrimSpace(parts[0]), " ") {
+			continue
+		}
+		slug, label := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		base, effort := slug, ""
+		if m := agySlugRe.FindStringSubmatch(slug); m != nil {
+			base, effort = m[1], m[2]
+		}
+		if _, seen := efforts[base]; !seen {
+			models = append(models, ModelOption{ID: base, Label: agyLabelEffortRe.ReplaceAllString(label, "")})
+			efforts[base] = nil
+		}
+		if effort != "" {
+			efforts[base] = append(efforts[base], effort)
+		}
+	}
+	for base, list := range efforts {
+		sort.Slice(list, func(i, j int) bool { return rank[list[i]] < rank[list[j]] })
+		efforts[base] = list
+	}
+	return models, efforts
+}
+
+// agyArgs maps the room mode onto agy flags.
+// --disable-slash-commands is only used in write mode: agy ignores --mode plan
+// while slash expansion is disabled ("--mode plan has no effect while slash
+// command expansion is disabled"), and on 2026-10-17 a read-mode run with both
+// flags created a file. Without it, plan mode refused and wrote a plan instead.
 func agyArgs(o RunOptions) []string {
-	args := []string{"--sandbox", "--disable-slash-commands", "--output-format", "stream-json"}
+	args := []string{"--sandbox", "--output-format", "stream-json"}
+	if o.Mode == ModeWrite {
+		args = append(args, "--disable-slash-commands")
+	}
 	if o.Model != "" {
 		args = append(args, "--model", o.Model)
+	}
+	if o.Effort != "" {
+		args = append(args, "--effort", o.Effort)
 	}
 	if o.SessionID != "" {
 		args = append(args, "--conversation", o.SessionID)
@@ -120,6 +168,7 @@ func (a *Agy) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, 
 	if err != nil {
 		return Result{}, fmt.Errorf("agy CLI를 찾지 못함: %w", err)
 	}
+	started := time.Now()
 	cmd := exec.Command(path, agyArgs(o)...)
 	cmd.Dir = workDir(o)
 	cmd.Env = os.Environ()
@@ -127,6 +176,11 @@ func (a *Agy) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, 
 	stderr, runErr := runLines(ctx, cmd, "", func(line string) { p.Line(line, emit) })
 	fin := p.Finish(emit)
 	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr}
+	if l, ok := a.CurrentLimits(); ok && l.At >= started.UnixMilli() {
+		x := ev(KindLimits)
+		x.Meta = map[string]any{"limits": l}
+		emit(x)
+	}
 	if err := finishError("agy", fin, runErr, stderr); err != nil {
 		return res, err
 	}

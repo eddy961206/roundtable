@@ -135,25 +135,13 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 		if prov == nil {
 			return nil, fmt.Errorf("알 수 없는 공급자: %s", id)
 		}
-		model, effort := defaultsFor(id)
+		model, effort := prov.DefaultModel()
 		r.Participants = append(r.Participants, &Participant{ID: id, Label: prov.Label(), Enabled: prov.Available(), Model: model, Effort: effort, Status: "idle", ContextWindow: prov.ContextWindow(model)})
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.rooms[r.ID] = &roomState{room: r, traces: map[string][]agent.Event{}, running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
 	return r, h.store.SaveRoom(r)
-}
-
-func defaultsFor(id string) (string, string) {
-	switch id {
-	case "claude":
-		return "opus", "high"
-	case "codex":
-		return "gpt-6.1-sol", "high"
-	case "agy":
-		return "gemini-3.8-flash-high", ""
-	}
-	return "", ""
 }
 
 // RoomSummary is the sidebar view.
@@ -222,6 +210,15 @@ func (h *Hub) SnapshotJSON(id string) ([]byte, error) {
 }
 
 func (h *Hub) limitsCopy() map[string]agent.Limits {
+	for _, p := range h.reg.All() {
+		src, ok := p.(agent.LimitSource)
+		if !ok {
+			continue
+		}
+		if l, ok := src.CurrentLimits(); ok && l.At > h.limits[l.Provider].At {
+			h.limits[l.Provider] = l
+		}
+	}
 	out := map[string]agent.Limits{}
 	for k, v := range h.limits {
 		out[k] = v
