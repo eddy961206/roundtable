@@ -21,6 +21,7 @@ type controlledProvider struct {
 type controlledCall struct {
 	opts   agent.RunOptions
 	ctx    context.Context
+	emit   func(agent.Event)
 	result chan controlledResult
 }
 
@@ -31,7 +32,7 @@ type controlledResult struct {
 }
 
 func (p *controlledProvider) Run(ctx context.Context, opts agent.RunOptions, emit func(agent.Event)) (agent.Result, error) {
-	call := &controlledCall{opts: opts, ctx: ctx, result: make(chan controlledResult, 1)}
+	call := &controlledCall{opts: opts, ctx: ctx, emit: emit, result: make(chan controlledResult, 1)}
 	p.callsCh <- call
 	select {
 	case <-ctx.Done():
@@ -239,8 +240,8 @@ func TestStopSkipsPreparedTurn(t *testing.T) {
 	hub.mu.Lock()
 	rs := hub.rooms[r.ID]
 	rs.nextMessage("user", "user", "reserved before stop")
-	turn := &Turn{ID: newID(), Agent: "codex", Reason: "mention", Status: "queued"}
-	pr := hub.buildTurn(rs, turn, rs.msgs, false)
+	turn := &Turn{ID: newID(), Agent: "codex", Reason: "mention", Cap: rs.room.Seq, Status: "queued"}
+	pr := hub.buildTurn(rs, turn)
 	hub.prepareTurn(rs, pr)
 	hub.mu.Unlock()
 	if err := hub.Stop(r.ID); err != nil {
@@ -300,7 +301,8 @@ func TestResetRefreshesQueuedSessionAndPrompt(t *testing.T) {
 	if next.opts.SessionID != "" ||
 		!strings.Contains(next.opts.Prompt, "지금까지의 대화") ||
 		!strings.Contains(next.opts.Prompt, "[User] first before reset") ||
-		!strings.Contains(next.opts.Prompt, "[System] 세션을 초기화했어.") {
+		!strings.Contains(next.opts.Prompt, "[User] queued before reset") ||
+		strings.Contains(next.opts.Prompt, "[System] 세션을 초기화했어.") {
 		t.Fatalf("queued turn did not refresh after reset: %+v", next.opts)
 	}
 	finishCall(next, "fresh session")
@@ -406,13 +408,15 @@ func TestTargetKeepsPriorityOverOrdinaryQueuedTurn(t *testing.T) {
 	}
 	finishCall(first, "first reply")
 	urgent := nextCall(t, ps[0])
-	if !strings.Contains(urgent.opts.Prompt, "[User] priority target") {
+	if !strings.Contains(urgent.opts.Prompt, "[User] priority target") ||
+		!strings.Contains(urgent.opts.Prompt, "[User] ordinary broadcast") {
 		t.Fatalf("ordinary turn ran before target: %s", urgent.opts.Prompt)
 	}
 	finishCall(urgent, "urgent reply")
-	following := nextCall(t, ps[0])
-	if strings.Contains(following.opts.Prompt, "[User] priority target") {
-		t.Fatalf("older snapshot repeated target: %s", following.opts.Prompt)
+	queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 0 })
+	select {
+	case <-ps[0].callsCh:
+		t.Fatal("empty ordinary turn ran after priority delivered both inputs")
+	default:
 	}
-	finishCall(following, "ordinary reply")
 }
