@@ -66,6 +66,7 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 - 각 에이전트는 자기 CLI 세션을 이어 가며 **자기 마지막 발언 이후 새 메시지만** 받는다. 매번 전체 대화를 보내지 않아 토큰이 덜 들고, 각자의 도구 맥락이 유지된다. 턴이 실패하면 그 메시지는 다음 턴에 다시 전달된다.
 - agy는 프롬프트를 명령줄 인자로만 받는다. 이스케이프 후 24KB를 넘으면 앞뒤만 남긴다.
 - Windows에서 npm으로 설치한 Codex는 `codex.cmd` 뒤의 실제 `codex.exe`를 찾아 실행한다(별도 설치본에 code-mode host가 빠진 경우가 있었다).
+- Codex의 Windows 샌드박스가 간헐적으로 `setup refresh had errors` 로 명령 실행에 실패하는 턴이 있다. CLI 쪽 문제이며 다시 시키면 대개 통과한다.
 
 ## 개발
 
