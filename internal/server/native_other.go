@@ -4,6 +4,7 @@ package server
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"roundtable/internal/agent"
@@ -16,7 +17,19 @@ func shellLiteral(value string) string {
 }
 
 func nativeCommand(plan agent.NativeSession) string {
-	args := []string{shellLiteral(plan.Executable)}
+	var args []string
+	if len(plan.Environment) > 0 {
+		args = append(args, "env")
+		keys := make([]string, 0, len(plan.Environment))
+		for key := range plan.Environment {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			args = append(args, shellLiteral(key+"="+plan.Environment[key]))
+		}
+	}
+	args = append(args, shellLiteral(plan.Executable))
 	for _, arg := range plan.Args {
 		args = append(args, shellLiteral(arg))
 	}

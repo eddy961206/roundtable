@@ -68,6 +68,7 @@ func fileExists(p string) bool {
 // %APPDATA%/npm/codex.cmd (package @openai/codex).
 func npmVendoredExe(dir, name string) string {
 	patterns := []string{
+		filepath.Join(dir, "node_modules", "@opencode", "cli", "bin", name+".exe"),
 		filepath.Join(dir, "node_modules", "@openai", name, "node_modules", "@openai", name+"-win32-x64", "vendor", "*", "bin", name+".exe"),
 		filepath.Join(dir, "node_modules", "@openai", name, "vendor", "*", "codex", name+".exe"),
 		filepath.Join(dir, "node_modules", "@anthropic-ai", "claude-code", "vendor", "*", name+".exe"),
@@ -93,33 +94,63 @@ func runLines(ctx context.Context, cmd *exec.Cmd, stdin string, onLine func(stri
 	}
 	errPipe, err := cmd.StderrPipe()
 	if err != nil {
+		_ = stdout.Close()
 		return "", err
 	}
 	hideWindow(cmd)
 	if err := cmd.Start(); err != nil {
+		_ = stdout.Close()
+		_ = errPipe.Close()
 		return "", err
 	}
 
 	var wg sync.WaitGroup
 	var errBuf strings.Builder
+	var readErrors [2]error
+	var terminateOnce sync.Once
+	terminate := func() {
+		terminateOnce.Do(func() {
+			// A descendant may keep inherited output handles open after the
+			// CLI exits. Cancellation must unblock our readers even in that case.
+			_ = stdout.Close()
+			_ = errPipe.Close()
+			killTree(cmd)
+		})
+	}
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		defer errPipe.Close()
 		sc := bufio.NewScanner(errPipe)
 		sc.Buffer(make([]byte, 64*1024), maxLineBytes)
 		for sc.Scan() {
-			if errBuf.Len() < maxStderrBytes {
-				errBuf.WriteString(sc.Text())
-				errBuf.WriteByte('\n')
+			if remaining := maxStderrBytes - errBuf.Len(); remaining > 0 {
+				line := sc.Bytes()
+				if len(line) > remaining {
+					line = line[:remaining]
+				}
+				errBuf.Write(line)
+				if errBuf.Len() < maxStderrBytes {
+					errBuf.WriteByte('\n')
+				}
 			}
+		}
+		if err := sc.Err(); err != nil {
+			readErrors[0] = fmt.Errorf("CLI stderr 읽기 실패: %w", err)
+			terminate()
 		}
 	}()
 	go func() {
 		defer wg.Done()
+		defer stdout.Close()
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 64*1024), maxLineBytes)
 		for sc.Scan() {
 			onLine(sc.Text())
+		}
+		if err := sc.Err(); err != nil {
+			readErrors[1] = fmt.Errorf("CLI stdout 읽기 실패: %w", err)
+			terminate()
 		}
 	}()
 
@@ -127,7 +158,7 @@ func runLines(ctx context.Context, cmd *exec.Cmd, stdin string, onLine func(stri
 	go func() {
 		select {
 		case <-ctx.Done():
-			killTree(cmd)
+			terminate()
 		case <-done:
 		}
 	}()
@@ -136,6 +167,9 @@ func runLines(ctx context.Context, cmd *exec.Cmd, stdin string, onLine func(stri
 	close(done)
 	if ctx.Err() != nil {
 		return errBuf.String(), ctx.Err()
+	}
+	if err := errors.Join(readErrors[:]...); err != nil {
+		return errBuf.String(), err
 	}
 	if waitErr != nil {
 		var exitErr *exec.ExitError

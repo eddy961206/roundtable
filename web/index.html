@@ -42,7 +42,7 @@
       <div class="onboarding">
         <div class="onboard-hero">
           <h2>Roundtable — 멀티 에이전트 코딩 단톡방</h2>
-          <p class="muted">Claude Code · Codex · Antigravity 참가자를 원하는 수만큼 모으세요. 같은 공급사의 서로 다른 모델도 각자 독립된 세션으로 질문하고 토론할 수 있습니다.</p>
+          <p class="muted">이용 중인 CLI나 연결한 API 모델을 참가자로 추가하세요. 같은 공급사의 서로 다른 모델도 각자 독립된 대화로 질문하고 토론할 수 있습니다.</p>
           <div class="onboard-cta">
             <button type="button" id="btn-onboard-new" class="primary lg">+ 새 방 만들기</button>
           </div>
@@ -51,7 +51,7 @@
         <div class="onboard-grid" role="list" aria-label="핵심 기능 안내">
           <div class="onboard-card" role="listitem">
             <h3>1. @멘션과 동시 호출</h3>
-            <p><code>@claude</code> <code>@codex</code> <code>@agy</code>는 공급사 전체, 참가자 카드의 고유 <code>@ID</code>는 한 명을 호출합니다. <code>@all</code> 또는 멘션 없이 보내면 활성 참가자 <strong>전원이 동시에</strong> 답합니다.</p>
+            <p>입력창에 <code>@</code>를 입력하고 이름을 선택하세요. 한 명만 부르려면 아래 대상 버튼을 누르면 됩니다. 멘션 없이 보내면 활성 참가자 <strong>전원이 동시에</strong> 답합니다.</p>
           </div>
           <div class="onboard-card" role="listitem">
             <h3>2. 1회성 조정 (Steering)</h3>
@@ -73,7 +73,7 @@
           <h3>예시 프롬프트 (방을 만든 뒤 눌러서 바로 입력)</h3>
           <div class="prompt-chips">
             <button type="button" class="prompt-example" data-prompt="이 작업 폴더의 전체 아키텍처와 핵심 패키지 역할을 3줄씩 요약해줘.">“이 작업 폴더의 전체 아키텍처와 핵심 패키지 역할을 3줄씩 요약해줘.”</button>
-            <button type="button" class="prompt-example" data-prompt="@claude @codex 최근 변경 사항에서 동시성 경합이나 예외 누락이 있는지 교차 리뷰해줘.">“@claude @codex 최근 변경 사항에서 동시성 경합이나 예외 누락이 있는지 교차 리뷰해줘.”</button>
+            <button type="button" class="prompt-example" data-prompt="최근 변경 사항에서 동시성 경합이나 예외 누락이 있는지 검토해줘.">“최근 변경 사항에서 동시성 경합이나 예외 누락이 있는지 검토해줘.”</button>
             <button type="button" class="prompt-example" data-prompt="이 설계안의 장단점을 각자 분석하고 대안을 제시해줘. 그다음 토론으로 결론을 내자.">“이 설계안의 장단점을 각자 분석하고 대안을 제시해줘. 그다음 토론으로 결론을 내자.”</button>
           </div>
         </div>
@@ -107,7 +107,7 @@
             <details id="more-actions" class="more-menu">
               <summary class="button more-summary" aria-label="추가 동작 메뉴">더보기 ▾</summary>
               <div class="more-pop" role="group" aria-label="방 추가 동작">
-                <label class="auto-trace-label" title="실행 중이거나 새로 올라오는 답변의 작업 기록을 자동으로 펼칩니다">
+                <label class="auto-trace-label" title="최근 답변의 작업 기록을 최대 8개까지 자동으로 펼칩니다">
                   <input type="checkbox" id="chk-auto-trace">
                   <span>작업 기록 자동 펼침</span>
                 </label>
@@ -119,16 +119,28 @@
             </details>
           </div>
         </div>
-        <div id="token-strip" class="token-strip" role="region" aria-label="사용량 대시보드 띠"></div>
+        <div class="usage-bar" aria-label="계정 사용량">
+          <div id="token-strip" class="token-strip"></div>
+          <details id="usage-detail" class="usage-detail">
+            <summary>사용량 상세</summary>
+            <div id="usage-detail-content"></div>
+          </details>
+          <button type="button" id="btn-refresh-usage" class="ghost" title="이 방에서 참여 중인 공급사의 사용량만 갱신">새로고침</button>
+          <span id="usage-status" class="muted" role="status"></span>
+        </div>
       </header>
 
+      <div id="history-banner" class="history-banner" hidden>
+        <span id="history-status" role="status"></span>
+        <button type="button" id="btn-latest-history">최신 대화로 이동</button>
+      </div>
       <div id="timeline" role="log" aria-live="off" aria-label="대화 메시지 목록"></div>
       <div id="discussion-bar" role="status" aria-live="polite" hidden></div>
 
       <form id="composer" aria-label="메시지 작성 및 조정">
         <div id="mention-pop" role="listbox" aria-label="멘션 후보" hidden></div>
         <div class="composer-steer-bar">
-          <span class="steer-label muted">대상 조정(1회성):</span>
+          <span class="steer-label muted">다음 메시지 대상</span>
           <div id="target-chips" class="target-chips" role="group" aria-label="메시지 전달 대상 선택"></div>
           <div id="target-active-chip" class="target-active-chip" hidden></div>
           <select id="target" class="sr-only" aria-label="조정 대상 에이전트 선택" tabindex="-1">
@@ -136,9 +148,10 @@
           </select>
         </div>
         <div class="composer-row">
-          <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" placeholder="메시지… (@로 참가자 선택 · @claude/@codex/@agy 공급사 전체 · Enter 전송, Shift+Enter 줄바꿈)"></textarea>
+          <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" aria-describedby="composer-error composer-hint" placeholder="메시지 입력… @로 이름 선택"></textarea>
           <button type="submit" id="btn-send" class="primary">보내기</button>
         </div>
+        <div id="composer-error" class="composer-error" role="alert" hidden></div>
         <div id="composer-hint" class="composer-hint muted"></div>
       </form>
     </section>
@@ -176,9 +189,9 @@
     </label>
     <fieldset id="room-seats-fieldset" class="checks-fieldset">
       <legend>참가자 구성</legend>
-      <p class="muted small-note">모델별 인원을 정하세요. 같은 공급사도 여러 줄로 추가할 수 있습니다. 방 하나에 최대 32명까지 참여합니다.</p>
+      <p class="muted small-note">이용 중인 공급사와 인원을 선택하세요. CLI 설치 여부는 로그인·이용 권한과 다를 수 있습니다.</p>
       <div id="room-seat-specs"></div>
-      <button type="button" id="btn-add-seat-spec">+ 다른 모델 구성</button>
+      <button type="button" id="btn-add-seat-spec">+ 다른 공급사·모델</button>
     </fieldset>
     <div class="row">
       <label>연쇄 호출 한도 <input name="max_chain" type="number" min="1" max="20" value="4"></label>
@@ -195,7 +208,7 @@
 <dialog id="dlg-participant" aria-labelledby="dlg-participant-title">
   <form id="form-participant">
     <h3 id="dlg-participant-title">참가자 추가</h3>
-    <p class="muted">추가한 참가자는 각자 독립된 세션과 고유 @ID를 갖습니다.</p>
+    <p class="muted">같은 모델도 여러 명 추가할 수 있습니다. 각자 별도의 대화를 이어갑니다.</p>
     <div id="participant-spec"></div>
     <menu>
       <button type="button" id="dlg-participant-cancel">취소</button>

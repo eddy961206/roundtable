@@ -304,6 +304,7 @@ func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
 	}
 	defer f.Close()
 	var last map[string]any
+	var observedAt int64
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), maxLineBytes)
 	for sc.Scan() {
@@ -317,6 +318,10 @@ func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
 		}
 		if pl := obj(m, "payload"); str(pl, "type") == "token_count" {
 			last = pl
+			observedAt = 0
+			if ts, err := time.Parse(time.RFC3339Nano, str(m, "timestamp")); err == nil {
+				observedAt = ts.UnixMilli()
+			}
 		}
 	}
 	if last == nil {
@@ -335,13 +340,16 @@ func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
 	if rl == nil {
 		return
 	}
-	l := Limits{Provider: "codex", At: now(), Plan: str(rl, "plan_type")}
+	l := Limits{Provider: "codex", At: observedAt, Source: "codex_rollout", Plan: str(rl, "plan_type")}
 	for _, key := range []string{"primary", "secondary"} {
 		w := obj(rl, key)
 		if w == nil {
 			continue
 		}
-		used, _ := w["used_percent"].(float64)
+		used, hasUsed := w["used_percent"].(float64)
+		if !hasUsed || used < 0 || used > 100 {
+			continue
+		}
 		mins, _ := w["window_minutes"].(float64)
 		reset, _ := w["resets_at"].(float64)
 		l.Windows = append(l.Windows, LimitWindow{Label: windowLabel(int(mins)), UsedPercent: used, ResetsAt: int64(reset)})
@@ -350,7 +358,10 @@ func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
 		if unlimited, _ := cr["unlimited"].(bool); unlimited {
 			l.Credits = "무제한"
 		} else if b := str(cr, "balance"); b != "" {
-			l.Credits = strings.TrimRight(strings.TrimRight(b, "0"), ".")
+			l.Credits = b
+			if strings.Contains(b, ".") {
+				l.Credits = strings.TrimRight(strings.TrimRight(b, "0"), ".")
+			}
 		}
 	}
 	if t := str(rl, "rate_limit_reached_type"); t != "" {

@@ -25,6 +25,7 @@ const (
 type Limits struct {
 	Provider string        `json:"provider"`
 	At       int64         `json:"at"`
+	Source   string        `json:"source,omitempty"`
 	Windows  []LimitWindow `json:"windows"`
 	Plan     string        `json:"plan,omitempty"`
 	Credits  string        `json:"credits,omitempty"`

@@ -240,7 +240,7 @@ func (p *claudeParser) limits(info map[string]any, emit func(Event)) {
 	if info == nil {
 		return
 	}
-	l := Limits{Provider: "claude", At: now()}
+	l := Limits{Provider: "claude", At: now(), Source: "claude_turn_event"}
 	labels := map[string]string{"five_hour": "5시간", "seven_day": "7일", "seven_day_sonnet": "7일·Sonnet", "seven_day_opus": "7일·Opus"}
 	order := []string{"five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"}
 	wins := obj(info, "unifiedWindows")
@@ -249,7 +249,10 @@ func (p *claudeParser) limits(info map[string]any, emit func(Event)) {
 		if w == nil {
 			continue
 		}
-		util, _ := w["utilization"].(float64)
+		util, hasUtil := w["utilization"].(float64)
+		if !hasUtil || util < 0 || util > 1 {
+			continue
+		}
 		reset, _ := w["resetsAt"].(float64)
 		l.Windows = append(l.Windows, LimitWindow{Label: labels[k], UsedPercent: util * 100, ResetsAt: int64(reset)})
 	}

@@ -21,6 +21,9 @@ func (h *Hub) NativeSessionOptions(roomID, seatID, messageID string) (agent.Prov
 
 func (h *Hub) nativeSessionOptionsLocked(roomID, seatID, messageID string) (agent.Provider, agent.RunOptions, error) {
 	var opts agent.RunOptions
+	if h.closing {
+		return nil, opts, fmt.Errorf("서버가 종료 중이야")
+	}
 	rs := h.rooms[roomID]
 	if rs == nil {
 		return nil, opts, fmt.Errorf("방 없음: %s", roomID)

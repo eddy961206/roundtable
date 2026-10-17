@@ -1,6 +1,6 @@
 # Roundtable
 
-**Claude Code · Codex · Antigravity를 한 단톡방에.** 세 공급사의 코딩 에이전트 CLI를 같은 대화에 앉혀 놓고, 사람이 지켜보다가 필요할 때 끼어드는 로컬 웹 서비스다. 같은 질문에 서로 다른 모델이 독립적으로 답하고, 서로의 답을 반박하고, 서브에이전트까지 띄워 일하는 과정을 한 화면에서 본다.
+**Claude Code · Codex · Antigravity · OpenCode를 한 단톡방에.** 사용하는 CLI만 골라 같은 대화에 참여시키는 로컬 웹 서비스다. 같은 질문에 여러 모델이 독립적으로 답하고 서로의 답을 검토한다. OpenCode에 연결한 API 공급사와 구독의 모델도 별도 OpenCode 화면 없이 워커로 쓸 수 있다.
 
 Go 단일 바이너리 + 정적 HTML. 프레임워크·빌드 도구·외부 서비스 없음. 각 CLI는 당신이 이미 로그인한 공식 CLI를 그대로 실행한다. 인증 정보는 읽지도 저장하지도 않는다.
 
@@ -8,18 +8,19 @@ Go 단일 바이너리 + 정적 HTML. 프레임워크·빌드 도구·외부 서
 
 | | |
 |---|---|
-| **단톡방** | `@claude` `@codex` `@agy`는 해당 공급사의 활성 참가자 전원, 카드의 고유 `@ID`는 한 명을 부른다. `@all` 또는 멘션 없이 보내면 전원이 같은 대화 범위를 받아 **동시에, 독립적으로** 답한다. 연쇄 호출 깊이는 방 설정으로 제한한다. |
+| **단톡방** | 대상 칩이나 이름 멘션으로 한 명을 고른다. `@claude` `@codex` `@agy` `@opencode`는 해당 공급사의 활성 참가자 전원, `@all` 또는 멘션 없는 전송은 활성 참가자 전원을 부른다. 각자 같은 대화 범위를 받아 **동시에, 독립적으로** 답한다. 연쇄 호출 깊이는 방 설정으로 제한한다. |
 | **토론** | N라운드 동안 순서대로 발언한다. 각자 마지막 줄에 `CONTINUE / AGREE / PASS / CONCLUDE` 신호를 붙이고, 전원 동의·결론 제시·라운드 소진 중 먼저 오는 쪽에서 끝난다. |
 | **끼어들기(steering)** | 대상을 고르고 보내면 그 에이전트에게만 간다. Claude는 실행 중인 턴에 즉시 주입되고, Codex·Antigravity는 지금 턴이 끝난 직후 우선 전달된다. 각 참가자는 자기 대기열을 갖고 서로를 기다리지 않는다. |
+| **개별 중단** | 모든 공급사의 참가자 카드에 **작업 중단**이 있다. 해당 참가자의 현재 실행·대기 요청을 취소하고 참여를 끈다. 다른 참가자는 계속 실행한다. 다시 쓰려면 참여를 켜고 새 메시지를 보낸다. **모두 중지**와 대기열의 개별 턴 취소도 유지한다. |
 | **작업 기록** | 답변마다 도구 호출·결과·추론 요약을 펼쳐 본다. **서브에이전트**는 어떤 종류를 어떤 과제로 띄웠고, 그 안에서 무슨 도구를 썼고, 뭐라고 보고했는지까지 중첩으로 보인다. 진행 중에도 실시간으로 자란다. |
-| **사용량** | 공급사별 5시간·주간 남은 한도(Claude·Codex·Gemini), 방 누적 입력·출력 토큰과 비용, 최근 소모 속도, 참가자별 컨텍스트 사용률. 임계치에서 경고한다. |
+| **사용량** | 남은 한도·기준 시간창·관측 시각과 방 누적 토큰·비용을 표시한다. 수동 갱신과 보이는 탭의 60초 자동 갱신을 제공한다. Codex는 공식 CLI 계정 조회, Claude와 Gemini는 저장된 관측 기록 재조회다. OpenCode의 구독 한도와 API 잔액은 조회하지 않는다. |
 | **모델·인원·추론 수준** | 같은 공급사와 모델도 여러 명 추가한다. 방마다 최대 32명이며 이름·모델·추론 수준·세션·대기열·사용량은 참가자별로 분리된다. 모델별 지원 수준과 CLI 기본값을 선택할 수 있다. |
 | **원본 CLI 대화** | 참가자 카드와 답변의 `CLI에서 열기`로 원래 세션을 이어 연다(Windows). 다른 OS에서는 정확한 이어보기 명령을 복사한다. 모델을 바꾼 뒤에도 이전 답변의 세션 정보는 남는다. |
 | **권한 모드** | 방 단위 `chat`(프로젝트 폴더를 전달하지 않는 대화) / `read`(읽기 중심) / `write`(편집 허용). 실제 보호는 각 CLI의 도구·권한·샌드박스 설정에 따른다. |
 
 ## 빠른 시작
 
-전제: `claude`, `codex`, `agy` 중 쓸 CLI가 PATH에 있고 각각 로그인돼 있어야 한다. 없는 CLI는 "CLI를 찾지 못함"으로 표시되고 꺼진 채 시작한다.
+전제: `claude`, `codex`, `agy`, `opencode` 중 쓸 CLI가 PATH에 있고 필요한 계정 또는 API 공급사에 연결돼 있어야 한다. 새 방에서는 사용할 공급사를 직접 고른다. CLI가 설치돼 있어도 구독이나 모델 접근 권한이 확인된 것은 아니다.
 
 ```bash
 go build -o roundtable.exe ./cmd/roundtable
@@ -28,15 +29,25 @@ go build -o roundtable.exe ./cmd/roundtable
 
 브라우저가 `http://127.0.0.1:8787` 로 열린다. "새 방"에서 작업 폴더와 권한 모드를 정하고 질문을 던진다.
 
-옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`.
+옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy` `-opencode`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`.
 
 ### 여러 모델을 함께 쓰기
 
 1. **새 방**에서 공급사·모델·추론 수준·인원을 고른다. **다른 모델 구성**으로 Opus 2명, Fable 1명, GPT 2명, Gemini 2명 같은 조합을 만든다.
 2. 기존 방에서는 참가자 패널의 **추가**를 누른다. 모델 목록에 없는 모델은 CLI가 지원하는 정확한 ID를 직접 입력할 수 있다. 목록에 있다고 계정의 사용 권한이나 잔여 한도까지 보장되는 것은 아니다.
-3. 특정 한 명에게 지시할 때는 대상 조정 칩이나 카드의 고유 멘션을 쓴다. `@claude`는 Claude 참가자 전체를 부른다. 이름을 바꿔도 고유 ID는 유지된다.
+3. 특정 한 명에게 지시할 때는 이름으로 된 대상 칩이나 **이름 넣기**를 쓴다. 같은 이름은 화면에서 번호로 구별한다. 내부 ID와 정확한 모델 ID는 **상세**에서 확인한다. 이름을 바꿔도 내부 ID는 유지된다.
 
 참가자를 제거해도 이전 답변과 누적 사용량은 남는다. 모델·추론 수준 변경은 실행 중에는 거절하며, 변경된 참가자의 다음 턴은 새 CLI 세션으로 시작한다. 공급사 한도는 계정 단위이므로 참가자 수만큼 늘어나지 않는다.
+
+### OpenCode API와 구독 모델
+
+OpenCode v2의 공식 [비대화형 CLI](https://opencode.ai/v2/docs/cli)를 사용한다. Roundtable은 API 키를 별도로 입력받지 않는다. OpenCode에 이미 연결한 계정·공급사·모델 구성을 CLI가 사용한다. 새 공급사나 [OpenCode Go 구독](https://opencode.ai/v2/docs/console/go/)을 OpenCode에서 연결한 뒤, Roundtable의 **연결·모델 새로고침**을 누르고 해당 공급사의 모델을 선택한다. 계정 연결·구독 결제는 OpenCode에서 진행한다. Roundtable은 다른 모델이나 과금 방식으로 자동 전환하지 않는다.
+
+목록은 CLI가 반환하는 연결된 공급사 중 도구 호출을 지원하고 텍스트를 출력하는 모델로 구성한다. 공급사별로 묶고 이름으로 검색한다. 모델은 직접 선택해야 한다. 목록에 없는 지원 모델은 정확한 ID로 입력할 수 있다. 목록 조회 성공은 계정의 실제 호출 권한이나 남은 한도를 보장하지 않는다. Go는 같은 연결 경로를 사용하도록 구현했으나 이 작업 환경에 구독이 없어 실제 Go 호출은 확인하지 않았다.
+
+각 실행은 `--standalone`으로 독립 CLI 서버를 사용한다. 공용 설정 파일을 바꾸지 않고 프로세스에 전달한 권한 설정만 추가한다. `chat`은 도구를 차단하고, `read`는 파일 읽기·검색, `write`는 파일 읽기·검색·편집을 허용한다. shell·하위 에이전트·외부 도구와 폴더 밖 접근은 허용하지 않는다. 이는 CLI 권한 규칙이며 운영체제 샌드박스는 아니다. 토큰과 CLI가 보고한 비용은 기록하지만 구독 한도·API 잔액과 실제 청구액은 별개다.
+
+OpenCode 2.0.26은 응답 텍스트를 복원하면서 완료 이벤트를 생략할 수 있다. 따라서 각 실행 후 공식 저장 메시지에서 이번 입력 원문·실행 시각·에이전트·완료 상태를 대조해 완료와 사용량을 확정한다. 취소나 실행 오류를 성공으로 바꾸지 않는다. 같은 세션은 OpenCode의 원본 대화 기록에도 남는다.
 
 ### 원본 CLI에서 이어 보기
 
@@ -47,6 +58,7 @@ Roundtable은 각 공급사의 일반 세션 저장 기능을 사용한다. 대�
 | Claude Code | `claude --resume <session_id>` |
 | Codex | `codex resume --include-non-interactive --cd <directory> <session_id>` |
 | Antigravity | `agy --conversation <session_id>` |
+| OpenCode v2 | `opencode mini --standalone --session <session_id> --agent roundtable-<mode> --replay` |
 
 화면에서 제공하는 명령에는 당시 모델·추론 수준·권한 옵션도 포함된다. 새 메시지에는 원본 세션 ID와 작업 폴더를 함께 보존한다. 이전 버전의 기록에는 작업 폴더 정보가 없어서 과거 세션의 열기가 제한될 수 있다. 원본 CLI에서 별도로 나눈 새 대화가 Roundtable 기록으로 역수입되지는 않는다. 각 공급사 데스크톱 앱의 대화 목록 동기화는 앱별 동작에 따른다. 열린 CLI 창의 추적은 현재 서버 프로세스에서만 유지되므로 서버를 재시작하기 전에는 해당 창을 닫는다.
 
@@ -78,13 +90,16 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 
 `~/.roundtable/rooms/<id>/` 에 `room.json`(설정·참가자·세션 ID·누적 사용량), `messages.jsonl`, `events.jsonl`(작업 기록)이 쌓인다. 에이전트가 읽은 파일 내용은 작업 기록에 남는다. **비밀이 든 폴더는 작업 폴더로 주지 마라.**
 
+화면은 최근 100개부터 불러오며 한 번에 최대 200개 메시지를 유지한다. 이전 기록은 페이지로 이동한다. 작업 기록은 펼칠 때 디스크에서 읽고, 브라우저에는 최대 8개 답변의 기록을 각각 200개 이벤트까지 보관한다. 전체 기록 다운로드와 대화 내보내기는 유지한다. 서버의 메시지 본문과 디스크 기록은 여전히 누적되므로 무기한 보관에 대한 용량 제한은 별도로 필요하다. 서버는 작업 기록 전체를 상시 메모리에 보관하지 않는다.
+
 ## 각 CLI에서 무엇을 어떻게 읽는가
 
 | | 호출 | 세션 재개 | 서브에이전트 관측 | 한도 |
 |---|---|---|---|---|
 | Claude Code | `claude -p --input-format stream-json --output-format stream-json` | `--resume <session>` | 스트림의 `parent_tool_use_id`, `task_started/task_notification` | 스트림의 `rate_limit_event` |
-| Codex | `codex exec - --json` | `codex exec resume … <thread> -` | `~/.codex/sessions` 에서 `parent_thread_id` 가 같은 rollout 파일을 추적 | rollout 의 `token_count.rate_limits` |
+| Codex | `codex exec - --json` | `codex exec resume … <thread> -` | `~/.codex/sessions` 에서 `parent_thread_id` 가 같은 rollout 파일을 추적 | rollout 관측 + `codex app-server`의 `account/rateLimits/read` |
 | Antigravity | `agy --output-format stream-json -p=<prompt>` | `--conversation <id>` | `invoke_subagent` 의 `log_uri` → `transcript.jsonl` | statusLine 훅(위) |
+| OpenCode v2 | `opencode run --standalone --format json` | `--session <id>` | Roundtable 권한 모드에서는 하위 에이전트 실행을 허용하지 않음 | 응답의 토큰·비용만 기록, 계정 잔액 조회 없음 |
 
 - 각 에이전트는 자기 CLI 세션을 이어 가며 **자기 마지막 발언 이후 새 메시지만** 받는다. 매번 전체 대화를 보내지 않아 토큰이 덜 들고, 각자의 도구 맥락이 유지된다. 턴이 실패하면 그 메시지는 다음 턴에 다시 전달된다.
 - agy는 프롬프트를 명령줄 인자로만 받는다. 이스케이프 후 24KB를 넘으면 앞뒤만 남긴다.

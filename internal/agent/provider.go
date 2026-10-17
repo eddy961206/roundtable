@@ -57,6 +57,7 @@ type Provider interface {
 type ModelOption struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+	Group string `json:"group,omitempty"`
 }
 
 // Info is the serialisable view of a provider for the UI.
@@ -72,6 +73,8 @@ type Info struct {
 	Default       string              `json:"default_model"`
 	DefaultEffort string              `json:"default_effort"`
 	CanSteer      bool                `json:"can_steer"`
+	CatalogStatus string              `json:"catalog_status,omitempty"`
+	CatalogError  string              `json:"catalog_error,omitempty"`
 }
 
 // Registry holds the configured providers in display order.
@@ -88,10 +91,18 @@ func DefaultRegistry(claudeCmd, codexCmd, agyCmd, agyStatus string) *Registry {
 	return NewRegistry(NewClaude(claudeCmd), NewCodex(codexCmd), NewAgy(agyCmd, agyStatus))
 }
 
+func (r *Registry) Add(p Provider) { r.providers = append(r.providers, p) }
+
 // LimitSource is implemented by providers whose account limits can be read at
 // any time, not only at the end of a turn.
 type LimitSource interface {
 	CurrentLimits() (Limits, bool)
+}
+
+// LimitRefresher reads quotas without sending a prompt or starting a model turn.
+// A refresh may read a local observation; Limits.At remains its original time.
+type LimitRefresher interface {
+	RefreshLimits(context.Context) (Limits, error)
 }
 
 func (r *Registry) Get(id string) Provider {
@@ -111,6 +122,9 @@ func (r *Registry) Infos() []Info {
 		path, _ := resolveCommand(p.Command())
 		in := Info{ID: p.ID(), Label: p.Label(), Command: p.Command(), Available: p.Available(), Path: path, Models: p.Models(), Efforts: p.Efforts(), ModelEfforts: p.ModelEfforts(), CanSteer: p.CanSteer()}
 		in.Default, in.DefaultEffort = p.DefaultModel()
+		if catalog, ok := p.(interface{ CatalogStatus() (string, string) }); ok {
+			in.CatalogStatus, in.CatalogError = catalog.CatalogStatus()
+		}
 		out = append(out, in)
 	}
 	return out

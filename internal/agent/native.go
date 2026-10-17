@@ -10,11 +10,12 @@ import (
 // NativeSession is an argv plan for opening an existing CLI conversation.
 // It contains no prompt and never selects a provider's most recent session.
 type NativeSession struct {
-	Provider   string   `json:"provider"`
-	SessionID  string   `json:"session_id"`
-	Executable string   `json:"executable"`
-	Args       []string `json:"args"`
-	Directory  string   `json:"directory"`
+	Provider    string            `json:"provider"`
+	SessionID   string            `json:"session_id"`
+	Executable  string            `json:"executable"`
+	Args        []string          `json:"args"`
+	Directory   string            `json:"directory"`
+	Environment map[string]string `json:"environment,omitempty"`
 }
 
 // NativeSessionCommand preserves the room's model and permission flags when
@@ -89,6 +90,14 @@ func NativeSessionCommand(prov Provider, o RunOptions) (NativeSession, error) {
 		if o.Mode != ModeChat {
 			plan.Args = append(plan.Args, "--add-dir", dir)
 		}
+	case "opencode":
+		o.Workspace, o.ScratchDir = dir, dir
+		configuration, err := openCodePolicy(o)
+		if err != nil {
+			return NativeSession{}, err
+		}
+		plan.Environment = map[string]string{"OPENCODE_CONFIG_CONTENT": configuration, "PWD": dir}
+		plan.Args = []string{"mini", "--standalone", "--session", o.SessionID, "--agent", openCodeAgent(o.Mode), "--replay"}
 	default:
 		return NativeSession{}, fmt.Errorf("원본 세션 열기를 지원하지 않는 공급자: %s", prov.ID())
 	}

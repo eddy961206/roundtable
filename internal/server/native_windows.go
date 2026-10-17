@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"unicode/utf16"
@@ -28,10 +29,35 @@ func nativeCommand(plan agent.NativeSession) string {
 	}
 	// Start-Process receives one Windows command line so Windows PowerShell 5
 	// preserves empty arguments such as Claude's --tools "".
-	return "Set-Location -LiteralPath " + powershellLiteral(plan.Directory) + "\r\n" +
+	command := "Set-Location -LiteralPath " + powershellLiteral(plan.Directory) + "\r\n" +
 		"Start-Process -FilePath " + powershellLiteral(plan.Executable) +
 		" -ArgumentList " + powershellLiteral(strings.Join(args, " ")) +
 		" -WorkingDirectory " + powershellLiteral(plan.Directory) + " -NoNewWindow -Wait"
+	if len(plan.Environment) == 0 {
+		return command
+	}
+	keys := make([]string, 0, len(plan.Environment))
+	for key := range plan.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var script strings.Builder
+	script.WriteString("& {\r\n$roundtableSavedEnv = @{}\r\n")
+	for _, key := range keys {
+		quoted := powershellLiteral(key)
+		script.WriteString("$roundtableSavedEnv[" + quoted + "] = [Environment]::GetEnvironmentVariable(" + quoted + ", 'Process')\r\n")
+	}
+	script.WriteString("try {\r\n")
+	for _, key := range keys {
+		script.WriteString("[Environment]::SetEnvironmentVariable(" + powershellLiteral(key) + ", " + powershellLiteral(plan.Environment[key]) + ", 'Process')\r\n")
+	}
+	script.WriteString(command + "\r\n} finally {\r\n")
+	for _, key := range keys {
+		quoted := powershellLiteral(key)
+		script.WriteString("[Environment]::SetEnvironmentVariable(" + quoted + ", $roundtableSavedEnv[" + quoted + "], 'Process')\r\n")
+	}
+	script.WriteString("}\r\n}")
+	return script.String()
 }
 
 func openNativeSession(plan agent.NativeSession, onExit func()) (int, error) {

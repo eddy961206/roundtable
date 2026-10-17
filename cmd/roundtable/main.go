@@ -2,6 +2,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -10,8 +12,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
+	"time"
 
 	"roundtable"
 	"roundtable/internal/agent"
@@ -35,6 +40,7 @@ func main() {
 	claudeCmd := flag.String("claude", "claude", "Claude Code command")
 	codexCmd := flag.String("codex", "codex", "Codex command")
 	agyCmd := flag.String("agy", "agy", "Antigravity command")
+	openCodeCmd := flag.String("opencode", "opencode", "OpenCode command")
 	open := flag.Bool("open", false, "open the browser after start")
 	agyStatus := flag.String("agy-status", "", "Gemini quota file written by `roundtable agy-statusline` (default <data>/agy-status.json)")
 	flag.Parse()
@@ -52,6 +58,7 @@ func main() {
 		logger.Fatalf("scratch dir: %v", err)
 	}
 	reg := agent.DefaultRegistry(*claudeCmd, *codexCmd, *agyCmd, *agyStatus)
+	reg.Add(agent.NewOpenCode(*openCodeCmd))
 	hub, err := room.NewHub(store, reg, scratch, logger)
 	if err != nil {
 		logger.Fatalf("load rooms: %v", err)
@@ -78,7 +85,27 @@ func main() {
 	if *open {
 		openBrowser(url)
 	}
-	if err := http.Serve(ln, srv); err != nil {
+	httpServer := &http.Server{Handler: srv, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10, ErrorLog: logger}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	shutdownDone := make(chan struct{})
+	go func() {
+		defer close(shutdownDone)
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := hub.Shutdown(shutdownCtx); err != nil {
+			logger.Printf("agent shutdown: %v", err)
+		}
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			logger.Printf("HTTP shutdown: %v", err)
+			_ = httpServer.Close()
+		}
+	}()
+	err = httpServer.Serve(ln)
+	stop()
+	<-shutdownDone
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatal(err)
 	}
 }

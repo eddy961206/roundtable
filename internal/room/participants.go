@@ -60,6 +60,12 @@ type preparedParticipant struct {
 // Provider discovery can spawn a CLI and must happen outside the hub mutex.
 func (h *Hub) prepareParticipant(spec ParticipantSpec) (preparedParticipant, error) {
 	out := preparedParticipant{spec: spec}
+	h.mu.Lock()
+	closing := h.closing
+	h.mu.Unlock()
+	if closing {
+		return out, fmt.Errorf("서버가 종료 중이야")
+	}
 	prov := h.reg.Get(spec.Provider)
 	if prov == nil {
 		return out, fmt.Errorf("알 수 없는 공급자: %s", spec.Provider)
@@ -128,6 +134,9 @@ func (h *Hub) AddParticipants(id string, spec ParticipantSpec) ([]byte, error) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closing {
+		return nil, fmt.Errorf("서버가 종료 중이야")
+	}
 	rs, ok := h.rooms[id]
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
@@ -152,6 +161,9 @@ func (h *Hub) AddParticipants(id string, spec ParticipantSpec) ([]byte, error) {
 func (h *Hub) RemoveParticipant(id, seatID string) ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closing {
+		return nil, fmt.Errorf("서버가 종료 중이야")
+	}
 	rs, ok := h.rooms[id]
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
@@ -187,10 +199,67 @@ func (h *Hub) RemoveParticipant(id, seatID string) ([]byte, error) {
 	return json.Marshal(rs.room)
 }
 
+// StopParticipant stops one seat without cancelling another participant's turn.
+// It stays disabled until the user explicitly enables it and sends a new request.
+func (h *Hub) StopParticipant(id, seatID string) ([]byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing {
+		return nil, fmt.Errorf("서버가 종료 중이야")
+	}
+	rs, ok := h.rooms[id]
+	if !ok {
+		return nil, fmt.Errorf("방 없음: %s", id)
+	}
+	p := rs.room.participant(seatID)
+	if p == nil || p.Removed {
+		return nil, fmt.Errorf("참가자 없음: %s", seatID)
+	}
+	next := *rs.room
+	next.Participants = slices.Clone(next.Participants)
+	stopped := *p
+	stopped.Enabled = false
+	for i, participant := range next.Participants {
+		if participant.ID == seatID {
+			next.Participants[i] = &stopped
+		}
+	}
+	next.UpdatedAt = nowMs()
+	if err := h.store.SaveRoom(&next); err != nil {
+		return nil, err
+	}
+	p.Enabled = false
+	rs.room.UpdatedAt = next.UpdatedAt
+	running := rs.runningFor(seatID)
+	queued := 0
+	for _, turn := range rs.queue {
+		if turn.Agent == seatID {
+			queued++
+		}
+	}
+	if running != nil {
+		running.discardFollowups = true
+		running.cancel()
+	}
+	rs.dropQueuedFor(h, seatID)
+	rs.broadcast("room", rs.room)
+	h.pump(rs)
+	return json.Marshal(struct {
+		Room             *Room  `json:"room"`
+		ParticipantID    string `json:"participant_id"`
+		CancelledRunning bool   `json:"cancelled_running"`
+		RemovedQueued    int    `json:"removed_queued"`
+	}{Room: rs.room, ParticipantID: seatID, CancelledRunning: running != nil, RemovedQueued: queued})
+}
+
 // Read provider identities briefly, then fetch model metadata without blocking turns.
 func (h *Hub) patchModelChoices(id string, patches []ParticipantPatch) map[string]modelChoices {
 	providers := map[string]agent.Provider{}
 	h.mu.Lock()
+	if h.closing {
+		h.mu.Unlock()
+		return nil
+	}
 	if rs := h.rooms[id]; rs != nil {
 		for _, patch := range patches {
 			if patch.Model == nil && patch.Effort == nil {

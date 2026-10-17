@@ -68,12 +68,15 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /", http.FileServer(http.FS(s.web)))
 	s.mux.HandleFunc("GET /api/config", s.config)
 	s.mux.HandleFunc("GET /api/providers", s.providers)
+	s.mux.HandleFunc("GET /api/usage", s.usage)
+	s.mux.HandleFunc("POST /api/usage/refresh", s.refreshUsage)
 	s.mux.HandleFunc("GET /api/rooms", s.listRooms)
 	s.mux.HandleFunc("POST /api/rooms", s.createRoom)
 	s.mux.HandleFunc("GET /api/rooms/{id}", s.getRoom)
 	s.mux.HandleFunc("PATCH /api/rooms/{id}", s.patchRoom)
 	s.mux.HandleFunc("POST /api/rooms/{id}/participants", s.addParticipants)
 	s.mux.HandleFunc("DELETE /api/rooms/{id}/participants/{participant}", s.removeParticipant)
+	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/stop", s.stopParticipant)
 	s.mux.HandleFunc("GET /api/rooms/{id}/participants/{participant}/session", s.nativeSession)
 	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/session/open", s.openNativeSession)
 	s.mux.HandleFunc("DELETE /api/rooms/{id}", s.deleteRoom)
@@ -111,6 +114,14 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 var Version = "dev"
 
 func (s *Server) providers(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("refresh") == "true" {
+		for _, provider := range s.reg.All() {
+			if catalog, ok := provider.(interface{ InvalidateModelCatalog() }); ok {
+				catalog.InvalidateModelCatalog()
+			}
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, map[string]any{"providers": s.reg.Infos(), "limits": s.hub.Limits()})
 }
 
@@ -133,7 +144,25 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getRoom(w http.ResponseWriter, r *http.Request) {
-	b, err := s.hub.SnapshotJSON(r.PathValue("id"))
+	var before int64
+	limit := 100
+	if raw := r.URL.Query().Get("before"); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 0 {
+			writeErr(w, 400, fmt.Errorf("before는 0 이상의 메시지 번호여야 함"))
+			return
+		}
+		before = value
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 200 {
+			writeErr(w, 400, fmt.Errorf("limit은 1~200이어야 함"))
+			return
+		}
+		limit = value
+	}
+	b, err := s.hub.SnapshotPageJSON(r.PathValue("id"), before, limit)
 	if err != nil {
 		writeErr(w, 404, err)
 		return
@@ -245,7 +274,11 @@ func (s *Server) cancelTurn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) trace(w http.ResponseWriter, r *http.Request) {
-	events := s.hub.Trace(r.PathValue("id"), r.PathValue("msg"))
+	events, err := s.hub.ReadTrace(r.PathValue("id"), r.PathValue("msg"))
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
 	if events == nil {
 		events = []agent.Event{}
 	}
@@ -271,10 +304,16 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer unsub()
-	fl, ok := w.(http.Flusher)
-	if !ok {
-		writeErr(w, 500, fmt.Errorf("streaming unsupported"))
-		return
+	controller := http.NewResponseController(w)
+	defer controller.SetWriteDeadline(time.Time{})
+	send := func(format string, args ...any) bool {
+		if err := controller.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, format, args...); err != nil {
+			return false
+		}
+		return controller.Flush() == nil
 	}
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -282,8 +321,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	h.Set("Connection", "keep-alive")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(200)
-	fmt.Fprintf(w, "event: hello\ndata: %s\n\n", strconv.FormatInt(time.Now().UnixMilli(), 10))
-	fl.Flush()
+	if !send("event: hello\ndata: %s\n\n", strconv.FormatInt(time.Now().UnixMilli(), 10)) {
+		return
+	}
 	ping := time.NewTicker(20 * time.Second)
 	defer ping.Stop()
 	for {
@@ -291,14 +331,16 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ping.C:
-			fmt.Fprint(w, ": ping\n\n")
-			fl.Flush()
+			if !send(": ping\n\n") {
+				return
+			}
 		case b, ok := <-ch:
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "data: %s\n\n", b) // json.Marshal never emits raw newlines
-			fl.Flush()
+			if !send("data: %s\n\n", b) { // json.Marshal never emits raw newlines
+				return
+			}
 		}
 	}
 }

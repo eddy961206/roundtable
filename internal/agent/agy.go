@@ -62,7 +62,7 @@ func (a *Agy) ContextWindow(model string) int {
 func (a *Agy) Models() []ModelOption {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if len(a.models) > 0 && time.Since(a.loaded) < 10*time.Minute {
+	if !a.loaded.IsZero() && time.Since(a.loaded) < 10*time.Minute {
 		return a.models
 	}
 	a.models, a.efforts = groupAgyModels(listOutput(a.cmd, "models"))

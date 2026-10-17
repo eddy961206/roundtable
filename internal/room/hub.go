@@ -25,20 +25,28 @@ const (
 
 // Hub owns every room, runs agent turns and fans events out to SSE clients.
 type Hub struct {
-	mu             sync.Mutex
-	store          *Store
-	reg            *agent.Registry
-	scratch        string
-	rooms          map[string]*roomState
-	limits         map[string]agent.Limits
-	nativeSessions map[string]bool
-	Log            *log.Logger
+	mu              sync.Mutex
+	closing         bool
+	turnWG          sync.WaitGroup
+	store           *Store
+	reg             *agent.Registry
+	scratch         string
+	rooms           map[string]*roomState
+	limits          map[string]agent.Limits
+	usageStates     map[string]UsageSource
+	usageFlights    map[string]chan struct{}
+	usageCancels    map[string]context.CancelFunc
+	limitsVersion   uint64
+	limitsSaving    bool
+	limitsDone      chan struct{}
+	limitsSaveError error
+	nativeSessions  map[string]bool
+	Log             *log.Logger
 }
 
 type roomState struct {
 	room     *Room
 	msgs     []*Message
-	traces   map[string][]agent.Event
 	queue    []*Turn
 	running  map[string]*running
 	subs     map[chan []byte]struct{}
@@ -49,12 +57,13 @@ type roomState struct {
 }
 
 type running struct {
-	turn    *Turn
-	msg     *Message
-	cancel  context.CancelFunc
-	steer   chan string
-	live    []*Message // accepted steers belonging to this invocation only
-	stopGen int
+	turn             *Turn
+	msg              *Message
+	cancel           context.CancelFunc
+	steer            chan string
+	live             []*Message // accepted steers belonging to this invocation only
+	stopGen          int
+	discardFollowups bool // participant stop must not replay old steers after re-enable
 }
 
 type discussion struct {
@@ -71,7 +80,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		return nil, fmt.Errorf("작업 임시 폴더: %w", err)
 	}
 	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]bool{}, Log: logger}
-	rooms, msgs, traces, err := store.LoadAll()
+	rooms, msgs, err := store.LoadRooms()
 	if err != nil {
 		return nil, err
 	}
@@ -88,23 +97,13 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 				return nil, fmt.Errorf("방 %s 작업 폴더: %w", r.ID, err)
 			}
 		}
-		rs := &roomState{room: r, msgs: msgs[r.ID], traces: map[string][]agent.Event{}, running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
-		for _, t := range traces[r.ID] {
-			rs.traces[t.MsgID] = append(rs.traces[t.MsgID], t.Event)
-		}
+		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
 		for _, m := range rs.msgs {
 			if m.Kind != "agent" {
 				continue
 			}
 			if p := r.participant(m.Author); p != nil && m.Provider == "" {
 				m.Provider = p.Provider
-			}
-			if m.SessionID == "" {
-				for _, event := range rs.traces[m.ID] {
-					if event.Kind == agent.KindSession && event.Text != "" {
-						m.SessionID = event.Text
-					}
-				}
 			}
 		}
 		rs.refreshParticipantStates()
@@ -181,9 +180,7 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	} else {
 		ids := spec.Participants
 		if len(ids) == 0 {
-			for _, p := range h.reg.All() {
-				ids = append(ids, p.ID())
-			}
+			return nil, fmt.Errorf("참가자를 선택해")
 		}
 		for _, id := range ids {
 			prepared, err := h.prepareParticipant(ParticipantSpec{Provider: id})
@@ -203,10 +200,13 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closing {
+		return nil, fmt.Errorf("서버가 종료 중이야")
+	}
 	if err := h.store.SaveRoom(r); err != nil {
 		return nil, err
 	}
-	h.rooms[r.ID] = &roomState{room: r, traces: map[string][]agent.Event{}, running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
+	h.rooms[r.ID] = &roomState{room: r, running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
 	return r, nil
 }
 
@@ -246,6 +246,7 @@ type Snapshot struct {
 	Queue      []*Turn                 `json:"queue"`
 	Discussion *DiscussionView         `json:"discussion"`
 	Limits     map[string]agent.Limits `json:"limits"`
+	History    HistoryPage             `json:"history"`
 }
 
 type DiscussionView struct {
@@ -261,32 +262,18 @@ func (h *Hub) Snapshot(id string) (*Snapshot, error) {
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
 	}
-	return &Snapshot{Room: rs.room, Messages: rs.msgs, Queue: rs.queueView(), Discussion: rs.discView(), Limits: h.limitsCopy()}, nil
+	return h.snapshotLocked(rs, 0, len(rs.msgs)), nil
 }
 
-// SnapshotJSON serialises under the lock so a running turn cannot mutate what the encoder reads.
+// SnapshotJSON returns the initial bounded history page.
 func (h *Hub) SnapshotJSON(id string) ([]byte, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	rs, ok := h.rooms[id]
-	if !ok {
-		return nil, fmt.Errorf("방 없음: %s", id)
-	}
-	return json.Marshal(&Snapshot{Room: rs.room, Messages: rs.msgs, Queue: rs.queueView(), Discussion: rs.discView(), Limits: h.limitsCopy()})
+	return h.SnapshotPageJSON(id, 0, DefaultHistoryLimit)
 }
 
 func (h *Hub) limitsCopy() map[string]agent.Limits {
-	for _, p := range h.reg.All() {
-		src, ok := p.(agent.LimitSource)
-		if !ok {
-			continue
-		}
-		if l, ok := src.CurrentLimits(); ok && l.At > h.limits[l.Provider].At {
-			h.limits[l.Provider] = l
-		}
-	}
 	out := map[string]agent.Limits{}
 	for k, v := range h.limits {
+		v.Windows = slices.Clone(v.Windows)
 		out[k] = v
 	}
 	return out
@@ -339,6 +326,9 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	choices := h.patchModelChoices(id, patch.Participants)
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closing {
+		return nil, fmt.Errorf("서버가 종료 중이야")
+	}
 	rs, ok := h.rooms[id]
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
@@ -493,6 +483,9 @@ func (rs *roomState) dropQueuedFor(h *Hub, agentID string) {
 func (h *Hub) ResetSessions(id string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closing {
+		return fmt.Errorf("서버가 종료 중이야")
+	}
 	rs, ok := h.rooms[id]
 	if !ok {
 		return fmt.Errorf("방 없음: %s", id)
@@ -509,6 +502,10 @@ func (h *Hub) ResetSessions(id string) error {
 
 func (h *Hub) DeleteRoom(id string) error {
 	h.mu.Lock()
+	if h.closing {
+		h.mu.Unlock()
+		return fmt.Errorf("서버가 종료 중이야")
+	}
 	rs, ok := h.rooms[id]
 	if !ok {
 		h.mu.Unlock()
@@ -530,6 +527,9 @@ func (h *Hub) DeleteRoom(id string) error {
 func (h *Hub) Subscribe(id string) (<-chan []byte, func(), error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closing {
+		return nil, nil, fmt.Errorf("서버가 종료 중이야")
+	}
 	rs, ok := h.rooms[id]
 	if !ok {
 		return nil, nil, fmt.Errorf("방 없음: %s", id)
@@ -547,6 +547,9 @@ func (h *Hub) Subscribe(id string) (<-chan []byte, func(), error) {
 }
 
 func (rs *roomState) broadcast(typ string, payload any) {
+	if len(rs.subs) == 0 {
+		return
+	}
 	b, err := json.Marshal(map[string]any{"type": typ, "data": payload})
 	if err != nil {
 		return
@@ -554,21 +557,38 @@ func (rs *roomState) broadcast(typ string, payload any) {
 	for ch := range rs.subs {
 		select {
 		case ch <- b:
-		default: // slow client: drop; it re-syncs from the snapshot
+		default:
+			// A gap must force reconnection; silently dropping a final message
+			// leaves the client permanently stale while the connection stays open.
+			delete(rs.subs, ch)
+			close(ch)
 		}
 	}
 }
 
-func (h *Hub) Trace(id, msgID string) []agent.Event {
+func (h *Hub) ReadTrace(id, msgID string) ([]agent.Event, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	rs, ok := h.rooms[id]
 	if !ok {
-		return nil
+		h.mu.Unlock()
+		return nil, fmt.Errorf("방 없음: %s", id)
 	}
-	out := make([]agent.Event, len(rs.traces[msgID]))
-	copy(out, rs.traces[msgID])
-	return out
+	found := slices.ContainsFunc(rs.msgs, func(message *Message) bool { return message.ID == msgID })
+	h.mu.Unlock()
+	if !found {
+		return nil, fmt.Errorf("메시지 없음: %s", msgID)
+	}
+	return h.store.ReadTrace(id, msgID)
+}
+
+// Trace keeps the original in-process API; storage failures remain visible as
+// error events. HTTP callers use ReadTrace to return a failed status instead.
+func (h *Hub) Trace(id, msgID string) []agent.Event {
+	events, err := h.ReadTrace(id, msgID)
+	if err != nil {
+		return []agent.Event{{Kind: agent.KindError, Text: err.Error()}}
+	}
+	return events
 }
 
 // ---- messages and routing --------------------------------------------------
@@ -605,6 +625,9 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closing {
+		return nil, fmt.Errorf("서버가 종료 중이야")
+	}
 	rs, ok := h.rooms[id]
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
@@ -696,6 +719,9 @@ func (rs *roomState) enqueueFront(t *Turn) {
 func (h *Hub) StartDiscussion(id string, rounds int) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closing {
+		return fmt.Errorf("서버가 종료 중이야")
+	}
 	rs, ok := h.rooms[id]
 	if !ok {
 		return fmt.Errorf("방 없음: %s", id)
@@ -817,6 +843,10 @@ func (rs *roomState) refreshParticipantStates() {
 // Broadcast members share a cap, not a copy of mutable streaming messages.
 // Caller holds h.mu throughout prompt construction and participant reservation.
 func (h *Hub) pump(rs *roomState) {
+	if h.closing {
+		rs.refreshParticipantStates()
+		return
+	}
 	discussionBlocked := false
 	for _, run := range rs.running {
 		if run.turn.Reason == "discussion" && run.stopGen == rs.stopGen {
@@ -857,6 +887,7 @@ func (h *Hub) pump(rs *roomState) {
 		if t.Reason == "discussion" {
 			discussionBlocked = true
 		}
+		h.turnWG.Add(1)
 		go h.runTurn(rs, pr)
 	}
 	rs.refreshParticipantStates()
@@ -935,18 +966,35 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 }
 
 func (h *Hub) runTurn(rs *roomState, pr *prepared) {
+	defer h.turnWG.Done()
 	t, p, prov, msg, opts, ctx, cancel := pr.t, pr.p, pr.prov, pr.msg, pr.opts, pr.ctx, pr.cancel
 	started := time.Now()
 	var textBuf strings.Builder
+	var emitMu sync.Mutex
+	var tracePersistenceError error
 	emit := func(e agent.Event) {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		h.mu.Lock()
+		if rs.deleted || tracePersistenceError != nil {
+			h.mu.Unlock()
+			return
+		}
+		h.mu.Unlock()
+		// Event writes stay ordered within this invocation without holding up
+		// every room while a large tool result is appended to disk.
+		writeErr := h.store.AppendTrace(rs.room.ID, TraceLine{MsgID: msg.ID, Event: e})
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		if rs.deleted {
 			return
 		}
-		rs.traces[msg.ID] = append(rs.traces[msg.ID], e)
+		if writeErr != nil {
+			tracePersistenceError = writeErr
+			cancel()
+			return
+		}
 		msg.Trace++
-		_ = h.store.AppendTrace(rs.room.ID, TraceLine{MsgID: msg.ID, Event: e})
 		switch e.Kind {
 		case agent.KindSession:
 			if e.Text != "" {
@@ -980,14 +1028,14 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			p.StatusText = "추론 중"
 		case agent.KindLimits:
 			if raw, ok := e.Meta["limits"].(agent.Limits); ok {
-				h.limits[raw.Provider] = raw
-				_ = h.store.SaveLimits(h.limits)
-				rs.broadcast("limits", h.limitsCopy())
+				if h.recordLimitsLocked(raw) {
+					rs.broadcast("limits", h.limitsCopy())
+				}
 			}
 		case agent.KindUsage:
 			applyUsage(p, prov, e.Meta)
 		}
-		rs.broadcast("trace", map[string]any{"msg_id": msg.ID, "event": e})
+		rs.broadcast("trace", map[string]any{"msg_id": msg.ID, "index": msg.Trace, "event": e})
 		rs.broadcast("participant", p)
 	}
 
@@ -1027,6 +1075,8 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	}
 	msg.Text = text
 	switch {
+	case tracePersistenceError != nil:
+		msg.Status, msg.Error = "error", fmt.Sprintf("실행 기록 저장 실패: %v", tracePersistenceError)
 	case interrupted:
 		msg.Status, msg.Error = "cancelled", "중단됨"
 	case err != nil:
@@ -1048,7 +1098,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			rs.broadcast("message", m)
 			// Stop still cancels all pending work. Persist the undelivered input,
 			// but never restart a turn from an older stop generation.
-			if pr.stopGen == rs.stopGen && p.Enabled {
+			if pr.stopGen == rs.stopGen && p.Enabled && !run.discardFollowups {
 				rs.enqueueFront(&Turn{ID: newID(), Agent: p.ID, Reason: "mention", Group: m.ID, Cap: m.Seq, Created: nowMs(), Status: "queued"})
 			}
 		}
@@ -1213,16 +1263,14 @@ func (h *Hub) discussionStep(rs *roomState, agentID, signal, status string) {
 // ---- export ----------------------------------------------------------------
 
 func (h *Hub) ExportMarkdown(id string) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	rs, ok := h.rooms[id]
-	if !ok {
-		return "", fmt.Errorf("방 없음: %s", id)
+	snapshot, err := h.Snapshot(id)
+	if err != nil {
+		return "", err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\n", rs.room.Title)
-	fmt.Fprintf(&b, "- 작업 폴더: %s\n- 모드: %s\n- 내보낸 시각: %s\n\n", rs.room.Workspace, rs.room.Mode, time.Now().Format(time.RFC3339))
-	for _, m := range rs.msgs {
+	fmt.Fprintf(&b, "# %s\n\n", snapshot.Room.Title)
+	fmt.Fprintf(&b, "- 작업 폴더: %s\n- 모드: %s\n- 내보낸 시각: %s\n\n", snapshot.Room.Workspace, snapshot.Room.Mode, time.Now().Format(time.RFC3339))
+	for _, m := range snapshot.Messages {
 		ts := time.UnixMilli(m.TS).Format("15:04:05")
 		who := m.Author
 		if m.Kind == "user" {

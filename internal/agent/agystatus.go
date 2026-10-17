@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -116,11 +117,14 @@ func ParseAgyLimits(st AgyStatus) (Limits, error) {
 	if err := json.Unmarshal(st.Data, &d); err != nil {
 		return Limits{}, err
 	}
-	l := Limits{Provider: "agy", At: st.QuotaAt, Plan: d.PlanTier}
+	l := Limits{Provider: "agy", At: st.QuotaAt, Source: "agy_statusline", Plan: d.PlanTier}
 	for _, w := range agyQuotaWindows {
 		q, ok := d.Quota[w.key]
 		if !ok || q.Remaining == nil {
 			continue
+		}
+		if *q.Remaining < 0 || *q.Remaining > 1 {
+			return Limits{}, fmt.Errorf("quota.%s.remaining_fraction은 0~1이어야 함", w.key)
 		}
 		win := LimitWindow{Label: w.label, UsedPercent: (1 - *q.Remaining) * 100}
 		switch {
@@ -130,7 +134,7 @@ func ParseAgyLimits(st AgyStatus) (Limits, error) {
 				return Limits{}, fmt.Errorf("quota.%s.reset_time 형식 오류: %w", w.key, err)
 			}
 			win.ResetsAt = t.Unix()
-		case q.ResetIn != nil:
+		case q.ResetIn != nil && st.QuotaAt > 0:
 			win.ResetsAt = st.QuotaAt/1000 + int64(*q.ResetIn)
 		}
 		l.Windows = append(l.Windows, win)
@@ -144,18 +148,22 @@ func ParseAgyLimits(st AgyStatus) (Limits, error) {
 // CurrentLimits reads the latest status file. ok is false when the hook is not
 // installed yet or agy has not drawn its status line since.
 func (a *Agy) CurrentLimits() (Limits, bool) {
+	l, err := a.RefreshLimits(context.Background())
+	return l, err == nil
+}
+
+func (a *Agy) RefreshLimits(ctx context.Context) (Limits, error) {
+	if err := ctx.Err(); err != nil {
+		return Limits{}, err
+	}
 	if a.statusPath == "" {
-		return Limits{}, false
+		return Limits{}, fmt.Errorf("Antigravity 사용량 기록 경로가 설정되지 않았어")
 	}
 	st, err := readAgyStatus(a.statusPath)
 	if err != nil {
-		return Limits{}, false
+		return Limits{}, fmt.Errorf("Antigravity 상태표시줄의 사용량 기록을 읽지 못했어. CLI와 사용량 기록 연결을 확인해")
 	}
-	l, err := ParseAgyLimits(st)
-	if err != nil {
-		return Limits{}, false
-	}
-	return l, true
+	return ParseAgyLimits(st)
 }
 
 func readAgyStatus(path string) (AgyStatus, error) {

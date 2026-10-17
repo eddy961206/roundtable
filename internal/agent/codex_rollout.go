@@ -98,8 +98,13 @@ func (w *rolloutWatcher) finish(emit func(Event)) {
 
 func (w *rolloutWatcher) candidates() []string {
 	var out []string
+	seenDays := map[string]bool{}
 	for _, day := range []time.Time{w.since, time.Now()} {
 		dir := filepath.Join(w.root, day.Format("2006"), day.Format("01"), day.Format("02"))
+		if seenDays[dir] {
+			continue
+		}
+		seenDays[dir] = true
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue

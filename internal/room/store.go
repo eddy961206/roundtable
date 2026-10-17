@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
+
+	"roundtable/internal/agent"
 )
 
 // Store persists rooms as plain files: room.json, messages.jsonl (upserts,
@@ -99,8 +102,19 @@ func (s *Store) LoadLimits(into any) error {
 	return json.Unmarshal(b, into)
 }
 
-// LoadAll reads every room with its messages and traces.
+// LoadAll reads full stored history for callers that explicitly need every trace.
 func (s *Store) LoadAll() ([]*Room, map[string][]*Message, map[string][]TraceLine, error) {
+	return s.loadRooms(true)
+}
+
+// LoadRooms leaves event payloads on disk. Only missing legacy session metadata
+// is recovered while loading messages; ordinary room reads never scan traces.
+func (s *Store) LoadRooms() ([]*Room, map[string][]*Message, error) {
+	rooms, messages, _, err := s.loadRooms(false)
+	return rooms, messages, err
+}
+
+func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[string][]TraceLine, error) {
 	entries, err := os.ReadDir(filepath.Join(s.root, "rooms"))
 	if err != nil {
 		return nil, nil, nil, err
@@ -129,27 +143,46 @@ func (s *Store) LoadAll() ([]*Room, map[string][]*Message, map[string][]TraceLin
 			}
 		}
 		rooms = append(rooms, &r)
-		msgs[r.ID] = loadMessages(filepath.Join(dir, "messages.jsonl"))
-		traces[r.ID] = loadTraces(filepath.Join(dir, "events.jsonl"))
+		msgs[r.ID], err = loadMessages(filepath.Join(dir, "messages.jsonl"))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		missingSessions := map[string]*Message{}
+		for _, m := range msgs[r.ID] {
+			if m.Kind == "agent" && m.SessionID == "" {
+				missingSessions[m.ID] = m
+			}
+		}
+		if withTraces || len(missingSessions) > 0 {
+			err = scanJSONLines(filepath.Join(dir, "events.jsonl"), func(line []byte) error {
+				var record TraceLine
+				if err := json.Unmarshal(line, &record); err != nil {
+					return err
+				}
+				if withTraces {
+					traces[r.ID] = append(traces[r.ID], record)
+				}
+				if message := missingSessions[record.MsgID]; message != nil && record.Event.Kind == agent.KindSession && record.Event.Text != "" {
+					message.SessionID = record.Event.Text
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, nil, nil, err
+			}
+		}
 	}
 	sort.Slice(rooms, func(i, j int) bool { return rooms[i].UpdatedAt > rooms[j].UpdatedAt })
 	return rooms, msgs, traces, nil
 }
 
-func loadMessages(path string) []*Message {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
+func loadMessages(path string) ([]*Message, error) {
 	byID := map[string]*Message{}
 	var order []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 32*1024*1024)
-	for sc.Scan() {
+	err := scanJSONLines(path, func(line []byte) error {
 		var m Message
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-			continue
+		if err := json.Unmarshal(line, &m); err != nil {
+			return err
 		}
 		if _, ok := byID[m.ID]; !ok {
 			order = append(order, m.ID)
@@ -158,30 +191,87 @@ func loadMessages(path string) []*Message {
 			m.Status = "cancelled"
 		}
 		byID[m.ID] = &m
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	out := make([]*Message, 0, len(order))
 	for _, id := range order {
 		out = append(out, byID[id])
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
-	return out
+	return out, nil
 }
 
-func loadTraces(path string) []TraceLine {
+// scanJSONLines reports corrupt/truncated records instead of silently losing
+// everything after Scanner's old 32 MiB line limit.
+func scanJSONLines(path string, consume func([]byte) error) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
 	}
 	defer f.Close()
-	var out []TraceLine
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 32*1024*1024)
-	for sc.Scan() {
-		var t TraceLine
-		if err := json.Unmarshal(sc.Bytes(), &t); err != nil {
-			continue
+	return readJSONLines(f, path, consume)
+}
+
+func readJSONLines(source io.Reader, path string, consume func([]byte) error) error {
+	reader := bufio.NewReaderSize(source, 64*1024)
+	for lineNumber := 1; ; lineNumber++ {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			if decodeErr := consume(line); decodeErr != nil {
+				return fmt.Errorf("%s:%d: %w", path, lineNumber, decodeErr)
+			}
 		}
-		out = append(out, t)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("%s:%d: %w", path, lineNumber, err)
+		}
 	}
-	return out
+}
+
+// ReadTrace reads one message's events from a stable file-size snapshot. Opening
+// and sizing share the append lock, but the scan does not block live writers.
+func (s *Store) ReadTrace(roomID, messageID string) ([]agent.Event, error) {
+	path := filepath.Join(s.roomDir(roomID), "events.jsonl")
+	s.mu.Lock()
+	f, err := os.Open(path)
+	if err != nil {
+		s.mu.Unlock()
+		if os.IsNotExist(err) {
+			return []agent.Event{}, nil
+		}
+		return nil, err
+	}
+	info, err := f.Stat()
+	s.mu.Unlock()
+	defer f.Close()
+	if err != nil {
+		return nil, err
+	}
+	result := []agent.Event{}
+	err = readJSONLines(io.LimitReader(f, info.Size()), path, func(line []byte) error {
+		var header struct {
+			MsgID string `json:"msg_id"`
+		}
+		if err := json.Unmarshal(line, &header); err != nil {
+			return err
+		}
+		if header.MsgID != messageID {
+			return nil
+		}
+		var record TraceLine
+		if err := json.Unmarshal(line, &record); err != nil {
+			return err
+		}
+		result = append(result, record.Event)
+		return nil
+	})
+	return result, err
 }
