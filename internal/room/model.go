@@ -11,8 +11,9 @@ type Participant struct {
 	Model         string         `json:"model"`
 	Effort        string         `json:"effort"`
 	SessionID     string         `json:"session_id"`
-	LastSeen      int64          `json:"last_seen"` // highest message seq delivered to this agent
-	Status        string         `json:"status"`    // idle | queued | running
+	LastSeen      int64          `json:"last_seen"`        // highest message seq considered for delivery
+	Unseen        []int64        `json:"unseen,omitempty"` // unfinished replies below LastSeen
+	Status        string         `json:"status"`           // idle | queued | running
 	StatusText    string         `json:"status_text"`
 	Turns         int            `json:"turns"`
 	Usage         map[string]any `json:"usage,omitempty"` // last turn
@@ -89,14 +90,16 @@ type Message struct {
 
 // Turn is a queued request for one agent to speak.
 type Turn struct {
-	ID      string `json:"id"`
-	Agent   string `json:"agent"`
-	Reason  string `json:"reason"`
-	Group   string `json:"group"` // turns sharing a group run in parallel
-	Depth   int    `json:"depth"`
-	Round   int    `json:"round,omitempty"`
-	Status  string `json:"status"` // queued | running
-	Created int64  `json:"created"`
+	ID       string     `json:"id"`
+	Agent    string     `json:"agent"`
+	Reason   string     `json:"reason"`
+	Group    string     `json:"group"` // turns sharing a group use one conversation snapshot
+	Depth    int        `json:"depth"`
+	Round    int        `json:"round,omitempty"`
+	Status   string     `json:"status"` // queued | running
+	Created  int64      `json:"created"`
+	input    *turnInput // shared frozen conversation; waiting turns are not persisted
+	priority bool       // targeted user messages precede ordinary waiting turns
 }
 
 // TraceLine binds an agent event to the message it belongs to.
