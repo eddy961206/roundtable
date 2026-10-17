@@ -8,65 +8,156 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪑</text></svg>">
 </head>
 <body>
+<div id="live-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+<div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+
 <div id="app">
-  <aside id="sidebar">
+  <nav id="sidebar" aria-label="방 목록 및 공급사 상태">
     <div class="side-head">
-      <h1>Roundtable</h1>
-      <button id="btn-new-room" class="primary">+ 새 방</button>
+      <div class="brand-row">
+        <h1>Roundtable</h1>
+        <span class="ver-badge">v2</span>
+      </div>
+      <div class="side-head-actions">
+        <button type="button" id="btn-theme" class="icon-btn" aria-label="테마 전환 (다크/라이트)" title="다크 / 라이트 테마 전환">🌓</button>
+        <button type="button" id="btn-new-room" class="primary">+ 새 방</button>
+        <button type="button" id="btn-close-left" class="icon-btn mobile-only" aria-label="방 목록 닫기" title="닫기">✕</button>
+      </div>
     </div>
-    <ul id="room-list"></ul>
+    <div class="side-search">
+      <input id="room-search" type="search" placeholder="방 이름·폴더 검색…" aria-label="방 목록 검색">
+    </div>
+    <ul id="room-list" aria-label="채팅방 목록"></ul>
     <div id="provider-panel">
-      <h2>공급사 한도</h2>
+      <div class="panel-head-row">
+        <h2>공급사 CLI 상태</h2>
+        <span class="muted small-note">상세 한도는 상단 띠·참가자 카드</span>
+      </div>
       <div id="limits"></div>
     </div>
-  </aside>
+  </nav>
 
-  <main id="main">
-    <div id="empty" class="empty">왼쪽에서 방을 고르거나 새 방을 만들어.</div>
-    <section id="room" hidden>
+  <main id="main" aria-label="대화 및 작업 영역">
+    <div id="empty" class="empty-wrap">
+      <div class="empty-mobile-bar">
+        <button type="button" id="btn-empty-left" class="mobile-only" aria-label="방 목록 열기">☰ 방 목록</button>
+        <button type="button" id="btn-empty-right" class="tablet-only" aria-label="참가자 패널 열기">참가자</button>
+      </div>
+      <div class="onboarding">
+        <div class="onboard-hero">
+          <h2>Roundtable — 멀티 에이전트 코딩 단톡방</h2>
+          <p class="muted">Claude Code · Codex · Antigravity 세 에이전트를 한 방에 모아 동시에 질문하고, 방향을 조정(steering)하고, 라운드 토론으로 합의점을 찾으세요.</p>
+          <div class="onboard-cta">
+            <button type="button" id="btn-onboard-new" class="primary lg">+ 새 방 만들기</button>
+          </div>
+        </div>
+
+        <div class="onboard-grid" role="list" aria-label="핵심 기능 안내">
+          <div class="onboard-card" role="listitem">
+            <h3>1. @멘션과 동시 호출</h3>
+            <p><code>@claude</code> <code>@codex</code> <code>@agy</code> <code>@all</code> 로 호출하세요. 멘션 없이 보내면 활성 참가자 <strong>전원이 동시에</strong> 같은 대화 스냅샷을 받아 독립적으로 답합니다.</p>
+          </div>
+          <div class="onboard-card" role="listitem">
+            <h3>2. 1회성 조정 (Steering)</h3>
+            <p>입력창의 대상 칩으로 한 에이전트만 지정해 방향을 바꿉니다. <strong>Claude</strong>는 실행 중 즉시 주입되고, <strong>Codex·Antigravity</strong>는 현재 턴 직후 우선 전달됩니다. 전송 후 자동으로 전체 대상으로 복귀하며 <code>Esc</code>로 해제합니다.</p>
+          </div>
+          <div class="onboard-card" role="listitem">
+            <h3>3. 구조화된 라운드 토론</h3>
+            <p>상단 <strong>토론 시작</strong>을 누르면 N라운드 동안 순서대로 발언하며 <code>CONTINUE</code> · <code>AGREE</code> · <code>PASS</code> · <code>CONCLUDE</code> 신호를 남깁니다. 전원 동의/패스하거나 결론이 나면 자동 종료됩니다.</p>
+          </div>
+          <div class="onboard-card" role="listitem">
+            <h3>4. 방 단위 권한 모드</h3>
+            <p><span class="badge read">read</span> 작업 폴더 읽기·검색·서브에이전트 탐색(기본)<br>
+            <span class="badge chat">chat</span> 도구 없이 순수 대화만<br>
+            <span class="badge write">write</span> 샌드박스 내 파일 수정 허용 (위험 우회 플래그 없음)</p>
+          </div>
+        </div>
+
+        <div class="onboard-prompts">
+          <h3>예시 프롬프트 (방을 만든 뒤 눌러서 바로 입력)</h3>
+          <div class="prompt-chips">
+            <button type="button" class="prompt-example" data-prompt="이 작업 폴더의 전체 아키텍처와 핵심 패키지 역할을 3줄씩 요약해줘.">“이 작업 폴더의 전체 아키텍처와 핵심 패키지 역할을 3줄씩 요약해줘.”</button>
+            <button type="button" class="prompt-example" data-prompt="@claude @codex 최근 변경 사항에서 동시성 경합이나 예외 누락이 있는지 교차 리뷰해줘.">“@claude @codex 최근 변경 사항에서 동시성 경합이나 예외 누락이 있는지 교차 리뷰해줘.”</button>
+            <button type="button" class="prompt-example" data-prompt="이 설계안의 장단점을 각자 분석하고 대안을 제시해줘. 그다음 토론으로 결론을 내자.">“이 설계안의 장단점을 각자 분석하고 대안을 제시해줘. 그다음 토론으로 결론을 내자.”</button>
+          </div>
+        </div>
+
+        <div class="onboard-shortcuts muted">
+          <span>단축키:</span>
+          <kbd>Enter</kbd> 전송 ·
+          <kbd>Shift+Enter</kbd> 줄바꿈 ·
+          <kbd>Esc</kbd> 대상 해제/팝업 닫기 ·
+          <kbd>Ctrl+.</kbd> 모두 중지 ·
+          <kbd>/</kbd> 입력창 포커스
+        </div>
+      </div>
+    </div>
+
+    <section id="room" aria-label="현재 대화방" hidden>
       <header id="room-head">
-        <div class="title-row">
-          <h2 id="room-title"></h2>
-          <span id="room-mode" class="badge"></span>
-          <span id="room-ws" class="muted mono"></span>
+        <div class="head-top">
+          <div class="title-row">
+            <button type="button" id="btn-left" class="icon-btn mobile-only" aria-label="방 목록 열기" title="방 목록 열기">☰</button>
+            <h2 id="room-title"></h2>
+            <span id="room-mode" class="badge"></span>
+            <span id="room-ws" class="muted mono"></span>
+            <span id="room-note-badge" class="badge note-badge" hidden>공지</span>
+          </div>
+          <div class="actions">
+            <label class="rounds" for="rounds">라운드 <input id="rounds" type="number" min="1" max="10" value="3" aria-label="토론 라운드 수"></label>
+            <button type="button" id="btn-discuss" title="활성 참가자들이 라운드별로 순서대로 토론합니다">토론 시작</button>
+            <button type="button" id="btn-stop" class="danger" title="실행 중인 모든 턴을 끊고 대기열과 토론을 비웁니다 (Ctrl+.)">모두 중지</button>
+            <label class="auto-trace-label" title="실행 중이거나 새로 올라오는 답변의 작업 기록을 자동으로 펼칩니다">
+              <input type="checkbox" id="chk-auto-trace">
+              <span>작업 기록 자동 펼침</span>
+            </label>
+            <button type="button" id="btn-reset" title="각 에이전트의 CLI 세션을 버리고 다음 턴부터 대화 전체를 새로 읽게 합니다">세션 초기화</button>
+            <a id="btn-export" class="button" download title="대화 전체를 마크다운 파일로 저장합니다">내보내기</a>
+            <button type="button" id="btn-settings" title="방 설정 및 공지 수정">설정</button>
+            <button type="button" id="btn-delete" class="danger ghost" title="방과 기록을 영구 삭제합니다">방 삭제</button>
+            <button type="button" id="btn-right" class="tablet-only" aria-label="참가자 및 대기열 서랍 열기/닫기" title="참가자·대기열 패널 보이기/숨기기">참가자</button>
+          </div>
         </div>
-        <div id="token-strip" class="token-strip"></div>
-        <div class="actions">
-          <label class="rounds">라운드 <input id="rounds" type="number" min="1" max="10" value="3"></label>
-          <button id="btn-discuss">토론 시작</button>
-          <button id="btn-stop" class="danger" title="실행 중인 모든 턴을 끊고 대기열과 토론을 비운다. 한 턴만 끊으려면 오른쪽 대기열에서 중단.">모두 중지</button>
-          <button id="btn-reset" title="각 에이전트의 CLI 세션을 버리고 다음 턴부터 대화 전체를 새로 읽게 함">세션 초기화</button>
-          <a id="btn-export" class="button" download>내보내기</a>
-          <button id="btn-settings">설정</button>
-          <button id="btn-right" title="참가자·대기열 패널 보이기/숨기기 (좁은 화면)">참가자</button>
-          <button id="btn-delete" class="danger ghost">방 삭제</button>
-        </div>
+        <div id="token-strip" class="token-strip" role="region" aria-label="사용량 대시보드 띠"></div>
       </header>
-      <div id="timeline"></div>
-      <div id="discussion-bar" hidden></div>
-      <footer id="composer">
-        <div id="mention-pop" hidden></div>
-        <div class="composer-row">
-          <select id="target" title="대상을 고르면 그 에이전트에게만 보냄. 실행 중이면 Claude는 즉시 끼어들고(steering), Codex·Antigravity는 다음 턴에 전달.">
+
+      <div id="timeline" role="log" aria-live="off" aria-label="대화 메시지 목록"></div>
+      <div id="discussion-bar" role="status" aria-live="polite" hidden></div>
+
+      <form id="composer" aria-label="메시지 작성 및 조정">
+        <div id="mention-pop" role="listbox" aria-label="멘션 후보" hidden></div>
+        <div class="composer-steer-bar">
+          <span class="steer-label muted">대상 조정(1회성):</span>
+          <div id="target-chips" class="target-chips" role="group" aria-label="메시지 전달 대상 선택"></div>
+          <div id="target-active-chip" class="target-active-chip" hidden></div>
+          <select id="target" class="sr-only" aria-label="조정 대상 에이전트 선택" tabindex="-1">
             <option value="">전체 (@멘션 규칙)</option>
           </select>
-          <textarea id="input" rows="2" placeholder="메시지… (@claude @codex @agy @all 로 호출, 멘션 없으면 전원에게. Enter 전송, Shift+Enter 줄바꿈)"></textarea>
-          <button id="btn-send" class="primary">보내기</button>
         </div>
-        <div id="composer-hint" class="muted"></div>
-      </footer>
+        <div class="composer-row">
+          <textarea id="input" rows="2" aria-label="메시지 입력" placeholder="메시지… (@claude @codex @agy @all 호출, 멘션 없으면 전원에게 · Enter 전송, Shift+Enter 줄바꿈, / 포커스)"></textarea>
+          <button type="submit" id="btn-send" class="primary">보내기</button>
+        </div>
+        <div id="composer-hint" class="composer-hint muted"></div>
+      </form>
     </section>
   </main>
 
-  <aside id="right">
-    <h2>참가자</h2>
+  <aside id="right" aria-label="참가자 및 대기열">
+    <div class="right-head">
+      <h2>참가자</h2>
+      <button type="button" id="btn-close-right" class="icon-btn tablet-only" aria-label="참가자 패널 닫기" title="닫기">✕</button>
+    </div>
     <div id="participants"></div>
-    <h2>대기열</h2>
-    <ul id="queue"></ul>
+    <div class="queue-head">
+      <h2>대기열</h2>
+      <span id="queue-count" class="badge">0</span>
+    </div>
+    <ul id="queue" aria-label="실행 및 대기 중인 턴"></ul>
   </aside>
 </div>
 
-<dialog id="dlg-room">
+<dialog id="dlg-room" aria-labelledby="dlg-room-title">
   <form method="dialog" id="form-room">
     <h3 id="dlg-room-title">새 방</h3>
     <label>방 이름 <input name="title" required placeholder="예: SP5 클립 설계 검토"></label>
@@ -82,13 +173,14 @@
       <textarea name="note" rows="3" placeholder="예: 이 방은 Go VMS의 녹화 보존 설계를 검토한다. 결정은 사람이 내린다."></textarea>
     </label>
     <div class="row">
-      <label>참가자
+      <fieldset class="checks-fieldset">
+        <legend>참가자</legend>
         <span class="checks">
           <label><input type="checkbox" name="p" value="claude" checked> Claude</label>
           <label><input type="checkbox" name="p" value="codex" checked> Codex</label>
           <label><input type="checkbox" name="p" value="agy" checked> Antigravity</label>
         </span>
-      </label>
+      </fieldset>
     </div>
     <div class="row">
       <label>연쇄 호출 한도 <input name="max_chain" type="number" min="1" max="20" value="4"></label>
@@ -97,7 +189,7 @@
     </div>
     <menu>
       <button value="cancel" type="button" id="dlg-room-cancel">취소</button>
-      <button value="ok" class="primary" id="dlg-room-ok">만들기</button>
+      <button value="ok" type="submit" class="primary" id="dlg-room-ok">만들기</button>
     </menu>
   </form>
 </dialog>
