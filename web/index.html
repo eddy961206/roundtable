@@ -42,7 +42,7 @@
       <div class="onboarding">
         <div class="onboard-hero">
           <h2>Roundtable — 멀티 에이전트 코딩 단톡방</h2>
-          <p class="muted">Claude Code · Codex · Antigravity 세 에이전트를 한 방에 모아 동시에 질문하고, 방향을 조정(steering)하고, 라운드 토론으로 합의점을 찾으세요.</p>
+          <p class="muted">Claude Code · Codex · Antigravity 참가자를 원하는 수만큼 모으세요. 같은 공급사의 서로 다른 모델도 각자 독립된 세션으로 질문하고 토론할 수 있습니다.</p>
           <div class="onboard-cta">
             <button type="button" id="btn-onboard-new" class="primary lg">+ 새 방 만들기</button>
           </div>
@@ -51,7 +51,7 @@
         <div class="onboard-grid" role="list" aria-label="핵심 기능 안내">
           <div class="onboard-card" role="listitem">
             <h3>1. @멘션과 동시 호출</h3>
-            <p><code>@claude</code> <code>@codex</code> <code>@agy</code> <code>@all</code> 로 호출하세요. 멘션 없이 보내면 활성 참가자 <strong>전원이 동시에</strong> 같은 대화 스냅샷을 받아 독립적으로 답합니다.</p>
+            <p><code>@claude</code> <code>@codex</code> <code>@agy</code>는 공급사 전체, 참가자 카드의 고유 <code>@ID</code>는 한 명을 호출합니다. <code>@all</code> 또는 멘션 없이 보내면 활성 참가자 <strong>전원이 동시에</strong> 답합니다.</p>
           </div>
           <div class="onboard-card" role="listitem">
             <h3>2. 1회성 조정 (Steering)</h3>
@@ -64,8 +64,8 @@
           <div class="onboard-card" role="listitem">
             <h3>4. 방 단위 권한 모드</h3>
             <p><span class="badge read">read</span> 작업 폴더 읽기·검색·서브에이전트 탐색(기본)<br>
-            <span class="badge chat">chat</span> 도구 없이 순수 대화만<br>
-            <span class="badge write">write</span> 샌드박스 내 파일 수정 허용 (위험 우회 플래그 없음)</p>
+            <span class="badge chat">chat</span> 대화 중심 · 프로젝트 폴더를 전달하지 않음<br>
+            <span class="badge write">write</span> CLI 작업 폴더 편집 허용</p>
           </div>
         </div>
 
@@ -136,7 +136,7 @@
           </select>
         </div>
         <div class="composer-row">
-          <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" placeholder="메시지… (@claude @codex @agy @all 호출, 멘션 없으면 전원에게 · Enter 전송, Shift+Enter 줄바꿈, / 포커스)"></textarea>
+          <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" placeholder="메시지… (@로 참가자 선택 · @claude/@codex/@agy 공급사 전체 · Enter 전송, Shift+Enter 줄바꿈)"></textarea>
           <button type="submit" id="btn-send" class="primary">보내기</button>
         </div>
         <div id="composer-hint" class="composer-hint muted"></div>
@@ -147,6 +147,7 @@
   <aside id="right" aria-label="참가자 및 대기열">
     <div class="right-head">
       <h2>참가자</h2>
+      <button type="button" id="btn-add-participant" disabled>+ 추가</button>
       <button type="button" id="btn-close-right" class="icon-btn tablet-only" aria-label="참가자 패널 닫기" title="닫기">✕</button>
     </div>
     <div id="participants"></div>
@@ -166,23 +167,19 @@
     <label>권한 모드
       <select name="mode">
         <option value="read">read — 폴더 읽기·검색만 (추천)</option>
-        <option value="chat">chat — 도구 없이 대화만</option>
-        <option value="write">write — 파일 수정 허용 (샌드박스 안, 우회 없음)</option>
+        <option value="chat">chat — 대화 중심 · 프로젝트 폴더를 전달하지 않음</option>
+        <option value="write">write — CLI 작업 폴더 편집 허용</option>
       </select>
     </label>
     <label>방 공지 (모든 에이전트에게 항상 보이는 맥락)
       <textarea name="note" rows="3" placeholder="예: 이 방은 Go VMS의 녹화 보존 설계를 검토한다. 결정은 사람이 내린다."></textarea>
     </label>
-    <div class="row">
-      <fieldset class="checks-fieldset">
-        <legend>참가자</legend>
-        <span class="checks">
-          <label><input type="checkbox" name="p" value="claude" checked> Claude</label>
-          <label><input type="checkbox" name="p" value="codex" checked> Codex</label>
-          <label><input type="checkbox" name="p" value="agy" checked> Antigravity</label>
-        </span>
-      </fieldset>
-    </div>
+    <fieldset id="room-seats-fieldset" class="checks-fieldset">
+      <legend>참가자 구성</legend>
+      <p class="muted small-note">모델별 인원을 정하세요. 같은 공급사도 여러 줄로 추가할 수 있습니다. 방 하나에 최대 32명까지 참여합니다.</p>
+      <div id="room-seat-specs"></div>
+      <button type="button" id="btn-add-seat-spec">+ 다른 모델 구성</button>
+    </fieldset>
     <div class="row">
       <label>연쇄 호출 한도 <input name="max_chain" type="number" min="1" max="20" value="4"></label>
       <label>기본 토론 라운드 <input name="discussion_rounds" type="number" min="1" max="10" value="3"></label>
@@ -191,6 +188,18 @@
     <menu>
       <button value="cancel" type="button" id="dlg-room-cancel">취소</button>
       <button value="ok" type="submit" class="primary" id="dlg-room-ok">만들기</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-participant" aria-labelledby="dlg-participant-title">
+  <form id="form-participant">
+    <h3 id="dlg-participant-title">참가자 추가</h3>
+    <p class="muted">추가한 참가자는 각자 독립된 세션과 고유 @ID를 갖습니다.</p>
+    <div id="participant-spec"></div>
+    <menu>
+      <button type="button" id="dlg-participant-cancel">취소</button>
+      <button type="submit" class="primary">추가</button>
     </menu>
   </form>
 </dialog>

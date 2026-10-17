@@ -19,7 +19,7 @@ import (
 // `roundtable agy-statusline` stores that document; this file reads it back.
 // No credential is touched: the numbers come from agy itself.
 
-// AgyStatus is the stored statusLine payload.
+// AgyStatus is the last statusLine payload containing a usable quota observation.
 type AgyStatus struct {
 	ObservedAt int64           `json:"observed_at"` // unix ms when agy sent it
 	QuotaAt    int64           `json:"quota_at"`    // unix ms of the payload the quota came from
@@ -31,11 +31,15 @@ type AgyStatus struct {
 // dropped before anything touches the disk.
 var agyKeptKeys = []string{"model", "context_window", "quota", "plan_tier", "version"}
 
-// WriteAgyStatus keeps the allow-listed fields and replaces path atomically.
+// WriteAgyStatus stores complete quota observations. Quota-less redraws do not
+// write: concurrent CLI processes must never copy an old quota over a newer one.
 func WriteAgyStatus(path string, payload []byte, now time.Time) error {
 	var full map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &full); err != nil {
 		return fmt.Errorf("agy statusLine 입력이 JSON 객체가 아님: %w", err)
+	}
+	if full == nil {
+		return fmt.Errorf("agy statusLine 입력이 JSON 객체가 아님")
 	}
 	kept := map[string]json.RawMessage{}
 	for _, k := range agyKeptKeys {
@@ -44,23 +48,25 @@ func WriteAgyStatus(path string, payload []byte, now time.Time) error {
 		}
 	}
 	st := AgyStatus{ObservedAt: now.UnixMilli(), QuotaAt: now.UnixMilli()}
-	if _, ok := kept["quota"]; !ok {
-		// agy also redraws its status line before it knows the quota (for example
-		// while `agy models` runs). That means "not known yet", not "no quota":
-		// keep the last observed quota together with the time it was observed.
-		prev, err := readAgyStatus(path)
-		switch {
-		case err == nil:
-			var old map[string]json.RawMessage
-			if json.Unmarshal(prev.Data, &old) == nil {
-				if q, ok := old["quota"]; ok {
-					kept["quota"] = q
-					st.QuotaAt = prev.QuotaAt
-				}
-			}
-		case !os.IsNotExist(err):
-			return err
+	var quota map[string]struct {
+		Remaining *float64 `json:"remaining_fraction"`
+	}
+	if raw, ok := kept["quota"]; ok {
+		if err := json.Unmarshal(raw, &quota); err != nil {
+			return fmt.Errorf("agy quota 형식 오류: %w", err)
 		}
+	}
+	usable := false
+	for _, w := range agyQuotaWindows {
+		if q, ok := quota[w.key]; ok && q.Remaining != nil {
+			if *q.Remaining < 0 || *q.Remaining > 1 {
+				return fmt.Errorf("quota.%s.remaining_fraction은 0~1이어야 함", w.key)
+			}
+			usable = true
+		}
+	}
+	if !usable {
+		return nil
 	}
 	data, err := json.Marshal(kept)
 	if err != nil {
@@ -78,13 +84,12 @@ func WriteAgyStatus(path string, payload []byte, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(b); err != nil {
 		tmp.Close()
-		os.Remove(tmp.Name())
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
 		return err
 	}
 	return os.Rename(tmp.Name(), path)

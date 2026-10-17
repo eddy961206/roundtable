@@ -194,6 +194,17 @@
     lastEvent: 0,
   };
 
+  const activeParticipants = () => state.room ? state.room.participants.filter((p) => !p.removed) : [];
+  const participant = (id) => state.room && state.room.participants.find((p) => p.id === id);
+  const participantLabel = (id) => {
+    const p = participant(id);
+    return p ? p.label : LABEL[id] || id;
+  };
+  const authorProvider = (id) => {
+    const p = participant(id);
+    return p ? p.provider : id;
+  };
+
   function announce(msg) {
     const box = $("#live-announcer");
     if (!box || !msg) return;
@@ -466,6 +477,7 @@
     state.es = es;
     state.lastEvent = Date.now();
     es.onmessage = (ev) => {
+      if (state.es !== es || state.roomId !== id) return;
       state.lastEvent = Date.now();
       let msg;
       try {
@@ -477,6 +489,7 @@
     };
     let connected = false;
     es.onerror = () => {
+      if (state.es !== es || state.roomId !== id) return;
       const hint = $("#composer-hint");
       if (hint) {
         hint.className = "composer-hint warn";
@@ -484,6 +497,7 @@
       }
     };
     es.addEventListener("hello", () => {
+      if (state.es !== es || state.roomId !== id) return;
       updateHint();
       if (connected) openRoom(id, true);
       connected = true;
@@ -528,12 +542,14 @@
         if (!state.room) break;
         const idx = state.room.participants.findIndex((p) => p.id === data.id);
         if (idx >= 0) state.room.participants[idx] = data;
+        else state.room.participants.push(data);
         renderParticipants();
+        renderTargetControls();
         renderTokenStrip();
         updateHint();
-        for (const id of state.order) {
+        for (const id of state.order.slice(state.winStart, state.winEnd)) {
           const m = state.messages.get(id);
-          if (m && m.status === "streaming" && m.author === data.id) scheduleRender(id);
+          if (m && m.author === data.id) scheduleRender(id);
         }
         break;
       }
@@ -558,6 +574,9 @@
         if ($("#room")) $("#room").dataset.mode = data.mode || "read";
         renderRoomHead();
         renderParticipants();
+        renderQueue();
+        renderDiscussion();
+        for (const id of state.order.slice(state.winStart, state.winEnd)) scheduleRender(id);
         updateHint();
         loadRooms();
         break;
@@ -586,7 +605,7 @@
     } else if (m.kind === "user" && !existed) {
       announce("내 메시지 전송됨");
     } else if (m.kind === "agent" && m.status !== "streaming" && (!prev || prev.status === "streaming")) {
-      const who = LABEL[m.author] || m.author;
+      const who = participantLabel(m.author);
       if (m.status === "error") announce(who + " 턴 오류 발생: " + (m.error || ""));
       else if (m.status === "cancelled") announce(who + " 턴 중단됨");
       else announce(who + " 답변 완료");
@@ -596,6 +615,7 @@
   function renderRoomHead() {
     const r = state.room;
     if (!r) return;
+    $("#btn-add-participant").disabled = activeParticipants().length >= 32;
     $("#room-title").textContent = r.title;
     const badge = $("#room-mode");
     const modeLabel = r.mode === "write" ? "⚠ write" : r.mode;
@@ -603,10 +623,10 @@
     badge.className = "badge " + r.mode;
     badge.title =
       r.mode === "write"
-        ? "write 모드: 샌드박스 내 파일 수정이 허용됩니다"
+        ? "write 모드: CLI 작업 폴더 편집을 허용합니다"
         : r.mode === "read"
         ? "read 모드: 작업 폴더 읽기·검색만 허용됩니다"
-        : "chat 모드: 도구 없이 대화만 진행합니다";
+        : "chat 모드: 대화 중심 · 프로젝트 폴더를 전달하지 않습니다";
     $("#room-ws").textContent = r.workspace || "(작업 폴더 없음)";
     $("#room-ws").title = r.workspace || "작업 폴더가 지정되지 않았습니다";
 
@@ -634,12 +654,12 @@
     const sel = $("#target");
     if (sel) {
       sel.innerHTML = '<option value="">전체 (@멘션 규칙)</option>';
-      for (const p of r.participants) {
-        const o = el("option", "", "@" + p.id + " 에게만");
+      for (const p of activeParticipants()) {
+        const o = el("option", "", p.label + " @" + p.id + " 에게만");
         o.value = p.id;
         sel.appendChild(o);
       }
-      if (state.target && !r.participants.some((p) => p.id === state.target)) {
+      if (state.target && !activeParticipants().some((p) => p.id === state.target)) {
         state.target = "";
       }
       sel.value = state.target;
@@ -647,22 +667,29 @@
 
     const chipsBox = $("#target-chips");
     if (chipsBox) {
+      const focusedId = chipsBox.contains(document.activeElement) ? document.activeElement.dataset.target : null;
       chipsBox.innerHTML = "";
       const allBtn = el("button", "target-chip-btn" + (state.target === "" ? " active" : ""), "전체");
       allBtn.type = "button";
+      allBtn.dataset.target = "";
       allBtn.setAttribute("aria-pressed", state.target === "" ? "true" : "false");
       allBtn.title = "특정 대상 지정 없이 @멘션 규칙(또는 전원)으로 전송";
       allBtn.onclick = () => setTarget("");
       chipsBox.appendChild(allBtn);
 
-      for (const p of r.participants) {
+      for (const p of activeParticipants()) {
         const isAct = state.target === p.id;
-        const b = el("button", "target-chip-btn" + (isAct ? " active" : ""), "@" + p.id);
+        const b = el("button", "target-chip-btn" + (isAct ? " active" : ""), p.label + " @" + p.id);
         b.type = "button";
+        b.dataset.target = p.id;
         b.setAttribute("aria-pressed", isAct ? "true" : "false");
-        b.title = "@" + p.id + "에게만 1회성 조정 메시지 보내기 (전송 후 자동 해제)";
+        b.title = p.label + " @" + p.id + "에게만 1회성 조정 메시지 보내기 (전송 후 자동 해제)";
         b.onclick = () => setTarget(isAct ? "" : p.id, true);
         chipsBox.appendChild(b);
+      }
+      if (focusedId !== null) {
+        const nextFocus = [...chipsBox.children].find((b) => b.dataset.target === focusedId);
+        if (nextFocus) nextFocus.focus();
       }
     }
 
@@ -672,8 +699,9 @@
         actChip.hidden = true;
         actChip.innerHTML = "";
       } else {
+        const hadFocus = actChip.contains(document.activeElement);
         const p = r.participants.find((x) => x.id === state.target);
-        const info = state.providers.find((x) => x.id === state.target) || {};
+        const info = state.providers.find((x) => x.id === p.provider) || {};
         const modeTxt =
           p && p.status === "running"
             ? info.can_steer
@@ -682,12 +710,13 @@
             : "🎯 1회성 단독 전달";
         actChip.hidden = false;
         actChip.innerHTML = "";
-        actChip.appendChild(el("span", "", "@" + state.target + " 조정 · " + modeTxt));
+        actChip.appendChild(el("span", "", p.label + " @" + state.target + " 조정 · " + modeTxt));
         const clr = el("button", "", "× Esc");
         clr.type = "button";
         clr.setAttribute("aria-label", "@" + state.target + " 대상 지정 해제 (Esc)");
         clr.onclick = () => setTarget("", true);
         actChip.appendChild(clr);
+        if (hadFocus) clr.focus();
       }
     }
   }
@@ -756,11 +785,11 @@
 
     const providerOrder = state.providers.length
       ? state.providers.map((p) => p.id)
-      : state.room.participants.map((p) => p.id);
+      : [...new Set(state.room.participants.map((p) => p.provider))];
 
     // 1. One chip per provider — V4: render ONLY windows actually present in lim.windows
     for (const pid of providerOrder) {
-      const part = state.room.participants.find((x) => x.id === pid);
+      const parts = activeParticipants().filter((x) => x.provider === pid);
       const lim = state.limits[pid];
       const wins = (lim && lim.windows) || [];
       const warns = [];
@@ -773,26 +802,28 @@
           if (rem <= 5) isBad = true;
         }
       }
-      if (part && part.context_window > 0) {
-        const ctxPct = (part.context_tokens / part.context_window) * 100;
-        if (ctxPct >= 80) {
-          warns.push("컨텍스트 사용률 " + Math.round(ctxPct) + "% (≥80%)");
-          if (ctxPct >= 90) isBad = true;
+      for (const part of parts) {
+        if (part.context_window > 0) {
+          const ctxPct = (part.context_tokens / part.context_window) * 100;
+          if (ctxPct >= 80) {
+            warns.push(part.label + " 컨텍스트 사용률 " + Math.round(ctxPct) + "% (≥80%)");
+            if (ctxPct >= 90) isBad = true;
+          }
         }
-      }
-      const maxTurnIn = maxTurnInputForAgent(pid);
-      if (maxTurnIn >= 150000) {
-        warns.push("한 턴 입력 " + fmtK(maxTurnIn) + " 토큰 (≥150k)");
+        const maxTurnIn = maxTurnInputForAgent(part.id);
+        if (maxTurnIn >= 150000) {
+          warns.push(part.label + " 한 턴 입력 " + fmtK(maxTurnIn) + " 토큰 (≥150k)");
+        }
       }
 
       const chip = el(
         "div",
-        "chip" + (warns.length ? (isBad ? " bad" : " warn") : "") + (part && !part.enabled ? " muted" : "")
+        "chip" + (warns.length ? (isBad ? " bad" : " warn") : "")
       );
       if (warns.length) {
         chip.appendChild(el("span", "chip-warn-icon", "⚠"));
       }
-      chip.appendChild(el("b", pid, LABEL[pid] || pid));
+      chip.appendChild(el("b", pid, (LABEL[pid] || pid) + " · " + parts.length + "명"));
 
       const tipLines = [];
       if (!lim || !wins.length) {
@@ -820,12 +851,13 @@
         if (lim.at) tipLines.push("관측 시각: " + fmtTime(lim.at));
       }
 
-      if (part && part.context_window > 0) {
-        const ctxPct = (part.context_tokens / part.context_window) * 100;
-        chip.appendChild(el("span", "win-metric muted", "ctx " + Math.round(ctxPct) + "%"));
-        tipLines.push(
-          "컨텍스트: " + fmtK(part.context_tokens) + " / " + fmtK(part.context_window) + " (" + ctxPct.toFixed(0) + "%)"
-        );
+      for (const part of parts) {
+        if (part.context_window > 0) {
+          const ctxPct = (part.context_tokens / part.context_window) * 100;
+          tipLines.push(
+            part.label + " @" + part.id + " 컨텍스트: " + fmtK(part.context_tokens) + " / " + fmtK(part.context_window) + " (" + ctxPct.toFixed(0) + "%)"
+          );
+        }
       }
 
       if (warns.length) {
@@ -1145,7 +1177,7 @@
     node.className =
       "msg " +
       m.kind +
-      (m.author && m.kind === "agent" ? " " + m.author : "") +
+      (m.author && m.kind === "agent" ? " " + authorProvider(m.author) : "") +
       (m.status === "error" ? " error" : "");
 
     if (m.kind === "system") {
@@ -1156,9 +1188,9 @@
         fmtTime(m.ts) +
         "</span></div>";
     } else {
-      const who = m.kind === "user" ? "나" : (LABEL[m.author] || m.author) + " @" + m.author;
+      const who = m.kind === "user" ? "나" : participantLabel(m.author) + " @" + m.author;
       const meta = [];
-      meta.push('<span class="who ' + esc(m.author) + '">' + esc(who) + "</span>");
+      meta.push('<span class="who ' + esc(authorProvider(m.author)) + '">' + esc(who) + "</span>");
       if (m.kind === "user" && m.target) {
         meta.push(
           '<span class="steer-tag">🎯 → @' +
@@ -1168,6 +1200,7 @@
         );
       }
       if (m.model) meta.push('<span class="muted mono">' + esc(m.model) + "</span>");
+      if (m.effort) meta.push('<span class="muted">' + esc(m.effort) + "</span>");
       if (m.reason === "discussion") meta.push('<span class="badge">🗣 토론 ' + m.round + "R</span>");
       else if (m.reason === "mention") meta.push('<span class="badge">@호출</span>');
       meta.push('<span class="muted">' + fmtTime(m.ts) + "</span>");
@@ -1210,9 +1243,9 @@
         isInitialMount = true;
         node.innerHTML =
           '<div class="avatar ' +
-          esc(m.author) +
+          esc(authorProvider(m.author)) +
           '" aria-hidden="true">' +
-          esc((LABEL[m.author] || m.author || "?")[0]) +
+          esc(participantLabel(m.author)[0]) +
           "</div>" +
           '<div class="bubble">' +
           '<div class="meta"></div>' +
@@ -1266,6 +1299,8 @@
 
       const footEl = bubble.querySelector(".foot");
       let tb = footEl.querySelector(".trace-btn");
+      let sessionActions = footEl.querySelector(".session-actions");
+      const focusedAction = footEl.contains(document.activeElement) ? document.activeElement : null;
       footEl.innerHTML = foot.map((f) => "<span>" + esc(f) + "</span>").join("");
       if (m.kind === "agent") {
         const isExp = state.expanded.has(id);
@@ -1278,7 +1313,15 @@
         tb.textContent = (isExp ? "▾ 작업 기록 접기 (" : "▸ 작업 기록 (") + (m.trace || 0) + ")";
         tb.setAttribute("aria-expanded", isExp ? "true" : "false");
         footEl.appendChild(tb);
+        if (m.session_id) {
+          if (!sessionActions) sessionActions = buildSessionActions(m.author, m.id);
+          const seat = participant(m.author);
+          const running = m.status === "streaming" || (seat && seat.status === "running" && seat.session_id === m.session_id);
+          updateSessionActions(sessionActions, m.session_id, running);
+          footEl.appendChild(sessionActions);
+        }
       }
+      if (focusedAction && footEl.contains(focusedAction)) focusedAction.focus({ preventScroll: true });
 
       // Fix #5: Only trigger trace render on initial mount if expanded (not on every text delta!)
       const traceBox = $("#t-" + id, bubble);
@@ -1655,6 +1698,60 @@
   }
 
   // ---------- Right Panel: In-place Participant Cards (Fix #6 & V5) ----------
+  function buildSessionActions(participantId, messageId = "") {
+    const actions = el("div", "session-actions");
+    const roomId = state.roomId;
+    for (const action of ["open", "copy"]) {
+      const button = el("button", "ghost", action === "open" ? "CLI에서 열기" : "명령 복사");
+      button.type = "button";
+      button.dataset.action = action;
+      button.onclick = async () => {
+        const sequence = openSeq;
+        button.disabled = true;
+        button.dataset.busy = "true";
+        try {
+          const url = "/api/rooms/" + roomId + "/participants/" + participantId + "/session";
+          const session = await api("GET", url + (messageId ? "?message=" + encodeURIComponent(messageId) : ""));
+          if (state.roomId !== roomId || openSeq !== sequence) return;
+          if (action === "copy") {
+            await navigator.clipboard.writeText(session.command);
+            if (state.roomId !== roomId || openSeq !== sequence) return;
+            announce("CLI 이어보기 명령을 복사했습니다.");
+            button.textContent = "복사됨";
+          } else {
+            if (!session.can_open) throw new Error("이 환경에서는 CLI 창을 바로 열 수 없습니다. 명령을 복사해서 실행하세요.");
+            const result = await api("POST", url + "/open", messageId ? { message_id: messageId } : {});
+            if (state.roomId !== roomId || openSeq !== sequence) return;
+            announce("기존 대화를 여는 CLI 실행 요청을 전달했습니다." + (result.paused ? " 참가자는 비활성화되었습니다. CLI 창을 닫은 뒤 다시 켜세요." : ""));
+            button.textContent = "열기 요청됨";
+          }
+        } catch (e) {
+          if (state.roomId === roomId && openSeq === sequence) alert(e.message);
+        }
+        finally {
+          delete button.dataset.busy;
+          button.disabled = actions.dataset.available !== "true";
+          setTimeout(() => { button.textContent = action === "open" ? "CLI에서 열기" : "명령 복사"; }, 1800);
+        }
+      };
+      actions.appendChild(button);
+    }
+    return actions;
+  }
+
+  function updateSessionActions(actions, sessionId, running) {
+    const available = !!sessionId && !running;
+    actions.dataset.available = String(available);
+    for (const button of actions.children) {
+      button.disabled = !available || button.dataset.busy === "true";
+      button.title = !sessionId ? "첫 실행에서 CLI 세션이 저장되면 사용할 수 있습니다"
+        : running ? "같은 세션의 실행이 끝난 뒤 열 수 있습니다"
+        : (button.dataset.action === "open"
+          ? "기존 CLI 대화를 엽니다. 이 참가자는 비활성화됩니다. CLI 창을 닫은 뒤 다시 켜세요."
+          : "이어보기 명령을 복사합니다. 직접 실행하기 전에 이 참가자를 끄세요.") + " · 세션 " + sessionId;
+    }
+  }
+
   function getEffortsForModel(info, modelId) {
     if (info && info.model_efforts && Array.isArray(info.model_efforts[modelId])) {
       return info.model_efforts[modelId];
@@ -1662,24 +1759,19 @@
     return info && Array.isArray(info.efforts) ? info.efforts : [];
   }
 
-  function pickFallbackEffort(effList) {
-    if (!effList || !effList.length) return "";
-    return effList.length >= 2 ? effList[effList.length - 2] : effList[0];
-  }
-
   function renderParticipants() {
     const box = $("#participants");
     if (!box || !state.room) return;
 
-    const validIds = new Set(state.room.participants.map((p) => p.id));
+    const validIds = new Set(activeParticipants().map((p) => p.id));
     Array.from(box.children).forEach((child) => {
       if (child.dataset && child.dataset.pid && !validIds.has(child.dataset.pid)) {
         child.remove();
       }
     });
 
-    for (const p of state.room.participants) {
-      const info = state.providers.find((x) => x.id === p.id) || {};
+    for (const p of activeParticipants()) {
+      const info = state.providers.find((x) => x.id === p.provider) || {};
       let card = $("#pcard-" + p.id, box);
       if (!card) {
         card = buildParticipantCardSkeleton(p, info);
@@ -1695,7 +1787,7 @@
     card.dataset.pid = p.id;
 
     const top = el("div", "top");
-    top.appendChild(el("span", "name " + p.id, (LABEL[p.id] || p.label || p.id) + " @" + p.id));
+    top.appendChild(el("span", "name " + p.provider, p.label));
 
     const steerBtn = el("button", "ghost steer-btn", "🎯 조정");
     steerBtn.type = "button";
@@ -1712,13 +1804,69 @@
     const sw = el("button", "switch");
     sw.type = "button";
     sw.setAttribute("role", "switch");
-    sw.setAttribute("aria-label", (LABEL[p.id] || p.id) + " 참여 켜기/끄기");
+    sw.setAttribute("aria-label", p.label + " 참여 켜기/끄기");
     sw.onclick = () => {
       const cur = state.room && state.room.participants.find((x) => x.id === p.id);
       if (cur) patchParticipant(p.id, { enabled: !cur.enabled });
     };
     top.appendChild(sw);
     card.appendChild(top);
+    card.appendChild(el("div", "participant-id muted mono", "@" + p.id));
+    if (p.id === p.provider) {
+      card.appendChild(el("div", "small-note muted", "이전 참가자 ID입니다. 이 참가자만 호출하려면 조정 버튼을 누르세요."));
+    }
+
+    const edit = el("details", "participant-edit");
+    edit.appendChild(el("summary", "muted", "이름 · 직접 입력 · 제거"));
+    const nameLabel = el("label", "", "참가자 이름");
+    const nameInput = el("input", "participant-name");
+    nameInput.maxLength = 80;
+    nameInput.value = p.label;
+    nameLabel.appendChild(nameInput);
+    edit.appendChild(nameLabel);
+    const rename = el("button", "", "이름 저장");
+    rename.type = "button";
+    rename.onclick = () => {
+      if (!nameInput.value.trim()) return nameInput.focus();
+      patchParticipant(p.id, { label: nameInput.value.trim() });
+    };
+    edit.appendChild(rename);
+    const customLabel = el("label", "", "모델 ID 직접 입력");
+    const custom = el("input", "custom-model");
+    custom.placeholder = "CLI가 지원하는 정확한 모델 ID";
+    custom.value = p.model;
+    customLabel.appendChild(custom);
+    edit.appendChild(customLabel);
+    edit.appendChild(el("p", "small-note muted", "목록에 없는 모델은 CLI가 지원하는 ID를 입력하세요. 지원 여부는 실행 시 확인됩니다."));
+    const apply = el("button", "apply-custom-model", "모델 적용");
+    apply.type = "button";
+    apply.onclick = () => {
+      const model = custom.value.trim();
+      if (!model) return custom.focus();
+      const efforts = getEffortsForModel(info, model);
+      const cur = participant(p.id);
+      patchParticipant(p.id, { model, effort: efforts.includes(cur.effort) ? cur.effort : "" });
+    };
+    edit.appendChild(apply);
+    const remove = el("button", "danger ghost remove-participant", "참가자 제거");
+    remove.type = "button";
+    remove.onclick = async () => {
+      if (!confirm(participantLabel(p.id) + " 참가자를 제거할까요? 이전 대화와 사용량은 보존됩니다.")) return;
+      const roomId = state.roomId;
+      const sequence = openSeq;
+      try {
+        const room = await api("DELETE", "/api/rooms/" + roomId + "/participants/" + p.id);
+        if (state.roomId !== roomId || openSeq !== sequence) return;
+        state.room = room;
+        renderRoomHead();
+        renderParticipants();
+        updateHint();
+      } catch (e) {
+        if (state.roomId === roomId && openSeq === sequence) alert(e.message);
+      }
+    };
+    edit.appendChild(remove);
+    card.appendChild(edit);
 
     const unavailSlot = el("div", "unavail-slot");
     card.appendChild(unavailSlot);
@@ -1726,18 +1874,21 @@
     const selRow = el("div", "sel");
     const ms = el("select", "model-sel");
     ms.title = "모델 선택";
-    ms.setAttribute("aria-label", (LABEL[p.id] || p.id) + " 모델");
+    ms.setAttribute("aria-label", p.label + " 모델");
     selRow.appendChild(ms);
 
     const es = el("select", "effort-sel");
     es.title = "추론 노력 선택";
-    es.setAttribute("aria-label", (LABEL[p.id] || p.id) + " 추론 노력");
+    es.setAttribute("aria-label", p.label + " 추론 노력");
     selRow.appendChild(es);
     card.appendChild(selRow);
+    card.appendChild(el("div", "small-note muted", "모델이나 추론 수준을 바꾸면 이 참가자의 CLI 세션이 새로 시작됩니다."));
+    card.appendChild(buildSessionActions(p.id));
+    card.appendChild(el("div", "small-note muted", "CLI를 열면 이 참가자가 꺼집니다. CLI 창을 닫은 뒤 다시 켜세요. 복사한 명령은 참가자를 끈 뒤 실행하세요."));
 
     es.onchange = () => patchParticipant(p.id, { effort: es.value });
     ms.onchange = () => {
-      const curInfo = state.providers.find((x) => x.id === p.id) || info;
+      const curInfo = state.providers.find((x) => x.id === p.provider) || info;
       const curPart = (state.room && state.room.participants.find((x) => x.id === p.id)) || p;
       const newModel = ms.value;
       const curEff = es.hidden ? curPart.effort : es.value;
@@ -1771,16 +1922,19 @@
     if (es.dataset.effKey !== key) {
       es.dataset.effKey = key;
       es.innerHTML = "";
+      const automatic = el("option", "", "CLI 기본값");
+      automatic.value = "";
+      es.appendChild(automatic);
       for (const e of effList) {
         const o = el("option", "", e);
         o.value = e;
         es.appendChild(o);
       }
     }
-    const selected = effList.includes(currentEffort) ? currentEffort : pickFallbackEffort(effList);
+    const selected = effList.includes(currentEffort) ? currentEffort : "";
     if (document.activeElement !== es && es.value !== selected) {
       es.value = selected;
-    } else if (!effList.includes(es.value)) {
+    } else if (es.value !== "" && !effList.includes(es.value)) {
       es.value = selected;
     }
     return es.value;
@@ -1788,11 +1942,26 @@
 
   function updateParticipantCardInPlace(card, p, info) {
     card.className = "pcard" + (p.enabled ? "" : " off");
+    card.querySelector(".name").textContent = p.label;
+    const nameInput = card.querySelector(".participant-name");
+    const custom = card.querySelector(".custom-model");
+    if (!card.querySelector(".participant-edit").open) {
+      nameInput.value = p.label;
+      custom.value = p.model;
+    }
+    for (const control of card.querySelectorAll(".model-sel, .effort-sel, .custom-model, .apply-custom-model, .remove-participant")) {
+      control.disabled = p.status === "running";
+      control.title = p.status === "running" ? "현재 턴을 중지하거나 완료한 뒤 변경하세요" : "";
+    }
+    card.querySelector(".model-sel").setAttribute("aria-label", p.label + " 모델");
+    card.querySelector(".effort-sel").setAttribute("aria-label", p.label + " 추론 노력");
+    updateSessionActions(card.querySelector(".session-actions"), p.session_id, p.status === "running");
 
     const sw = card.querySelector(".switch");
     if (sw) {
       sw.className = "switch" + (p.enabled ? " on" : "");
       sw.setAttribute("aria-checked", p.enabled ? "true" : "false");
+      sw.setAttribute("aria-label", p.label + " 참여 켜기/끄기");
       sw.title = p.enabled ? "참여 중 (클릭하여 끄기)" : "꺼짐 (클릭하여 켜기)";
     }
 
@@ -1829,7 +1998,7 @@
     const es = card.querySelector(".effort-sel");
     if (es) {
       const effList = getEffortsForModel(info, p.model);
-      syncEffortSelect(es, effList, p.effort || info.default_effort);
+      syncEffortSelect(es, effList, p.effort);
     }
 
     const stLine = card.querySelector(".status-line");
@@ -1887,8 +2056,9 @@
     const limBox = card.querySelector(".pcard-limits");
     if (limBox) {
       limBox.innerHTML = "";
-      const lim = state.limits[p.id];
+      const lim = state.limits[p.provider];
       const wins = (lim && lim.windows) || [];
+      limBox.appendChild(el("div", "small-note muted", (LABEL[p.provider] || p.provider) + " 계정 공유 한도"));
       if (!lim || !wins.length) {
         const r = el("div", "stat-row");
         r.appendChild(el("span", "muted", "공급사 한도"));
@@ -1945,7 +2115,7 @@
       const reasonTxt =
         { mention: "@호출", broadcast: "전체", discussion: "토론 " + t.round + "R" }[t.reason] || t.reason;
       li.appendChild(
-        el("span", "", (t.status === "running" ? "▶ 실행 " : "⏳ 대기 ") + "@" + t.agent + " · " + reasonTxt)
+        el("span", "", (t.status === "running" ? "▶ 실행 " : "⏳ 대기 ") + participantLabel(t.agent) + " @" + t.agent + " · " + reasonTxt)
       );
       const b = el("button", t.status === "running" ? "danger" : "", t.status === "running" ? "중단" : "취소");
       b.type = "button";
@@ -1977,7 +2147,7 @@
       sigWrap.appendChild(el("span", "muted", "발언 및 신호 대기 중…"));
     } else {
       for (const [k, v] of entries) {
-        sigWrap.appendChild(el("span", "signal " + v, "@" + k + ": " + v));
+        sigWrap.appendChild(el("span", "signal " + v, participantLabel(k) + " @" + k + ": " + v));
       }
     }
     bar.appendChild(sigWrap);
@@ -2015,6 +2185,7 @@
   }
 
   function bindUI() {
+    let participantDialogSequence = 0;
     $("#btn-theme").onclick = toggleTheme;
     $("#btn-new-room").onclick = () => openRoomDialog();
     const onbNew = $("#btn-onboard-new");
@@ -2043,6 +2214,39 @@
 
     $("#dlg-room-cancel").onclick = () => $("#dlg-room").close();
     $("#form-room").onsubmit = onRoomSubmit;
+    $("#btn-add-seat-spec").onclick = () => addSeatSpec($("#room-seat-specs"));
+    $("#btn-add-participant").onclick = () => {
+      participantDialogSequence++;
+      $("#participant-spec").replaceChildren();
+      addSeatSpec($("#participant-spec"), state.providers[0].id, false);
+      $('#form-participant [type="submit"]').disabled = false;
+      $("#dlg-participant").showModal();
+    };
+    $("#dlg-participant").addEventListener("close", () => { participantDialogSequence++; });
+    $("#dlg-participant-cancel").onclick = () => $("#dlg-participant").close();
+    $("#form-participant").onsubmit = async (e) => {
+      e.preventDefault();
+      const button = e.target.querySelector('[type="submit"]');
+      const roomId = state.roomId;
+      const sequence = openSeq;
+      const dialogSequence = participantDialogSequence;
+      button.disabled = true;
+      try {
+        const [spec] = readSeatSpecs($("#participant-spec"));
+        if (activeParticipants().length + spec.count > 32) throw new Error("한 방에는 최대 32명까지 참가할 수 있습니다.");
+        const room = await api("POST", "/api/rooms/" + roomId + "/participants", spec);
+        if (state.roomId !== roomId || openSeq !== sequence || participantDialogSequence !== dialogSequence) return;
+        state.room = room;
+        renderRoomHead();
+        renderParticipants();
+        $("#dlg-participant").close();
+        announce(spec.count + "명 참가자 추가됨");
+      } catch (err) {
+        if (state.roomId === roomId && openSeq === sequence && participantDialogSequence === dialogSequence) alert(err.message);
+      } finally {
+        if (participantDialogSequence === dialogSequence) button.disabled = false;
+      }
+    };
 
     $("#composer").onsubmit = (e) => {
       e.preventDefault();
@@ -2162,6 +2366,8 @@
       await api("DELETE", "/api/rooms/" + state.roomId);
       state.roomId = null;
       state.room = null;
+      $("#btn-add-participant").disabled = true;
+      $("#participants").replaceChildren();
       localStorage.removeItem("rt.room");
       if (state.es) state.es.close();
       $("#room").hidden = true;
@@ -2186,6 +2392,7 @@
 
     // Global keyboard shortcuts
     document.addEventListener("keydown", (e) => {
+      if (document.querySelector("dialog[open]")) return;
       if ((e.ctrlKey || e.metaKey) && e.key === ".") {
         if (state.roomId) {
           e.preventDefault();
@@ -2226,13 +2433,14 @@
 
   function findDisabledMentions(text) {
     if (!state.room || !text) return [];
-    const disabled = new Set(state.room.participants.filter((p) => !p.enabled).map((p) => p.id));
+    const disabled = new Set(activeParticipants().filter((p) => !p.enabled).map((p) => p.id));
     const found = new Set();
     const re = /(?:^|\s)@([a-zA-Z0-9_-]+)/g;
     let m;
     while ((m = re.exec(text)) !== null) {
       const id = m[1].toLowerCase();
-      if (disabled.has(id)) found.add(id);
+      const group = activeParticipants().filter((p) => p.provider === id);
+      if (group.length ? group.every((p) => !p.enabled) : disabled.has(id)) found.add(id);
     }
     return Array.from(found);
   }
@@ -2265,7 +2473,7 @@
       hint.textContent = "팁: @로 특정 에이전트 호출 · 대상 조정 칩으로 1회성 단독 지시 (Esc 해제, Ctrl+. 모두 중지)";
       return;
     }
-    const info = state.providers.find((x) => x.id === t) || {};
+    const info = state.providers.find((x) => x.id === targetParticipant.provider) || {};
     if (targetParticipant && targetParticipant.status === "running") {
       hint.textContent = info.can_steer
         ? "⚡ @" + t + " 실행 중 — 보내면 진행 중인 작업에 즉시 주입됩니다(steering). 전송 후 전체 대상으로 자동 복귀."
@@ -2290,9 +2498,14 @@
     const q = m[1].toLowerCase();
     const cands = [
       { id: "all", label: "@all (활성 전원)", enabled: true },
-      ...state.room.participants.map((p) => ({
+      ...state.providers.filter((provider) => activeParticipants().some((p) => p.provider === provider.id)).map((provider) => ({
+        id: provider.id,
+        label: "@" + provider.id + " (" + provider.label + " 활성 참가자 전체)",
+        enabled: true,
+      })),
+      ...activeParticipants().filter((p) => !state.providers.some((provider) => provider.id === p.id)).map((p) => ({
         id: p.id,
-        label: "@" + p.id + " (" + (LABEL[p.id] || p.id) + (p.enabled ? "" : " · 꺼짐") + ")",
+        label: "@" + p.id + " (" + p.label + " · " + p.model + (p.enabled ? "" : " · 꺼짐") + ")",
         enabled: p.enabled,
       })),
     ].filter((item) => item.id.startsWith(q));
@@ -2326,6 +2539,8 @@
         input.setAttribute("aria-activedescendant", optId);
       }
     });
+    const selected = pop.querySelector('[aria-selected="true"]');
+    if (selected) selected.scrollIntoView({ block: "nearest" });
   }
 
   function applyMention(cand) {
@@ -2363,6 +2578,82 @@
   }
 
   // ---------- room dialog ----------
+  function addSeatSpec(box, providerId = state.providers[0].id, removable = true) {
+    const row = el("div", "seat-spec");
+    function field(text, control) {
+      const label = el("label", "", text);
+      label.appendChild(control);
+      row.appendChild(label);
+      return control;
+    }
+    const provider = field("공급사", el("select", "seat-provider"));
+    for (const info of state.providers) {
+      const option = el("option", "", info.label + (info.available === false ? " (CLI 없음)" : ""));
+      option.value = info.id;
+      provider.appendChild(option);
+    }
+    provider.value = providerId;
+    const model = field("모델", el("select", "seat-model"));
+    const custom = field("직접 입력할 모델 ID", el("input", "seat-custom-model"));
+    custom.placeholder = "CLI가 지원하는 정확한 모델 ID";
+    const effort = field("추론 수준", el("select", "seat-effort"));
+    const count = field("인원", el("input", "seat-count"));
+    count.type = "number";
+    count.min = "1";
+    count.max = "32";
+    count.value = "1";
+    count.required = true;
+    const label = field("이름 (선택)", el("input", "seat-label"));
+    label.maxLength = 80;
+    label.placeholder = "예: 설계 검토자";
+    const syncEffort = () => {
+      const info = state.providers.find((p) => p.id === provider.value);
+      const selected = model.value === "__custom__" ? custom.value.trim() : model.value;
+      const efforts = getEffortsForModel(info, selected);
+      syncEffortSelect(effort, efforts, info.default_effort);
+      effort.parentElement.hidden = !efforts.length;
+    };
+    const syncModel = () => {
+      custom.parentElement.hidden = model.value !== "__custom__";
+      custom.required = model.value === "__custom__";
+      syncEffort();
+    };
+    provider.onchange = () => {
+      const info = state.providers.find((p) => p.id === provider.value);
+      model.replaceChildren();
+      for (const item of info.models || []) {
+        const option = el("option", "", item.label);
+        option.value = item.id;
+        model.appendChild(option);
+      }
+      const direct = el("option", "", "모델 ID 직접 입력…");
+      direct.value = "__custom__";
+      model.appendChild(direct);
+      if (info.default_model && [...model.options].some((o) => o.value === info.default_model)) model.value = info.default_model;
+      syncModel();
+    };
+    model.onchange = syncModel;
+    custom.oninput = syncEffort;
+    provider.onchange();
+    if (removable) {
+      const remove = el("button", "ghost", "구성 제거");
+      remove.type = "button";
+      remove.onclick = () => row.remove();
+      row.appendChild(remove);
+    }
+    box.appendChild(row);
+  }
+
+  function readSeatSpecs(box) {
+    return $$(".seat-spec", box).map((row) => ({
+      provider: $(".seat-provider", row).value,
+      model: $(".seat-model", row).value === "__custom__" ? $(".seat-custom-model", row).value.trim() : $(".seat-model", row).value,
+      effort: $(".seat-effort", row).hidden ? "" : $(".seat-effort", row).value,
+      label: $(".seat-label", row).value.trim(),
+      count: Number($(".seat-count", row).value),
+    }));
+  }
+
   let pendingInitialPrompt = "";
   function openRoomDialog(room, initialPrompt = "") {
     pendingInitialPrompt = room ? "" : initialPrompt;
@@ -2376,10 +2667,9 @@
     f.max_chain.value = room ? room.max_chain : 4;
     f.discussion_rounds.value = room ? room.discussion_rounds : 3;
     f.persona.checked = room ? !!room.persona : false;
-    f.querySelectorAll('input[name="p"]').forEach((c) => {
-      c.disabled = !!room;
-      c.checked = room ? room.participants.some((p) => p.id === c.value) : true;
-    });
+    $("#room-seats-fieldset").hidden = !!room;
+    $("#room-seat-specs").replaceChildren();
+    if (!room) state.providers.forEach((p) => addSeatSpec($("#room-seat-specs"), p.id));
     f.dataset.editing = room ? room.id : "";
     $("#dlg-room").showModal();
   }
@@ -2387,6 +2677,8 @@
   async function onRoomSubmit(e) {
     e.preventDefault();
     const f = e.target;
+    const submit = $("#dlg-room-ok");
+    submit.disabled = true;
     const body = {
       title: f.title.value.trim(),
       workspace: f.workspace.value.trim(),
@@ -2400,7 +2692,9 @@
       if (f.dataset.editing) {
         await api("PATCH", "/api/rooms/" + f.dataset.editing, body);
       } else {
-        body.participants = [...f.querySelectorAll('input[name="p"]:checked')].map((c) => c.value);
+        body.participant_specs = readSeatSpecs($("#room-seat-specs"));
+        const total = body.participant_specs.reduce((sum, spec) => sum + spec.count, 0);
+        if (total < 1 || total > 32) throw new Error("참가자를 1명 이상, 총 32명 이하로 구성하세요.");
         const r = await api("POST", "/api/rooms", body);
         await loadRooms();
         await openRoom(r.id);
@@ -2414,6 +2708,8 @@
       $("#dlg-room").close();
     } catch (err) {
       alert(err.message);
+    } finally {
+      submit.disabled = false;
     }
   }
 

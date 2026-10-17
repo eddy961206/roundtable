@@ -5,7 +5,9 @@ import "roundtable/internal/agent"
 
 // Participant is one agent seat in a room.
 type Participant struct {
-	ID            string         `json:"id"` // provider id: claude | codex | agy
+	ID            string         `json:"id"` // stable seat identity
+	Provider      string         `json:"provider"`
+	Removed       bool           `json:"removed,omitempty"` // retain authors and usage after removal
 	Label         string         `json:"label"`
 	Enabled       bool           `json:"enabled"`
 	Model         string         `json:"model"`
@@ -59,7 +61,7 @@ func (r *Room) participant(id string) *Participant {
 func (r *Room) enabled() []*Participant {
 	var out []*Participant
 	for _, p := range r.Participants {
-		if p.Enabled {
+		if p.Enabled && !p.Removed {
 			out = append(out, p)
 		}
 	}
@@ -68,24 +70,29 @@ func (r *Room) enabled() []*Participant {
 
 // Message is one chat line. Agent messages stream in and end as done|error|cancelled.
 type Message struct {
-	ID       string         `json:"id"`
-	Seq      int64          `json:"seq"`
-	TS       int64          `json:"ts"`
-	Kind     string         `json:"kind"`   // user | agent | system
-	Author   string         `json:"author"` // "user" or participant id
-	Text     string         `json:"text"`
-	Status   string         `json:"status"`           // done | streaming | error | cancelled
-	Target   string         `json:"target,omitempty"` // user message addressed to one agent only
-	Live     bool           `json:"live,omitempty"`   // injected into a running turn (steering)
-	TurnID   string         `json:"turn_id,omitempty"`
-	Reason   string         `json:"reason,omitempty"` // mention | broadcast | discussion
-	Round    int            `json:"round,omitempty"`
-	Signal   string         `json:"signal,omitempty"` // discussion signal
-	Error    string         `json:"error,omitempty"`
-	Model    string         `json:"model,omitempty"`
-	Duration int64          `json:"duration_ms,omitempty"`
-	Usage    map[string]any `json:"usage,omitempty"`
-	Trace    int            `json:"trace"` // number of trace events stored
+	ID               string         `json:"id"`
+	Seq              int64          `json:"seq"`
+	TS               int64          `json:"ts"`
+	Kind             string         `json:"kind"`   // user | agent | system
+	Author           string         `json:"author"` // "user" or participant id
+	Text             string         `json:"text"`
+	Status           string         `json:"status"`           // done | streaming | error | cancelled
+	Target           string         `json:"target,omitempty"` // user message addressed to one agent only
+	Live             bool           `json:"live,omitempty"`   // injected into a running turn (steering)
+	TurnID           string         `json:"turn_id,omitempty"`
+	Reason           string         `json:"reason,omitempty"` // mention | broadcast | discussion
+	Round            int            `json:"round,omitempty"`
+	Signal           string         `json:"signal,omitempty"` // discussion signal
+	Error            string         `json:"error,omitempty"`
+	Model            string         `json:"model,omitempty"`
+	Provider         string         `json:"provider,omitempty"`
+	SessionID        string         `json:"session_id,omitempty"`
+	SessionDirectory string         `json:"session_directory,omitempty"`
+	Mode             string         `json:"mode,omitempty"`
+	Effort           string         `json:"effort,omitempty"`
+	Duration         int64          `json:"duration_ms,omitempty"`
+	Usage            map[string]any `json:"usage,omitempty"`
+	Trace            int            `json:"trace"` // number of trace events stored
 }
 
 // Turn is a queued request for one agent to speak.

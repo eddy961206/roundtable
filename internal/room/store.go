@@ -121,6 +121,13 @@ func (s *Store) LoadAll() ([]*Room, map[string][]*Message, map[string][]TraceLin
 		if err := json.Unmarshal(b, &r); err != nil {
 			return nil, nil, nil, fmt.Errorf("room %s: %w", e.Name(), err)
 		}
+		// Older rooms used the provider ID as their single seat identity.
+		// Keep that identity so messages and resumable sessions remain attached.
+		for _, p := range r.Participants {
+			if p.Provider == "" {
+				p.Provider = p.ID
+			}
+		}
 		rooms = append(rooms, &r)
 		msgs[r.ID] = loadMessages(filepath.Join(dir, "messages.jsonl"))
 		traces[r.ID] = loadTraces(filepath.Join(dir, "events.jsonl"))

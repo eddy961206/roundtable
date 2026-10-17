@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 )
 
 const (
+	MaxParticipants = 32
 	defaultMaxChain = 4
 	defaultRounds   = 3
 	turnTimeout     = 45 * time.Minute
@@ -23,13 +25,14 @@ const (
 
 // Hub owns every room, runs agent turns and fans events out to SSE clients.
 type Hub struct {
-	mu      sync.Mutex
-	store   *Store
-	reg     *agent.Registry
-	scratch string
-	rooms   map[string]*roomState
-	limits  map[string]agent.Limits
-	Log     *log.Logger
+	mu             sync.Mutex
+	store          *Store
+	reg            *agent.Registry
+	scratch        string
+	rooms          map[string]*roomState
+	limits         map[string]agent.Limits
+	nativeSessions map[string]bool
+	Log            *log.Logger
 }
 
 type roomState struct {
@@ -40,8 +43,9 @@ type roomState struct {
 	running  map[string]*running
 	subs     map[chan []byte]struct{}
 	disc     *discussion
-	stopGen  int // prevents a stopped turn from scheduling follow-up work
-	resetGen int // bumped by ResetSessions so a finishing turn does not resurrect the old session
+	deleted  bool // late invocation callbacks must not recreate a deleted room
+	stopGen  int  // prevents a stopped turn from scheduling follow-up work
+	resetGen int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
 }
 
 type running struct {
@@ -62,7 +66,11 @@ type discussion struct {
 }
 
 func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logger) (*Hub, error) {
-	h := &Hub{store: store, reg: reg, scratch: scratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, Log: logger}
+	absoluteScratch, err := filepath.Abs(scratch)
+	if err != nil {
+		return nil, fmt.Errorf("작업 임시 폴더: %w", err)
+	}
+	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]bool{}, Log: logger}
 	rooms, msgs, traces, err := store.LoadAll()
 	if err != nil {
 		return nil, err
@@ -74,9 +82,30 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		h.limits = map[string]agent.Limits{}
 	}
 	for _, r := range rooms {
+		if r.Workspace != "" {
+			r.Workspace, err = filepath.Abs(r.Workspace)
+			if err != nil {
+				return nil, fmt.Errorf("방 %s 작업 폴더: %w", r.ID, err)
+			}
+		}
 		rs := &roomState{room: r, msgs: msgs[r.ID], traces: map[string][]agent.Event{}, running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
 		for _, t := range traces[r.ID] {
 			rs.traces[t.MsgID] = append(rs.traces[t.MsgID], t.Event)
+		}
+		for _, m := range rs.msgs {
+			if m.Kind != "agent" {
+				continue
+			}
+			if p := r.participant(m.Author); p != nil && m.Provider == "" {
+				m.Provider = p.Provider
+			}
+			if m.SessionID == "" {
+				for _, event := range rs.traces[m.ID] {
+					if event.Kind == agent.KindSession && event.Text != "" {
+						m.SessionID = event.Text
+					}
+				}
+			}
 		}
 		rs.refreshParticipantStates()
 		h.rooms[r.ID] = rs
@@ -96,14 +125,15 @@ func nowMs() int64 { return time.Now().UnixMilli() }
 
 // RoomSpec is the editable part of a room.
 type RoomSpec struct {
-	Title            string   `json:"title"`
-	Workspace        string   `json:"workspace"`
-	Mode             string   `json:"mode"`
-	Note             string   `json:"note"`
-	Participants     []string `json:"participants"`
-	MaxChain         int      `json:"max_chain"`
-	DiscussionRounds int      `json:"discussion_rounds"`
-	Persona          bool     `json:"persona"`
+	Title            string            `json:"title"`
+	Workspace        string            `json:"workspace"`
+	Mode             string            `json:"mode"`
+	Note             string            `json:"note"`
+	Participants     []string          `json:"participants"`
+	ParticipantSpecs []ParticipantSpec `json:"participant_specs"`
+	MaxChain         int               `json:"max_chain"`
+	DiscussionRounds int               `json:"discussion_rounds"`
+	Persona          bool              `json:"persona"`
 }
 
 func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
@@ -113,8 +143,15 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	if spec.Mode == "" {
 		spec.Mode = agent.ModeRead
 	}
-	if spec.Mode != agent.ModeChat && spec.Workspace == "" {
-		return nil, fmt.Errorf("read/write 모드는 작업 폴더가 필요함")
+	if err := validateMode(spec.Mode, spec.Workspace); err != nil {
+		return nil, err
+	}
+	if spec.Workspace != "" {
+		absolute, err := filepath.Abs(spec.Workspace)
+		if err != nil {
+			return nil, fmt.Errorf("작업 폴더: %w", err)
+		}
+		spec.Workspace = absolute
 	}
 	r := &Room{ID: newID(), Title: spec.Title, CreatedAt: nowMs(), UpdatedAt: nowMs(), Workspace: spec.Workspace, Mode: spec.Mode, Note: spec.Note, MaxChain: spec.MaxChain, DiscussionRounds: spec.DiscussionRounds, Persona: spec.Persona}
 	if r.MaxChain <= 0 {
@@ -123,24 +160,54 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	if r.DiscussionRounds <= 0 {
 		r.DiscussionRounds = defaultRounds
 	}
-	ids := spec.Participants
-	if len(ids) == 0 {
-		for _, p := range h.reg.All() {
-			ids = append(ids, p.ID())
-		}
+	if len(spec.Participants) > 0 && spec.ParticipantSpecs != nil {
+		return nil, fmt.Errorf("participants와 participant_specs는 함께 지정할 수 없음")
 	}
-	for _, id := range ids {
-		prov := h.reg.Get(id)
-		if prov == nil {
-			return nil, fmt.Errorf("알 수 없는 공급자: %s", id)
+	if spec.ParticipantSpecs != nil {
+		if len(spec.ParticipantSpecs) == 0 {
+			return nil, fmt.Errorf("참가자가 1명 이상 필요함")
 		}
-		model, effort := prov.DefaultModel()
-		r.Participants = append(r.Participants, &Participant{ID: id, Label: prov.Label(), Enabled: prov.Available(), Model: model, Effort: effort, Status: "idle", ContextWindow: prov.ContextWindow(model)})
+		for _, ps := range spec.ParticipantSpecs {
+			prepared, err := h.prepareParticipant(ps)
+			if err != nil {
+				return nil, err
+			}
+			seats, err := newParticipants(r, prepared)
+			if err != nil {
+				return nil, err
+			}
+			r.Participants = append(r.Participants, seats...)
+		}
+	} else {
+		ids := spec.Participants
+		if len(ids) == 0 {
+			for _, p := range h.reg.All() {
+				ids = append(ids, p.ID())
+			}
+		}
+		for _, id := range ids {
+			prepared, err := h.prepareParticipant(ParticipantSpec{Provider: id})
+			if err != nil {
+				return nil, err
+			}
+			seats, err := newParticipants(r, prepared)
+			if err != nil {
+				return nil, err
+			}
+			// Preserve the legacy create API's provider-shaped IDs for its first seats.
+			if r.participant(id) == nil {
+				seats[0].ID = id
+			}
+			r.Participants = append(r.Participants, seats...)
+		}
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if err := h.store.SaveRoom(r); err != nil {
+		return nil, err
+	}
 	h.rooms[r.ID] = &roomState{room: r, traces: map[string][]agent.Event{}, running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
-	return r, h.store.SaveRoom(r)
+	return r, nil
 }
 
 // RoomSummary is the sidebar view.
@@ -250,6 +317,7 @@ func (rs *roomState) discView() *DiscussionView {
 // ParticipantPatch updates one seat.
 type ParticipantPatch struct {
 	ID      string  `json:"id"`
+	Label   *string `json:"label,omitempty"`
 	Enabled *bool   `json:"enabled,omitempty"`
 	Model   *string `json:"model,omitempty"`
 	Effort  *string `json:"effort,omitempty"`
@@ -268,62 +336,136 @@ type RoomPatch struct {
 }
 
 func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
+	choices := h.patchModelChoices(id, patch.Participants)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	rs, ok := h.rooms[id]
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
 	}
-	r := rs.room
-	if patch.Title != nil && strings.TrimSpace(*patch.Title) != "" {
-		r.Title = *patch.Title
+	// Validate and persist a candidate before changing any live room state.
+	next := *rs.room
+	next.Participants = make([]*Participant, len(rs.room.Participants))
+	for i, p := range rs.room.Participants {
+		cp := *p
+		next.Participants[i] = &cp
+	}
+	if patch.Title != nil {
+		if strings.TrimSpace(*patch.Title) == "" {
+			return nil, fmt.Errorf("방 이름이 비어 있음")
+		}
+		next.Title = *patch.Title
 	}
 	if patch.Note != nil {
-		r.Note = *patch.Note
+		next.Note = *patch.Note
 	}
 	if patch.Mode != nil {
-		r.Mode = *patch.Mode
+		next.Mode = *patch.Mode
 	}
 	if patch.Workspace != nil {
-		r.Workspace = *patch.Workspace
+		next.Workspace = *patch.Workspace
+		if next.Workspace != "" {
+			absolute, err := filepath.Abs(next.Workspace)
+			if err != nil {
+				return nil, fmt.Errorf("작업 폴더: %w", err)
+			}
+			next.Workspace = absolute
+		}
 	}
-	if patch.MaxChain != nil && *patch.MaxChain > 0 {
-		r.MaxChain = *patch.MaxChain
+	if err := validateMode(next.Mode, next.Workspace); err != nil {
+		return nil, err
 	}
-	if patch.DiscussionRounds != nil && *patch.DiscussionRounds > 0 {
-		r.DiscussionRounds = *patch.DiscussionRounds
+	contextChanged := next.Mode != rs.room.Mode || next.Workspace != rs.room.Workspace
+	if contextChanged && len(rs.running) > 0 {
+		return nil, fmt.Errorf("실행 중에는 모드와 작업 폴더를 변경할 수 없음")
+	}
+	if patch.MaxChain != nil {
+		if *patch.MaxChain < 1 {
+			return nil, fmt.Errorf("연쇄 한도는 1 이상이어야 함")
+		}
+		next.MaxChain = *patch.MaxChain
+	}
+	if patch.DiscussionRounds != nil {
+		if *patch.DiscussionRounds < 1 {
+			return nil, fmt.Errorf("토론 라운드는 1 이상이어야 함")
+		}
+		next.DiscussionRounds = *patch.DiscussionRounds
 	}
 	if patch.Persona != nil {
-		r.Persona = *patch.Persona
+		next.Persona = *patch.Persona
 	}
+	patched := map[string]bool{}
 	for _, pp := range patch.Participants {
-		p := r.participant(pp.ID)
-		if p == nil {
-			continue
+		p := next.participant(pp.ID)
+		if p == nil || p.Removed {
+			return nil, fmt.Errorf("참가자 없음: %s", pp.ID)
+		}
+		if patched[pp.ID] {
+			return nil, fmt.Errorf("중복 참가자 변경: %s", pp.ID)
+		}
+		patched[pp.ID] = true
+		if pp.Label != nil {
+			if strings.TrimSpace(*pp.Label) == "" {
+				return nil, fmt.Errorf("참가자 이름이 비어 있음")
+			}
+			p.Label = strings.TrimSpace(*pp.Label)
 		}
 		if pp.Enabled != nil {
 			p.Enabled = *pp.Enabled
-			if !p.Enabled {
-				rs.dropQueuedFor(h, p.ID)
-			}
 		}
-		if pp.Model != nil && *pp.Model != "" {
+		if pp.Model != nil {
 			p.Model = *pp.Model
-			if prov := h.reg.Get(p.ID); prov != nil {
-				p.ContextWindow = prov.ContextWindow(p.Model)
-			}
 		}
 		if pp.Effort != nil {
 			p.Effort = *pp.Effort
 		}
+		original := rs.room.participant(p.ID)
+		if p.Model != original.Model || p.Effort != original.Effort {
+			if rs.runningFor(p.ID) != nil {
+				return nil, fmt.Errorf("%s 실행이 끝난 뒤 모델과 추론 수준을 변경해야 함", p.Label)
+			}
+			prov := h.reg.Get(p.Provider)
+			if prov == nil {
+				return nil, fmt.Errorf("알 수 없는 공급자: %s", p.Provider)
+			}
+			if err := validateModel(p.Provider, p.Model, p.Effort, choices[p.Provider]); err != nil {
+				return nil, err
+			}
+			p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
+			p.Unseen = nil
+			p.ContextWindow = prov.ContextWindow(p.Model)
+		}
 	}
-	r.UpdatedAt = nowMs()
-	if err := h.store.SaveRoom(r); err != nil {
+	if contextChanged {
+		for _, p := range next.Participants {
+			p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
+			p.Unseen = nil
+		}
+	}
+	for _, p := range next.Participants {
+		if p.Enabled && h.nativeSessions[nativeSessionKey(p.Provider, p.SessionID)] {
+			return nil, fmt.Errorf("%s의 CLI 창을 닫은 뒤 다시 켜야 함", p.Label)
+		}
+	}
+	next.UpdatedAt = nowMs()
+	if err := h.store.SaveRoom(&next); err != nil {
 		return nil, err
 	}
-	rs.broadcast("room", r)
+	// Preserve participant pointers held by running invocations.
+	for i, p := range rs.room.Participants {
+		*p = *next.Participants[i]
+		next.Participants[i] = p
+	}
+	*rs.room = next
+	for _, pp := range patch.Participants {
+		p := rs.room.participant(pp.ID)
+		if !p.Enabled {
+			rs.dropQueuedFor(h, p.ID)
+		}
+	}
+	rs.broadcast("room", rs.room)
 	h.pump(rs)
-	return json.Marshal(r)
+	return json.Marshal(rs.room)
 }
 
 // dropQueuedFor removes a disabled participant's waiting turns; a discussion counts them as PASS.
@@ -372,6 +514,7 @@ func (h *Hub) DeleteRoom(id string) error {
 		h.mu.Unlock()
 		return fmt.Errorf("방 없음: %s", id)
 	}
+	rs.deleted = true
 	rs.stopLocked("방 삭제")
 	delete(h.rooms, id)
 	for ch := range rs.subs {
@@ -466,8 +609,11 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
 	}
-	if target != "" && rs.room.participant(target) == nil {
-		return nil, fmt.Errorf("대상 없음: %s", target)
+	if target != "" {
+		p := rs.room.participant(target)
+		if p == nil || p.Removed || !p.Enabled {
+			return nil, fmt.Errorf("활성 대상 없음: %s", target)
+		}
 	}
 	m := rs.nextMessage("user", "user", text)
 	if target != "" {
@@ -494,11 +640,7 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 	_ = h.store.AppendMessage(id, m)
 	_ = h.store.SaveRoom(rs.room)
 	ids := h.enabledIDs(rs)
-	var all []string
-	for _, p := range rs.room.Participants {
-		all = append(all, p.ID)
-	}
-	mentioned := ParseMentions(text, all)
+	mentioned := ParseParticipantMentions(text, rs.room.Participants)
 	var targets []string
 	for _, id := range mentioned {
 		if slices.Contains(ids, id) {
@@ -508,7 +650,7 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 	reason := "mention"
 	switch {
 	case len(mentioned) > 0 && len(targets) == 0:
-		rs.addSystem(fmt.Sprintf("@%s 는 꺼져 있어서 아무도 답하지 않아. 오른쪽 패널에서 켜거나 다른 참가자를 불러.", strings.Join(mentioned, ", @")))
+		rs.addSystem(fmt.Sprintf("@%s 는 비활성 또는 삭제 상태라 아무도 답하지 않아. 다른 활성 참가자를 불러.", strings.Join(mentioned, ", @")))
 		mc := *m
 		return &mc, nil
 	case len(mentioned) == 0:
@@ -685,7 +827,7 @@ func (h *Hub) pump(rs *roomState) {
 	for i := 0; i < len(rs.queue); {
 		t := rs.queue[i]
 		p := rs.room.participant(t.Agent)
-		if p == nil || !p.Enabled || h.reg.Get(t.Agent) == nil {
+		if p == nil || !p.Enabled || p.Removed || h.reg.Get(p.Provider) == nil || h.nativeSessions[nativeSessionKey(p.Provider, p.SessionID)] {
 			rs.queue = slices.Delete(rs.queue, i, i+1)
 			if t.Reason == "discussion" {
 				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
@@ -742,8 +884,11 @@ type prepared struct {
 // buildTurn renders a prompt without reserving a participant. Caller holds h.mu.
 func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	p := rs.room.participant(t.Agent)
-	prov := h.reg.Get(t.Agent)
-	if p == nil || !p.Enabled || prov == nil {
+	if p == nil || !p.Enabled || p.Removed {
+		return nil
+	}
+	prov := h.reg.Get(p.Provider)
+	if prov == nil {
 		return nil
 	}
 	first := p.SessionID == ""
@@ -772,6 +917,11 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	t, p, prov := pr.t, pr.p, pr.prov
 	msg := rs.nextMessage("agent", p.ID, "")
 	msg.Status, msg.TurnID, msg.Reason, msg.Round, msg.Model = "streaming", t.ID, t.Reason, t.Round, p.Model
+	msg.Provider, msg.SessionID, msg.Mode, msg.Effort = p.Provider, pr.opts.SessionID, pr.opts.Mode, pr.opts.Effort
+	msg.SessionDirectory = pr.opts.Workspace
+	if pr.opts.Mode == agent.ModeChat || msg.SessionDirectory == "" {
+		msg.SessionDirectory = pr.opts.ScratchDir
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), turnTimeout)
 	var steer chan string
 	if prov.CanSteer() {
@@ -791,10 +941,23 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	emit := func(e agent.Event) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		if rs.deleted {
+			return
+		}
 		rs.traces[msg.ID] = append(rs.traces[msg.ID], e)
 		msg.Trace++
 		_ = h.store.AppendTrace(rs.room.ID, TraceLine{MsgID: msg.ID, Event: e})
 		switch e.Kind {
+		case agent.KindSession:
+			if e.Text != "" {
+				msg.SessionID = e.Text
+				if pr.resetGen == rs.resetGen {
+					p.SessionID = e.Text
+				}
+				_ = h.store.AppendMessage(rs.room.ID, msg)
+				_ = h.store.SaveRoom(rs.room)
+				rs.broadcast("message", msg)
+			}
 		case agent.KindTextDelta:
 			textBuf.WriteString(e.Text)
 			msg.Text = textBuf.String()
@@ -837,10 +1000,16 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	defer h.mu.Unlock()
 	interrupted := ctx.Err() != nil
 	cancel()
+	if rs.deleted {
+		return
+	}
 	run := rs.running[t.ID]
 	delete(rs.running, t.ID)
 	msg.Duration = time.Since(started).Milliseconds()
 	msg.Usage = res.Usage
+	if res.SessionID != "" {
+		msg.SessionID = res.SessionID
+	}
 	if res.SessionID != "" && pr.resetGen == rs.resetGen {
 		p.SessionID = res.SessionID
 	}
@@ -892,7 +1061,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		h.Log.Printf("turn %s %s/%s status=%s %dms err=%v", rs.room.ID, p.ID, p.Model, msg.Status, msg.Duration, err)
 	}
 
-	if pr.stopGen == rs.stopGen && msg.Status == "done" && t.Reason != "discussion" {
+	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" {
 		h.chainMentions(rs, msg, t)
 	}
 	if pr.stopGen == rs.stopGen && t.Reason == "discussion" {
@@ -963,7 +1132,7 @@ func (rs *roomState) deltaFor(p *Participant, first bool, cap int64) ([]*Message
 		if m.Seq > seen {
 			seen = m.Seq
 		}
-		if m.Author == p.ID || m.Live || (m.Target != "" && m.Target != p.ID) {
+		if (m.Target != "" && m.Target != p.ID) || (!first && (m.Author == p.ID || m.Live)) {
 			continue
 		}
 		if m.Status == "streaming" {
@@ -979,14 +1148,13 @@ func (rs *roomState) deltaFor(p *Participant, first bool, cap int64) ([]*Message
 }
 
 func (h *Hub) chainMentions(rs *roomState, msg *Message, t *Turn) {
-	ids := h.enabledIDs(rs)
-	var others []string
-	for _, id := range ids {
-		if id != msg.Author {
-			others = append(others, id)
+	var others []*Participant
+	for _, p := range rs.room.enabled() {
+		if p.ID != msg.Author {
+			others = append(others, p)
 		}
 	}
-	targets := ParseMentions(msg.Text, others)
+	targets := ParseParticipantMentions(msg.Text, others)
 	if len(targets) == 0 {
 		return
 	}
@@ -1031,6 +1199,9 @@ func (h *Hub) discussionStep(rs *roomState, agentID, signal, status string) {
 		rs.disc = nil
 	case d.Round >= d.Total:
 		rs.addSystem(fmt.Sprintf("토론 종료 · 최대 %d라운드 도달", d.Total))
+		rs.disc = nil
+	case len(rs.room.enabled()) < 2:
+		rs.addSystem("토론 종료 · 활성 참가자가 2명 미만이야")
 		rs.disc = nil
 	default:
 		d.Round++

@@ -37,9 +37,11 @@ func (c *Claude) Models() []ModelOption {
 		{ID: "opus", Label: "Opus (최신)"},
 		{ID: "sonnet", Label: "Sonnet (최신)"},
 		{ID: "haiku", Label: "Haiku (최신)"},
+		{ID: "fable", Label: "Fable (최신)"},
 		{ID: "claude-fable-5-1", Label: "Fable 5.1"},
 		{ID: "claude-opus-5-5", Label: "Opus 5.5"},
 		{ID: "claude-sonnet-5-5", Label: "Sonnet 5.5"},
+		{ID: "claude-haiku-5-5", Label: "Haiku 5.5"},
 	}
 }
 
@@ -90,8 +92,11 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 	var once sync.Once
 	closeStdin := func() { once.Do(func() { _ = stdin.Close() }) }
 	done := make(chan struct{})
+	steerDone := make(chan struct{})
 	var steered atomic.Int32
+	var finished atomic.Bool
 	go func() {
+		defer close(steerDone)
 		_, _ = stdin.Write(claudeUserLine(o.Prompt))
 		for {
 			select {
@@ -101,7 +106,7 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 				if !ok {
 					return
 				}
-				if p.finished {
+				if finished.Load() {
 					return // the turn already ended; the room redelivers it next turn
 				}
 				if _, err := stdin.Write(claudeUserLine(msg)); err != nil {
@@ -117,12 +122,14 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 	onLine := func(line string) {
 		p.Line(line, emit)
 		if p.finished {
+			finished.Store(true)
 			closeStdin()
 		}
 	}
 	stderr, runErr := runLines(ctx, cmd, "", onLine)
 	close(done)
 	closeStdin()
+	<-steerDone
 	fin := p.Finish(emit)
 	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr, Steered: int(steered.Load())}
 	return res, finishError("claude", fin, runErr, stderr)

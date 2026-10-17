@@ -8,13 +8,14 @@ Go 단일 바이너리 + 정적 HTML. 프레임워크·빌드 도구·외부 서
 
 | | |
 |---|---|
-| **단톡방** | `@claude` `@codex` `@agy` `@all`로 부른다. 멘션이 없으면 전원이 같은 대화 스냅샷을 받아 **동시에, 독립적으로** 답한다. 에이전트끼리도 `@`로 서로 부르며, 연쇄 깊이는 방 설정으로 제한한다. |
+| **단톡방** | `@claude` `@codex` `@agy`는 해당 공급사의 활성 참가자 전원, 카드의 고유 `@ID`는 한 명을 부른다. `@all` 또는 멘션 없이 보내면 전원이 같은 대화 범위를 받아 **동시에, 독립적으로** 답한다. 연쇄 호출 깊이는 방 설정으로 제한한다. |
 | **토론** | N라운드 동안 순서대로 발언한다. 각자 마지막 줄에 `CONTINUE / AGREE / PASS / CONCLUDE` 신호를 붙이고, 전원 동의·결론 제시·라운드 소진 중 먼저 오는 쪽에서 끝난다. |
 | **끼어들기(steering)** | 대상을 고르고 보내면 그 에이전트에게만 간다. Claude는 실행 중인 턴에 즉시 주입되고, Codex·Antigravity는 지금 턴이 끝난 직후 우선 전달된다. 각 참가자는 자기 대기열을 갖고 서로를 기다리지 않는다. |
 | **작업 기록** | 답변마다 도구 호출·결과·추론 요약을 펼쳐 본다. **서브에이전트**는 어떤 종류를 어떤 과제로 띄웠고, 그 안에서 무슨 도구를 썼고, 뭐라고 보고했는지까지 중첩으로 보인다. 진행 중에도 실시간으로 자란다. |
 | **사용량** | 공급사별 5시간·주간 남은 한도(Claude·Codex·Gemini), 방 누적 입력·출력 토큰과 비용, 최근 소모 속도, 참가자별 컨텍스트 사용률. 임계치에서 경고한다. |
-| **모델·추론 노력** | 참가자마다 켜기/끄기, 모델, 추론 노력(low~max)을 고른다. 모델마다 허용 노력이 다르면 그 목록만 보인다. |
-| **권한 모드** | 방 단위 `chat`(도구 없음) / `read`(읽기·검색만) / `write`(작업 폴더 수정). 우회 플래그는 어떤 모드에서도 쓰지 않는다. |
+| **모델·인원·추론 수준** | 같은 공급사와 모델도 여러 명 추가한다. 방마다 최대 32명이며 이름·모델·추론 수준·세션·대기열·사용량은 참가자별로 분리된다. 모델별 지원 수준과 CLI 기본값을 선택할 수 있다. |
+| **원본 CLI 대화** | 참가자 카드와 답변의 `CLI에서 열기`로 원래 세션을 이어 연다(Windows). 다른 OS에서는 정확한 이어보기 명령을 복사한다. 모델을 바꾼 뒤에도 이전 답변의 세션 정보는 남는다. |
+| **권한 모드** | 방 단위 `chat`(프로젝트 폴더를 전달하지 않는 대화) / `read`(읽기 중심) / `write`(편집 허용). 실제 보호는 각 CLI의 도구·권한·샌드박스 설정에 따른다. |
 
 ## 빠른 시작
 
@@ -29,6 +30,26 @@ go build -o roundtable.exe ./cmd/roundtable
 
 옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`.
 
+### 여러 모델을 함께 쓰기
+
+1. **새 방**에서 공급사·모델·추론 수준·인원을 고른다. **다른 모델 구성**으로 Opus 2명, Fable 1명, GPT 2명, Gemini 2명 같은 조합을 만든다.
+2. 기존 방에서는 참가자 패널의 **추가**를 누른다. 모델 목록에 없는 모델은 CLI가 지원하는 정확한 ID를 직접 입력할 수 있다. 목록에 있다고 계정의 사용 권한이나 잔여 한도까지 보장되는 것은 아니다.
+3. 특정 한 명에게 지시할 때는 대상 조정 칩이나 카드의 고유 멘션을 쓴다. `@claude`는 Claude 참가자 전체를 부른다. 이름을 바꿔도 고유 ID는 유지된다.
+
+참가자를 제거해도 이전 답변과 누적 사용량은 남는다. 모델·추론 수준 변경은 실행 중에는 거절하며, 변경된 참가자의 다음 턴은 새 CLI 세션으로 시작한다. 공급사 한도는 계정 단위이므로 참가자 수만큼 늘어나지 않는다.
+
+### 원본 CLI에서 이어 보기
+
+Roundtable은 각 공급사의 일반 세션 저장 기능을 사용한다. 대화가 끝난 참가자 카드 또는 답변 아래에서 **CLI에서 열기**를 누르면 같은 세션 ID를 사용해 원본 CLI를 연다. 현재 세션을 열면 해당 참가자를 비활성화한다. CLI 창이 열려 있는 동안 같은 세션을 다시 열거나 참가자를 다시 켜는 요청은 거절한다. CLI 창을 닫은 뒤 참가자를 다시 켜면 된다. **명령 복사**만으로는 참가자를 비활성화하지 않으므로, 복사한 명령을 실행하기 전에는 직접 꺼야 한다.
+
+| 공급사 | 원본 세션을 지정하는 명령 |
+|---|---|
+| Claude Code | `claude --resume <session_id>` |
+| Codex | `codex resume --include-non-interactive --cd <directory> <session_id>` |
+| Antigravity | `agy --conversation <session_id>` |
+
+화면에서 제공하는 명령에는 당시 모델·추론 수준·권한 옵션도 포함된다. 새 메시지에는 원본 세션 ID와 작업 폴더를 함께 보존한다. 이전 버전의 기록에는 작업 폴더 정보가 없어서 과거 세션의 열기가 제한될 수 있다. 원본 CLI에서 별도로 나눈 새 대화가 Roundtable 기록으로 역수입되지는 않는다. 각 공급사 데스크톱 앱의 대화 목록 동기화는 앱별 동작에 따른다. 열린 CLI 창의 추적은 현재 서버 프로세스에서만 유지되므로 서버를 재시작하기 전에는 해당 창을 닫는다.
+
 ### Gemini 한도 보이게 하기 (선택)
 
 Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cli/statusline)으로, 상태표시줄을 그릴 때마다(비대화형 `-p` 실행 포함) 남은 할당량을 JSON으로 명령에 넘긴다. Roundtable은 그 명령 앞에 끼어들어 값을 받아 적고, 원래 명령은 그대로 이어 실행한다.
@@ -39,7 +60,7 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 ./roundtable.exe agy-hook uninstall   # 원래대로
 ```
 
-저장하는 것은 `quota`·`context_window`·`model`·`plan_tier`·`version` 뿐이고 이메일·경로는 버린다. **OAuth 토큰으로 Google API를 직접 부르는 방식은 쓰지 않는다.** Antigravity 추가 약관 6항은 서드파티 도구가 Antigravity OAuth로 서비스에 접근하는 것을 계정 정지 사유로 명시한다.
+저장하는 것은 유효한 한도를 포함한 상태의 `quota`·`context_window`·`model`·`plan_tier`·`version` 뿐이고 이메일·경로는 버린다. 한도가 없거나 비어 있는 갱신은 파일을 쓰지 않는다. 여러 Gemini 참가자가 동시에 실행돼도 한도 없는 갱신이 이전 값을 복사해 새 값을 덮어쓰지 않는다. **OAuth 토큰으로 Google API를 직접 부르는 방식은 쓰지 않는다.** Antigravity 추가 약관 6항은 서드파티 도구가 Antigravity OAuth로 서비스에 접근하는 것을 계정 정지 사유로 명시한다.
 
 ## 권한 모드
 
@@ -49,7 +70,9 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 | `read` (기본) | `--tools Read,Grep,Glob,Agent,Task,WebSearch,WebFetch --add-dir <ws>` | `sandbox_mode=read-only --cd <ws>` | `--mode plan --sandbox --add-dir <ws>` |
 | `write` | `--permission-mode acceptEdits --add-dir <ws>` | `sandbox_mode=workspace-write` | `--mode accept-edits --sandbox --disable-slash-commands --add-dir <ws>` |
 
-세 CLI × 세 모드 9가지를 실제 호출로 검증했다: read·chat은 파일을 만들지 못했고 write는 만들었다. Antigravity는 `--disable-slash-commands`와 `--mode plan`을 같이 주면 plan이 무시되어 read 모드에서도 파일이 써지는 것을 확인했기 때문에, 그 플래그는 write 모드에만 붙인다.
+2026-10-17의 9가지 호출에서는 read·chat의 요청 대상 파일 생성이 거절되고 write의 생성이 허용됐다. 이 관측은 모든 도구 호출·읽기 범위·서브에이전트 동작에 대한 보장은 아니다. 특히 Codex·Antigravity의 chat은 읽기 또는 계획 도구가 남아 있을 수 있다. Claude의 도구 목록과 `--add-dir`도 운영체제 수준의 파일 격리를 의미하지 않는다. Antigravity는 `--disable-slash-commands`와 `--mode plan`을 같이 주면 plan이 무시되는 것을 확인했기 때문에, 그 플래그는 write 모드에만 붙인다.
+
+서버는 인증 없는 로컬 도구다. loopback 클라이언트와 로컬 Host만 허용하고, 다른 웹사이트의 Origin 또는 교차 사이트 요청을 거절한다. `-addr`를 외부 주소로 열더라도 원격 클라이언트는 허용하지 않는다.
 
 ## 데이터
 

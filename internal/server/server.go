@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"roundtable/internal/agent"
@@ -27,7 +30,39 @@ func New(hub *room.Hub, reg *agent.Registry, web fs.FS) *Server {
 	return s
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// This unauthenticated service can start local CLI processes. Restrict both
+	// the peer and Host to loopback, including when -addr is accidentally public.
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	peerIP := net.ParseIP(peer)
+	if (host != "localhost" && (ip == nil || !ip.IsLoopback())) || err != nil || peerIP == nil || !peerIP.IsLoopback() {
+		http.Error(w, "local access only", http.StatusForbidden)
+		return
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil || u.Scheme != scheme || u.Host != r.Host || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			http.Error(w, "same-origin access only", http.StatusForbidden)
+			return
+		}
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		http.Error(w, "same-origin access only", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	s.mux.ServeHTTP(w, r)
+}
 
 func (s *Server) routes() {
 	s.mux.Handle("GET /", http.FileServer(http.FS(s.web)))
@@ -37,6 +72,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/rooms", s.createRoom)
 	s.mux.HandleFunc("GET /api/rooms/{id}", s.getRoom)
 	s.mux.HandleFunc("PATCH /api/rooms/{id}", s.patchRoom)
+	s.mux.HandleFunc("POST /api/rooms/{id}/participants", s.addParticipants)
+	s.mux.HandleFunc("DELETE /api/rooms/{id}/participants/{participant}", s.removeParticipant)
+	s.mux.HandleFunc("GET /api/rooms/{id}/participants/{participant}/session", s.nativeSession)
+	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/session/open", s.openNativeSession)
 	s.mux.HandleFunc("DELETE /api/rooms/{id}", s.deleteRoom)
 	s.mux.HandleFunc("POST /api/rooms/{id}/messages", s.postMessage)
 	s.mux.HandleFunc("POST /api/rooms/{id}/discussion", s.discussion)
@@ -65,7 +104,7 @@ func decode(r *http.Request, v any) error {
 
 func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 	wd, _ := os.Getwd()
-	writeJSON(w, 200, map[string]any{"default_workspace": wd, "version": Version})
+	writeJSON(w, 200, map[string]any{"default_workspace": wd, "version": Version, "max_participants": room.MaxParticipants})
 }
 
 // Version is stamped at build time with -ldflags "-X roundtable/internal/server.Version=…".
@@ -110,6 +149,32 @@ func (s *Server) patchRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, err := s.hub.UpdateRoom(r.PathValue("id"), patch)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(b)
+}
+
+func (s *Server) addParticipants(w http.ResponseWriter, r *http.Request) {
+	var spec room.ParticipantSpec
+	if err := decode(r, &spec); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	b, err := s.hub.AddParticipants(r.PathValue("id"), spec)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(201)
+	_, _ = w.Write(b)
+}
+
+func (s *Server) removeParticipant(w http.ResponseWriter, r *http.Request) {
+	b, err := s.hub.RemoveParticipant(r.PathValue("id"), r.PathValue("participant"))
 	if err != nil {
 		writeErr(w, 400, err)
 		return

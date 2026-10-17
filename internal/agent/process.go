@@ -25,6 +25,9 @@ const (
 // that ships its code-mode host is the one that runs.
 func resolveCommand(name string) (string, error) {
 	if filepath.IsAbs(name) {
+		if !fileExists(name) {
+			return "", fmt.Errorf("%s: 실행 파일이 없거나 디렉터리임", name)
+		}
 		return name, nil
 	}
 	if runtime.GOOS != "windows" {

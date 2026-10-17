@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,18 +33,23 @@ func (c *Codex) Command() string { return c.cmd }
 func (c *Codex) Available() bool { return available(c.cmd) }
 func (c *Codex) CanSteer() bool  { return false }
 
-// Efforts: gpt-6.1-sol answers "Supported values are: low, medium, high, xhigh, max"
-// and rejects minimal (observed 2026-10-17).
+// model/list also advertises ultra orchestration, but forwarding it through
+// exec's model_reasoning_effort has not been verified. Expose the verified range.
 func (c *Codex) Efforts() []string                 { return []string{"low", "medium", "high", "xhigh", "max"} }
 func (c *Codex) ModelEfforts() map[string][]string { return nil }
 func (c *Codex) DefaultModel() (string, string)    { return "gpt-6.1-sol", "high" }
 func (c *Codex) ContextWindow(model string) int    { return 475_000 }
 func (c *Codex) Models() []ModelOption {
+	// Verified with Codex 0.162.1 app-server model/list on 2026-10-18.
 	return []ModelOption{
 		{ID: "gpt-6.1-sol", Label: "GPT-6.1 Sol"},
+		{ID: "gpt-6-astra", Label: "GPT-6 Astra"},
 		{ID: "gpt-6-sol", Label: "GPT-6 Sol"},
-		{ID: "gpt-5.5", Label: "GPT-5.5"},
-		{ID: "gpt-5.3-codex-spark", Label: "Codex Spark (빠름)"},
+		{ID: "gpt-6-luna", Label: "GPT-6 Luna"},
+		{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol"},
+		{ID: "gpt-5.6-terra", Label: "GPT-5.6 Terra"},
+		{ID: "gpt-5.6-luna", Label: "GPT-5.6 Luna"},
+		{ID: "gpt-daybreak-blue-latest", Label: "Daybreak Blue"},
 	}
 }
 
@@ -88,7 +94,9 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 	p := newCodexParser()
 	watcher := newRolloutWatcher(c.sessionsDir, time.Now().Add(-5*time.Second))
 	stop := make(chan struct{})
+	watchDone := make(chan struct{})
 	go func() {
+		defer close(watchDone)
 		t := time.NewTicker(1500 * time.Millisecond)
 		defer t.Stop()
 		for {
@@ -104,6 +112,7 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 	}()
 	stderr, runErr := runLines(ctx, cmd, o.Prompt, func(line string) { p.Line(line, emit) })
 	close(stop)
+	<-watchDone
 	if id := p.threadID(); id != "" {
 		watcher.scan(id, emit)
 		watcher.finish(emit)
@@ -128,6 +137,7 @@ func filterCodexStderr(s string) string {
 }
 
 type codexParser struct {
+	threadMu  sync.RWMutex
 	thread    string
 	parts     []string
 	errText   string
@@ -140,7 +150,11 @@ type codexParser struct {
 
 func newCodexParser() *codexParser { return &codexParser{names: map[string]string{}} }
 
-func (p *codexParser) threadID() string { return p.thread }
+func (p *codexParser) threadID() string {
+	p.threadMu.RLock()
+	defer p.threadMu.RUnlock()
+	return p.thread
+}
 
 func (p *codexParser) Line(line string, emit func(Event)) {
 	m := parseLine(line)
@@ -150,7 +164,9 @@ func (p *codexParser) Line(line string, emit func(Event)) {
 	typ := str(m, "type")
 	switch typ {
 	case "thread.started":
+		p.threadMu.Lock()
 		p.thread = str(m, "thread_id")
+		p.threadMu.Unlock()
 		x := ev(KindSession)
 		x.Text = p.thread
 		emit(x)

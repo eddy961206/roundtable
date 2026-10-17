@@ -536,10 +536,12 @@ kbd {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 240px;
 }
+.title-row > button, .title-row > .badge { flex-shrink: 0; }
 .title-row h2 {
   margin: 0;
+  min-width: 0;
   font-size: 15px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -558,6 +560,7 @@ kbd {
   flex-wrap: wrap;
   align-items: center;
   flex: none;
+  max-width: 100%;
 }
 .actions button, .actions .more-summary {
   padding: 2px 8px;
@@ -1018,6 +1021,8 @@ pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
   display: inline-flex;
   gap: 4px;
   flex-wrap: wrap;
+  max-height: 96px;
+  overflow-y: auto;
 }
 .target-chip-btn {
   padding: 2px 10px;
@@ -1078,6 +1083,9 @@ pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
   position: absolute;
   bottom: 100%;
   left: 14px;
+  right: 14px;
+  max-height: 40vh;
+  overflow-y: auto;
   margin-bottom: 4px;
   background: var(--panel2);
   border: 1px solid var(--border-strong);
@@ -1187,6 +1195,23 @@ pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
   padding: 2px 6px;
   min-height: 28px;
 }
+.participant-id { font-size: 11px; overflow-wrap: anywhere; }
+.session-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.session-actions button { font-size: 11px; padding: 3px 7px; min-height: 28px; }
+.participant-edit { font-size: 12px; }
+.participant-edit summary { cursor: pointer; padding: 4px 0; }
+.participant-edit label { display: grid; gap: 4px; margin: 8px 0; }
+.participant-edit input { width: 100%; min-width: 0; }
+.participant-edit button { font-size: 12px; padding: 3px 8px; min-height: 30px; }
+.participant-edit .remove-participant { margin-left: 6px; }
+.pcard .name { overflow-wrap: anywhere; }
+#btn-add-participant { margin-left: auto; padding: 3px 8px; min-height: 30px; }
+.target-chip-btn { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seat-spec { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; border-top: 1px solid var(--border); }
+.seat-spec label { min-width: 0; }
+.seat-spec select, .seat-spec input { width: 100%; min-width: 0; }
+.seat-spec > button { justify-self: start; align-self: end; }
+@media (max-width: 480px) { .seat-spec { grid-template-columns: minmax(0, 1fr); } }
 .pcard .status-line {
   font-size: 12px;
   color: var(--muted);
@@ -1319,6 +1344,8 @@ dialog {
   padding: 20px;
   width: 560px;
   max-width: 94vw;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
 }
 dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
 dialog h3 { margin: 0 0 12px; }
@@ -1367,8 +1394,13 @@ dialog menu {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 0;
-  margin: 12px 0 0;
+  position: sticky;
+  bottom: -20px;
+  z-index: 2;
+  padding: 12px 20px;
+  margin: 12px -20px -20px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
 }
 
 /* Responsive visibility helpers */
@@ -1381,6 +1413,10 @@ dialog menu {
 }
 
 @media (max-width: 1100px) {
+  .head-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
   #app {
     grid-template-columns: 224px minmax(0, 1fr);
   }

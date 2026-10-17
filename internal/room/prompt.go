@@ -41,6 +41,9 @@ func speaker(m *Message, r *Room) string {
 	case "system":
 		return "System"
 	}
+	if p := r.participant(m.Author); p != nil {
+		return "@" + m.Author + " (" + p.Label + ")"
+	}
 	return "@" + m.Author
 }
 
@@ -56,6 +59,7 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 		}
 	}
 	fmt.Fprintf(&b, "당신은 사용자와 여러 AI 코딩 에이전트가 함께 있는 단톡방 \"%s\"의 참가자 \"@%s\"(%s)입니다.\n", r.Title, me.ID, me.Label)
+	fmt.Fprintf(&b, "당신의 공급자는 %s이고 모델은 %s입니다. 같은 공급자나 모델의 다른 참가자도 각자 독립된 세션을 사용합니다.\n", me.Provider, me.Model)
 	fmt.Fprintf(&b, "참가자: 사용자(User), %s\n", strings.Join(append([]string{"@" + me.ID + "(" + me.Label + ", 당신)"}, others...), ", "))
 	if r.Note != "" {
 		fmt.Fprintf(&b, "\n방 공지(항상 유효):\n%s\n", strings.TrimSpace(r.Note))
@@ -64,6 +68,7 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 	b.WriteString("- 아래 대화의 마지막 메시지에 이어 자연스럽게 답하세요. 출력 전체가 채팅 메시지 하나로 그대로 전송됩니다. \"[@" + me.ID + "]\" 같은 접두어나 서명을 붙이지 마세요.\n")
 	if len(others) > 0 && tc.Reason != "discussion" {
 		fmt.Fprintf(&b, "- 다른 참가자를 호출하려면 @이름(%s, @all)을 쓰세요. 그러면 그 참가자가 이어서 답합니다. 호출 없이 언급만 할 때는 @ 없이 이름만 쓰세요. 호출은 꼭 필요할 때만 하세요.\n", strings.Join(others, ", "))
+		b.WriteString("- @claude, @codex, @agy는 해당 공급자의 모든 활성 참가자를 호출합니다. 한 명만 부르려면 위 목록의 고유 @ID를 쓰세요.\n")
 	} else if len(others) > 0 {
 		b.WriteString("- 이번 턴에는 다른 참가자를 추가로 호출할 수 없습니다. 언급은 @ 없이 이름만 쓰세요.\n")
 	}

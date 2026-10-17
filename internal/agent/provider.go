@@ -9,9 +9,9 @@ import (
 
 // Mode is the room-wide permission level handed to every CLI.
 const (
-	ModeChat  = "chat"  // no tools, conversation only
-	ModeRead  = "read"  // read-only tools inside the workspace
-	ModeWrite = "write" // edits auto-accepted inside the workspace, no sandbox bypass
+	ModeChat  = "chat"  // scratch cwd; CLI-specific tool restrictions
+	ModeRead  = "read"  // workspace cwd; CLI-specific read/plan permissions
+	ModeWrite = "write" // workspace edits, without permission-bypass flags
 )
 
 // RunOptions describes one turn of one agent.
