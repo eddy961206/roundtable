@@ -101,6 +101,11 @@ func codexArgs(o RunOptions, windowsSandbox string) []string {
 	switch o.Mode {
 	case ModeWrite:
 		args = append(args, "-c", `sandbox_mode="workspace-write"`, "-c", `approval_policy="never"`)
+		cache := tomlString(filepath.Join(o.ScratchDir, "codex", "go-build"))
+		// Config overrides also work with exec resume (which has no --add-dir).
+		// Explicit shell env injection survives Codex's inherited-env filters.
+		args = append(args, "-c", "sandbox_workspace_write.writable_roots=["+cache+"]",
+			"-c", "shell_environment_policy.set.GOCACHE="+cache)
 	default:
 		args = append(args, "-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`)
 	}
@@ -121,6 +126,16 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 	cmd := exec.Command(path, codexArgs(o, c.windowsSandbox)...)
 	cmd.Dir = workDir(o)
 	cmd.Env = os.Environ()
+	if o.Mode == ModeWrite {
+		if !filepath.IsAbs(o.ScratchDir) {
+			return Result{}, fmt.Errorf("Codex 쓰기 모드에는 절대 경로 ScratchDir가 필요함")
+		}
+		cache := filepath.Join(o.ScratchDir, "codex", "go-build")
+		if err := os.MkdirAll(cache, 0o700); err != nil {
+			return Result{}, fmt.Errorf("Codex Go 빌드 캐시 생성: %w", err)
+		}
+		cmd.Env = append(cmd.Env, "GOCACHE="+cache)
+	}
 	p := newCodexParser()
 	watcher := newRolloutWatcher(c.sessionsDir, time.Now().Add(-5*time.Second))
 	stop := make(chan struct{})

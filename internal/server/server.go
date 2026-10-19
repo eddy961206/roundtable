@@ -300,6 +300,25 @@ func (s *Server) cancelTurn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) trace(w http.ResponseWriter, r *http.Request) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if values, present := query["tail"]; present {
+		limit, err := strconv.Atoi(values[0])
+		if err != nil || len(values) != 1 || limit < 1 || limit > 5000 {
+			writeErr(w, 400, fmt.Errorf("tail은 1~5000 사이 정수여야 함"))
+			return
+		}
+		page, err := s.hub.ReadTraceTail(r.PathValue("id"), r.PathValue("msg"), limit)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, page)
+		return
+	}
 	events, err := s.hub.ReadTrace(r.PathValue("id"), r.PathValue("msg"))
 	if err != nil {
 		writeErr(w, 500, err)
