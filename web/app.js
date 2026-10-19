@@ -2600,6 +2600,11 @@
     $("#dlg-room-cancel").onclick = () => $("#dlg-room").close();
     $("#form-room").onsubmit = onRoomSubmit;
     $("#btn-add-seat-spec").onclick = () => addSeatSpec($("#room-seat-specs"));
+    $("#btn-copy-room-seats").onclick = () => {
+      const box = $("#room-seat-specs");
+      box.replaceChildren();
+      for (const p of state.room.participants) addSeatSpec(box, p.provider, true, p);
+    };
     $("#btn-add-participant").onclick = () => {
       participantDialogSequence++;
       $("#participant-spec").replaceChildren();
@@ -2984,7 +2989,7 @@
   }
 
   // ---------- room dialog ----------
-  function addSeatSpec(box, providerId = "", removable = true) {
+  function addSeatSpec(box, providerId = "", removable = true, seed = null) {
     const row = el("div", "seat-spec");
     function field(text, control) {
       const label = el("label", "", text);
@@ -3072,6 +3077,14 @@
     model.onchange = syncModel;
     custom.oninput = syncEffort;
     provider.onchange();
+    if (seed) {
+      const known = [...model.options].some((o) => o.value === seed.model);
+      model.value = known ? seed.model : "__custom__";
+      custom.value = known ? "" : seed.model;
+      syncModel();
+      effort.value = seed.effort;
+      label.value = seed.label;
+    }
     if (removable) {
       const remove = el("button", "ghost", "구성 제거");
       remove.type = "button";
@@ -3106,6 +3119,7 @@
     f.persona.checked = room ? !!room.persona : false;
     $("#room-seats-fieldset").hidden = !!room;
     $("#room-seat-specs").replaceChildren();
+    $("#btn-copy-room-seats").hidden = !!room || !state.room;
     if (!room) {
       addSeatSpec($("#room-seat-specs"));
     }
