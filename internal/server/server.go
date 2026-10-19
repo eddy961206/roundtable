@@ -66,7 +66,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) routes() {
-	s.mux.Handle("GET /", http.FileServer(http.FS(s.web)))
+	s.mux.Handle("GET /", staticFiles(s.web))
 	s.mux.HandleFunc("GET /api/config", s.config)
 	s.mux.HandleFunc("GET /api/providers", s.providers)
 	s.mux.HandleFunc("GET /api/usage", s.usage)
@@ -100,6 +100,19 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/resolve", s.resolvePart)
 	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/abandon", s.abandonPart)
 	s.mux.HandleFunc("GET /api/rooms/{id}/work/parts/{pid}/diff", s.partDiff)
+}
+
+// staticFiles serves the web client. The page loads ES modules, which browsers
+// run only with a JavaScript MIME type under nosniff. Windows can map .js to
+// text/plain through the registry, so .js gets its type here, not from mime.
+func staticFiles(web fs.FS) http.Handler {
+	files := http.FileServer(http.FS(web))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".js") {
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		}
+		files.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -287,6 +300,25 @@ func (s *Server) cancelTurn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) trace(w http.ResponseWriter, r *http.Request) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if values, present := query["tail"]; present {
+		limit, err := strconv.Atoi(values[0])
+		if err != nil || len(values) != 1 || limit < 1 || limit > 5000 {
+			writeErr(w, 400, fmt.Errorf("tail은 1~5000 사이 정수여야 함"))
+			return
+		}
+		page, err := s.hub.ReadTraceTail(r.PathValue("id"), r.PathValue("msg"), limit)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, page)
+		return
+	}
 	events, err := s.hub.ReadTrace(r.PathValue("id"), r.PathValue("msg"))
 	if err != nil {
 		writeErr(w, 500, err)

@@ -23,7 +23,7 @@ type RunOptions struct {
 	Effort     string
 	Mode       string
 	Workspace  string // absolute path; required for read/write
-	ScratchDir string // cwd for chat mode
+	ScratchDir string // absolute server scratch: chat cwd and Codex write-mode cache
 	Timeout    time.Duration
 	Steer      <-chan string // live user messages while the turn runs (providers that CanSteer)
 	MCP        *MCPServer    // extra read-only tool server for this run (nil = none)
