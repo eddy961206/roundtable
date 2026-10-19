@@ -40,6 +40,63 @@ func restartWorkHub(t *testing.T, f *workFixture) *Hub {
 	return h
 }
 
+func TestWorkDiscussionContinuesWhilePartInactive(t *testing.T) {
+	for _, state := range []string{"reviewing", "queued", "awaiting_approval", "merging", "blocked"} {
+		t.Run(state, func(t *testing.T) {
+			f := newWorkFixture(t, 1, nil)
+			author, other := controlWorkSeat(t, f, "claude"), controlWorkSeat(t, f, "codex")
+			f.hub.mu.Lock()
+			part := f.hub.rooms[f.room.ID].room.Work.part("p1")
+			part.State = state
+			f.hub.mu.Unlock()
+			if err := f.hub.StartDiscussion(f.room.ID, 1); err != nil {
+				t.Fatal(err)
+			}
+			first := nextCall(t, author)
+			if first.opts.Workspace != f.repo || first.opts.SessionID == f.part(t, "p1").SessionID {
+				t.Fatal("room discussion reused the inactive part's workspace or session")
+			}
+			finishCall(first, "agree\n[[DISCUSSION:AGREE]]")
+			finishCall(nextCall(t, other), "agree\n[[DISCUSSION:AGREE]]")
+			queueSnapshot(t, f.hub, f.room.ID, func(s *Snapshot) bool { return s.Discussion == nil && len(s.Queue) == 0 })
+			if f.part(t, "p1").State != state {
+				t.Fatal("discussion changed the part lifecycle")
+			}
+		})
+	}
+}
+
+func TestWorkDropsStalePartTurns(t *testing.T) {
+	for _, state := range []string{"reviewing", "queued", "awaiting_approval", "merging", "blocked"} {
+		t.Run(state, func(t *testing.T) {
+			f := newWorkFixture(t, 1, nil)
+			author := controlWorkSeat(t, f, "claude")
+			f.hub.mu.Lock()
+			rs := f.hub.rooms[f.room.ID]
+			part := rs.room.Work.part("p1")
+			rs.enqueue(&Turn{ID: newID(), Agent: part.Seat, Reason: "part", Part: part.ID, Status: "queued", prompt: "STALE_PART_REQUEST"})
+			part.State = state
+			f.hub.pump(rs)
+			queued, seatStatus := len(rs.queue), rs.room.participant(part.Seat).Status
+			f.hub.mu.Unlock()
+			if queued != 0 || seatStatus != "idle" {
+				t.Fatalf("stale part turn retained: queue=%d seat=%s", queued, seatStatus)
+			}
+			f.hub.mu.Lock()
+			part.State, part.Review = "fixing", NewReviewState(3)
+			prompt := BuildFixPrompt(part)
+			rs.enqueue(&Turn{ID: newID(), Agent: part.Seat, Reason: "part", Part: part.ID, Status: "queued", prompt: prompt})
+			f.hub.pump(rs)
+			f.hub.mu.Unlock()
+			fix := nextCall(t, author)
+			if fix.opts.Prompt != prompt {
+				t.Fatalf("stale request ran before the new fix prompt: %s", fix.opts.Prompt)
+			}
+			finishCall(fix, "fixed")
+		})
+	}
+}
+
 func TestWorkReviewRetryAfterRestart(t *testing.T) {
 	for _, graceful := range []bool{false, true} {
 		t.Run(map[bool]string{false: "crash", true: "shutdown"}[graceful], func(t *testing.T) {
@@ -256,6 +313,13 @@ func TestWorkFailedReviewResubmitKeepsSubmitSHA(t *testing.T) {
 	f.hub.mu.Unlock()
 	if got != first {
 		t.Fatalf("failed Resubmit replaced accepted SHA %s with %s", first, got)
+	}
+	if _, err := f.hub.ResolvePart(f.room.ID, "p1"); !errors.Is(err, ErrWorkConflict) {
+		t.Fatalf("failed review resubmit allowed resolution of the old SHA: %v", err)
+	}
+	plan := f.plan(t)
+	if p := plan.part("p1"); p.State != "blocked" || p.Review.Resolution != nil || p.SubmitSHA != first || len(plan.Queue) != 0 || f.integrationTip(t) != f.base {
+		t.Fatal("rejected resolution changed the blocked submission or merge queue")
 	}
 	if _, err := f.hub.RetryPart(f.room.ID, "p1"); err != nil {
 		t.Fatal(err)
