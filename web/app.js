@@ -4162,6 +4162,9 @@
         br.title = "파트 branch: " + part.branch + (part.worktree ? " (" + part.worktree + ")" : "");
         titleGroup.appendChild(br);
       }
+      if (part.worktree_removed) {
+        titleGroup.appendChild(el("span", "badge", "작업 폴더 정리됨"));
+      }
       if (part.submit_sha) {
         const subSha = el("span", "badge mono", "제출 SHA: " + shortSHA(part.submit_sha));
         subSha.title = "SubmitSHA: " + part.submit_sha;
@@ -4235,7 +4238,8 @@
 
       const btnDiff = el("button", "ghost", "Diff 보기");
       btnDiff.type = "button";
-      btnDiff.title = "이 파트의 변경 파일 목록과 패치를 서랍에서 봅니다";
+      btnDiff.disabled = !!part.worktree_removed;
+      btnDiff.title = part.worktree_removed ? "작업 폴더가 정리되어 Diff를 조회할 수 없습니다" : "이 파트의 변경 파일 목록과 패치를 서랍에서 봅니다";
       btnDiff.onclick = () => openDiffDrawer(part.id);
       actions.appendChild(btnDiff);
 

@@ -32,7 +32,8 @@ const (
 	outputTailBytes      = 8 * 1024
 	diffPatchLimit       = 1 << 20
 	workDoneSignal       = "WORK:DONE"
-	busyPlan             = "plan" // workBusy key while CreateWork runs git outside the hub lock
+	busyPlan             = "plan"    // workBusy key while CreateWork runs git outside the hub lock
+	busyCleanup          = "cleanup" // serializes cleanup with the merge queue
 )
 
 // ---- plan helpers -----------------------------------------------------------
@@ -338,6 +339,7 @@ func createWorktrees(repo, dir string, plan *WorkPlan) (*worktreeSet, error) {
 	if err := add(plan.Integration, paths[0], "--detach", paths[0], base); err != nil {
 		return nil, errors.Join(err, removeWorktrees(repo, made))
 	}
+	plan.IntegrationWorktree = paths[0]
 	for i, p := range plan.Parts {
 		if err := add(p.Branch, paths[i+1], paths[i+1], p.Branch); err != nil {
 			return nil, errors.Join(err, removeWorktrees(repo, made))
@@ -410,6 +412,8 @@ func (h *Hub) SubmitPart(roomID, partID string) (*WorkPlan, error) {
 // reserveSubmit closes the write-turn gate before releasing h.mu for git.
 func (h *Hub) reserveSubmit(rs *roomState, part *Part) error {
 	switch {
+	case part.WorktreeRemoved:
+		return removedWorktreeError(part)
 	case part.State != "working" && part.State != "fixing":
 		return fmt.Errorf("%w: 파트 %s는 %s 상태라 제출할 수 없음", ErrWorkConflict, part.ID, part.State)
 	case rs.workBusy[part.ID]:
@@ -529,6 +533,9 @@ func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	if part.WorktreeRemoved {
+		return nil, removedWorktreeError(part)
+	}
 	if part.State != "blocked" {
 		return nil, fmt.Errorf("%w: 파트 %s는 정지 상태가 아님", ErrWorkConflict, partID)
 	}
@@ -622,6 +629,7 @@ func (h *Hub) AbandonPart(roomID, partID string) (*WorkPlan, error) {
 	if saveErr != nil {
 		return nil, saveErr
 	}
+	h.startWorktreeCleanup(rs)
 	return cloneWork(plan), nil
 }
 
@@ -751,11 +759,15 @@ func (h *Hub) queuePart(rs *roomState, part *Part) {
 // advanceQueue starts the head part's merge when D4–D6 allow it. Caller holds h.mu.
 func (h *Hub) advanceQueue(rs *roomState) {
 	plan := rs.room.Work
-	if h.closing || plan == nil || plan.Halted != nil || plan.Merging != nil || len(plan.Queue) == 0 {
+	if h.closing || rs.workBusy[busyCleanup] || plan == nil || plan.Halted != nil || plan.Merging != nil || len(plan.Queue) == 0 {
 		return
 	}
 	part := plan.part(plan.Queue[0])
 	if part.State != "queued" {
+		return
+	}
+	if plan.IntegrationWorktreeRemoved || part.WorktreeRemoved {
+		h.blockPart(rs, part, "worktree", "queued", "이미 정리된 worktree는 병합에 사용할 수 없음", nil)
 		return
 	}
 	if part.ReadyMode == "confirm" && !approvalValid(plan, part) {
@@ -805,9 +817,16 @@ func (h *Hub) mergePart(rs *roomState, part *Part, submitSHA, beforeSHA, branch,
 		h.blockPart(rs, part, "conflict", "queued", "통합 branch가 병합 전 값이 아니라 갱신하지 못함: "+casErr.Error(), nil)
 	} else {
 		h.completeMerge(rs, part, mergeSHA)
-		h.advanceQueue(rs)
 	}
 	h.pump(rs)
+	// Persist the merged state before deleting any worktree. Cleanup failures
+	// cannot roll back the integration ref or turn a merged part into blocked.
+	if err := h.saveWork(rs); err != nil {
+		h.workNote(rs, "병합 상태 저장 실패로 worktree 정리 보류: "+err.Error())
+	} else {
+		h.startWorktreeCleanup(rs)
+	}
+	h.advanceQueue(rs)
 	_ = h.saveWork(rs)
 }
 

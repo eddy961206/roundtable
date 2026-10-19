@@ -312,6 +312,10 @@ func TestWorkAutoMergesConfirmWaitsForApproval(t *testing.T) {
 	if f.part(t, "p2").State != "awaiting_approval" {
 		t.Fatal("rejected approval changed the part")
 	}
+	diff, err := f.hub.PartDiff(f.room.ID, "p2")
+	if err != nil || diff.HeadSHA != sha2 || len(diff.Files) != 1 || diff.Files[0].Path != "b.txt" || diff.Files[0].Status != "A" || diff.Added != 1 {
+		t.Fatalf("part diff: %v %+v", err, diff)
+	}
 	if _, err := f.hub.ApprovePart(f.room.ID, "p2", sha2, p1.MergedSHA); err != nil {
 		t.Fatal(err)
 	}
@@ -325,10 +329,10 @@ func TestWorkAutoMergesConfirmWaitsForApproval(t *testing.T) {
 	if plan := f.plan(t); len(plan.Queue) != 0 || plan.Halted != nil || plan.Merging != nil {
 		t.Fatalf("queue after merges: %+v", plan)
 	}
-	diff, err := f.hub.PartDiff(f.room.ID, "p2")
-	if err != nil || diff.HeadSHA != sha2 || len(diff.Files) != 1 || diff.Files[0].Path != "b.txt" || diff.Files[0].Status != "A" || diff.Added != 1 {
-		t.Fatalf("part diff: %v %+v", err, diff)
+	if plan := waitWorktreeCleanup(t, f); !plan.IntegrationWorktreeRemoved || !plan.part("p1").WorktreeRemoved || !plan.part("p2").WorktreeRemoved {
+		t.Fatalf("cleanup after last merge: %+v", plan)
 	}
+	assertWorktreeExists(t, filepath.Join(f.hub.workRoot, f.room.ID, "integration"), false)
 }
 
 func TestWorkRestartRecoversMergeIntent(t *testing.T) {

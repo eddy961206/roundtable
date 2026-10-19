@@ -11,11 +11,15 @@ import (
 func nativeSessionKey(provider, session string) string { return provider + "\x00" + session }
 
 func (h *Hub) seatNativeOpen(rs *roomState, p *Participant) bool {
-	if h.nativeSessions[nativeSessionKey(p.Provider, p.SessionID)] {
+	if _, open := h.nativeSessions[nativeSessionKey(p.Provider, p.SessionID)]; open {
 		return true
 	}
 	part := rs.seatPart(p.ID)
-	return part != nil && h.nativeSessions[nativeSessionKey(p.Provider, part.SessionID)]
+	if part == nil {
+		return false
+	}
+	_, open := h.nativeSessions[nativeSessionKey(p.Provider, part.SessionID)]
+	return open
 }
 
 // NativeSessionOptions returns the original session and invocation settings.
@@ -77,11 +81,27 @@ func (h *Hub) nativeSessionOptionsLocked(roomID, seatID, messageID string) (agen
 		// Pre-metadata releases persisted only the current seat session and room settings.
 		opts = agent.RunOptions{SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch}
 	}
+	if rs.room.Work != nil {
+		plan := rs.room.Work
+		if sameWorktreePath(opts.Workspace, plan.IntegrationWorktree) && (plan.IntegrationWorktreeRemoved || rs.workBusy[busyCleanup]) {
+			return nil, opts, fmt.Errorf("%w: 통합 worktree 정리 중 또는 이미 정리됨", ErrWorkConflict)
+		}
+		for _, part := range rs.room.Work.Parts {
+			if sameWorktreePath(opts.Workspace, part.Worktree) {
+				if part.WorktreeRemoved {
+					return nil, opts, removedWorktreeError(part)
+				}
+				if part.State == "merged" && rs.workBusy[busyCleanup] {
+					return nil, opts, fmt.Errorf("%w: 파트 %s worktree 정리 중", ErrWorkConflict, part.ID)
+				}
+			}
+		}
+	}
 	prov := h.reg.Get(provider)
 	if prov == nil {
 		return nil, opts, fmt.Errorf("알 수 없는 공급자: %s", provider)
 	}
-	if h.nativeSessions[nativeSessionKey(provider, opts.SessionID)] {
+	if _, open := h.nativeSessions[nativeSessionKey(provider, opts.SessionID)]; open {
 		return nil, opts, fmt.Errorf("이 세션의 CLI 창이 이미 열려 있어. 창을 닫은 뒤 다시 시도해")
 	}
 	for _, state := range h.rooms {
@@ -128,7 +148,7 @@ func (h *Hub) DetachNativeSession(roomID, seatID, messageID string) (agent.Provi
 		rs.dropQueuedFor(h, seatID)
 		rs.broadcast("room", rs.room)
 	}
-	h.nativeSessions[nativeSessionKey(prov.ID(), opts.SessionID)] = true
+	h.nativeSessions[nativeSessionKey(prov.ID(), opts.SessionID)] = opts.Workspace
 	h.pump(rs)
 	return prov, opts, paused, nil
 }
@@ -138,5 +158,18 @@ func (h *Hub) DetachNativeSession(roomID, seatID, messageID string) (agent.Provi
 func (h *Hub) ReleaseNativeSession(providerID, sessionID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	delete(h.nativeSessions, nativeSessionKey(providerID, sessionID))
+	key := nativeSessionKey(providerID, sessionID)
+	dir, ok := h.nativeSessions[key]
+	delete(h.nativeSessions, key)
+	if !ok {
+		return
+	}
+	for _, rs := range h.rooms {
+		for _, target := range h.worktreeCleanupTargets(rs) {
+			if sameWorktreePath(dir, target.path) {
+				h.startWorktreeCleanup(rs)
+				break
+			}
+		}
+	}
 }
