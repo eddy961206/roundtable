@@ -11,8 +11,8 @@ import { closeDiffDrawer } from "./work.js";
 import { loadRooms, renderRoomHead, renderRoomList } from "./rooms.js";
 import { getAgentElapsedMs, renderParticipants } from "./participants.js";
 import { ensureAndRenderTrace, expandTrace } from "./trace.js";
-import { bindTimeline, jumpToLatestMessages, renderTimeline, scrollToTimelineBottom } from "./timeline.js";
-import { connect, openRoom, schedulePanels } from "./room.js";
+import { bindTimeline, focusTimelineMessage, jumpToLatestMessages, onTimelineImageLoad, renderMessage, renderTimeline, scheduleRender, scrollToTimelineBottom, syncPendingScrollRestore } from "./timeline.js";
+import { connect, openRoom, schedulePanels, upsertRequest } from "./room.js";
 import { addPartRow, addSeatSpec, addVerifyRow, onRoomSubmit, onWorkPlanSubmit, openRoomDialog, openWorkPlanDialog, readSeatSpecs } from "./dialogs.js";
 
 // ---------- boot ----------

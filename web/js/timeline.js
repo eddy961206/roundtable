@@ -47,7 +47,7 @@ function restoreTimelineScrollTop(targetTop) {
   }
 }
 
-function syncPendingScrollRestore() {
+export function syncPendingScrollRestore() {
   if (pendingRestoreScrollTop === null) return;
   if (state.stickToBottom) {
     pendingRestoreScrollTop = null;
@@ -69,7 +69,7 @@ function syncPendingScrollRestore() {
   }
 }
 
-function onTimelineImageLoad(ev) {
+export function onTimelineImageLoad(ev) {
   const target = ev && ev.target;
   if (!target || target.tagName !== "IMG") return;
   const tl = $("#timeline");
@@ -100,7 +100,7 @@ function onTimelineImageLoad(ev) {
   }
 }
 
-async function focusTimelineMessage(msgId) {
+export async function focusTimelineMessage(msgId) {
   if (!msgId || !state.roomId) return;
   const roomId = state.roomId;
   closeDrawers();

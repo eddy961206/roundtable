@@ -327,7 +327,7 @@ function upsertMessage(m) {
   }
 }
 
-function upsertRequest(req) {
+export function upsertRequest(req) {
   if (!req || !req.id) return;
   if (activeSyncUpdatedReqIds) activeSyncUpdatedReqIds.add(req.id);
   state.requests.set(req.id, req);

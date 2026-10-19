@@ -604,8 +604,8 @@ export function renderWork() {
 
     const btnDiff = el("button", "ghost", "Diff 보기");
     btnDiff.type = "button";
-    btnDiff.disabled = !!part.worktree_removed;
-    btnDiff.title = part.worktree_removed ? "작업 폴더가 정리되어 Diff를 조회할 수 없습니다" : "이 파트의 변경 파일 목록과 패치를 서랍에서 봅니다";
+    // Diff reads the repository by SHA, so it stays available after the worktree is cleaned up.
+    btnDiff.title = "이 파트의 변경 파일 목록과 패치를 서랍에서 봅니다";
     btnDiff.onclick = () => openDiffDrawer(part.id);
     actions.appendChild(btnDiff);
 
