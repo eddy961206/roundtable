@@ -33,6 +33,8 @@ func main() {
 		switch os.Args[1] {
 		case "mcp":
 			os.Exit(runMCP(os.Args[2:]))
+		case "rt":
+			os.Exit(runRT(os.Args[2:]))
 		case agyhook.Marker:
 			os.Exit(runAgyStatusline(os.Args[2:]))
 		case "agy-hook":
@@ -153,6 +155,23 @@ func runMCP(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// runRT is the shell form of the MCP tools for agents without MCP registration.
+func runRT(args []string) int {
+	fs := flag.NewFlagSet("rt", flag.ContinueOnError)
+	url := fs.String("url", "http://127.0.0.1:8787", "Roundtable HTTP URL (loopback only)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	s, err := rtmcp.New(*url, false)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return s.RunCLI(ctx, fs.Args(), os.Stdin, os.Stdout, os.Stderr)
 }
 
 func openBrowser(url string) {

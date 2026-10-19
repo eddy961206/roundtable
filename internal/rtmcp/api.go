@@ -109,13 +109,17 @@ func (s *Server) snapshot(ctx context.Context, room string, before int64, limit 
 	return &p, nil
 }
 
-func (s *Server) listRooms(ctx context.Context) (any, error) {
+// listRooms keeps the server's newest-first order; limit 0 means every room.
+func (s *Server) listRooms(ctx context.Context, limit int) (any, error) {
 	var rooms []struct {
 		ID     string `json:"id"`
 		Active bool   `json:"active"`
 	}
 	if err := s.api(ctx, "GET", "/api/rooms", nil, &rooms); err != nil {
 		return nil, err
+	}
+	if limit > 0 && len(rooms) > limit {
+		rooms = rooms[:limit]
 	}
 	rows := make([]any, 0, len(rooms))
 	for _, room := range rooms {

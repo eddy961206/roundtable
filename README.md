@@ -51,6 +51,21 @@ go build -o roundtable.exe ./cmd/roundtable
 
 `rt_read`는 `after_seq` 이후 메시지를 오래된 순으로 반환한다. `max_chars`는 본문 합계의 Unicode 문자 수이며 기본값은 20000이다. 초과하면 오래된 본문부터 줄여 최신 내용을 보존하고, 전체와 해당 메시지에 `truncated:true`, 전체에 `omitted_chars`를 표시한다. 작성자·역할·상태·seq는 유지한다. 이어 읽기는 `next_seq`를 사용하되, 시간 초과 시 아직 `streaming`인 메시지는 같은 `after_seq`로 다시 조회해야 갱신된 본문을 볼 수 있다. `rt_discuss`의 `blind_first`를 생략하면 방 설정을 따른다. 결정 카드 조회에는 계약 C의 HTTP API가 필요하며 API 오류를 빈 목록으로 바꾸지 않는다.
 
+#### MCP 없이 셸로 쓰기: `roundtable rt`
+
+MCP를 등록하지 않은 에이전트도 셸만 있으면 같은 도구를 쓸 수 있다. 명령 이름은 MCP 도구에서 `rt_`를 뺀 것이고, 인자 이름·검증·결과도 MCP와 같다. MCP는 도구 설명이 매 턴 문맥에 들어가지만, 셸 명령은 에이전트가 필요할 때 `help`만 읽으므로 평소 문맥 비용이 없다.
+
+```
+roundtable rt help                                   # 명령 목록
+roundtable rt post --help                            # 명령별 인자
+roundtable rt list_rooms --limit 5                   # 최근 갱신순 5개
+roundtable rt post --room <방ID> --text "검토해 줘" --wait_seconds 300
+cat 긴_설명.md | roundtable rt post --room <방ID> --text -   # 값 - 는 stdin에서 읽음
+roundtable rt read --room <방ID> --after_seq 12
+```
+
+결과는 stdout에 한 줄 JSON으로 나온다. 실패하면 사유를 stderr에 쓰고, 검증·실행 실패는 종료 코드 1, 명령 형식 오류는 2를 돌려준다. 정수는 `--rounds 2`, 참·거짓은 `--blind_first false`, 배열은 JSON(`--participants '[{"provider":"agy"}]'`)으로 쓴다. 다른 서버는 `roundtable rt --url http://127.0.0.1:8791 ...`로 지정한다(loopback만 허용). 에이전트에게 사용법을 알려 줄 때는 [skills/roundtable/SKILL.md](skills/roundtable/SKILL.md)를 스킬로 설치하거나 지침에 붙인다.
+
 등록 명령은 각 CLI의 `mcp add --help`와 [Codex 공식 MCP 문서](https://developers.openai.com/codex/mcp)를 기준으로 확인했다. stdio는 기존 `gitea-mcp`와 같은 줄 단위 JSON-RPC이며 [MCP stdio 규격](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#stdio)을 따른다.
 
 ### 여러 모델을 함께 쓰기
