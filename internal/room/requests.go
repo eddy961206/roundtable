@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"roundtable/internal/agent"
 )
@@ -96,7 +97,7 @@ func (h *Hub) CancelRequest(roomID, id string) (Request, error) {
 		}
 	}
 	for _, m := range rs.msgs {
-		if m.ID == next.SourceMsg && slices.Contains(ParseParticipantMentions(ordinaryMentionText(m.Text), rs.room.Participants), next.To) {
+		if m.ID == next.SourceMsg && slices.Contains(m.mentionIDs(rs.room.Participants), next.To) {
 			keepTurn = true
 		}
 	}
@@ -297,8 +298,14 @@ func markerBrief(mode string) string {
 // requestTarget resolves a request recipient by seat ID, or by a display label
 // that names exactly one active seat. why explains a failed lookup.
 func (rs *roomState) requestTarget(name string) (*Participant, string) {
-	if p := rs.room.participant(name); p != nil && p.Enabled && !p.Removed {
+	if p := rs.room.participant(name); p != nil {
+		if !p.Enabled || p.Removed {
+			return nil, "@" + name + "는 비활성 또는 삭제된 좌석"
+		}
 		return p, ""
+	}
+	if strings.IndexFunc(name, unicode.IsSpace) >= 0 {
+		return nil, "공백이 있는 이름은 요청 대상으로 사용할 수 없음 · @좌석ID를 사용하세요"
 	}
 	var hits []*Participant
 	for _, p := range rs.room.enabled() {

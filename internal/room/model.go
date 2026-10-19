@@ -76,6 +76,7 @@ type Message struct {
 	NoticeDelivered  bool           `json:"notice_delivered,omitempty"`
 	Attachments      []Attachment   `json:"attachments,omitempty"`
 	Requests         []string       `json:"requests,omitempty"`
+	Mentions         *[]string      `json:"mentions,omitempty"` // nil: legacy; empty list: resolved without ordinary mentions
 	ID               string         `json:"id"`
 	Seq              int64          `json:"seq"`
 	TS               int64          `json:"ts"`

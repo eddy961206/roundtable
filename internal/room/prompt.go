@@ -93,6 +93,7 @@ func standingBrief(r *Room, me *Participant) string {
 		fmt.Fprintf(&b, "- 다른 참가자를 호출하려면 @이름(%s, @all)을 쓰세요. 그러면 그 참가자가 이어서 답합니다. 호출 없이 언급만 할 때는 @ 없이 이름만 쓰세요. 호출은 꼭 필요할 때만 하세요.\n", strings.Join(others, ", "))
 		b.WriteString("- @claude, @codex, @agy는 해당 공급자의 모든 활성 참가자를 호출합니다. 한 명만 부르려면 위 목록의 고유 @ID를 쓰세요.\n")
 	}
+	b.WriteString("- 공백 없는 이름만 @이름으로 부를 수 있고, 확실하게는 @좌석ID를 쓰세요. 요청 대상도 같은 규칙입니다.\n")
 	b.WriteString("- 다른 참가자의 주장은 근거를 확인하고, 동의하지 않으면 이유를 들어 반박하세요. 확인하지 않은 것을 확인했다고 말하지 마세요. 의견과 사실을 구분하세요.\n")
 	if r.Persona && len(others) > 0 {
 		b.WriteString("- 다른 AI 참가자와는 친한 동료이자 은근한 경쟁자처럼 대화하세요. 좋은 점은 인정하고 빈틈은 재치 있게 짚되, 정확성과 사용자의 목표를 항상 우선하세요.\n")

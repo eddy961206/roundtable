@@ -696,6 +696,8 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 	m := rs.nextMessage("user", "user", text)
 	m.Attachments = attachments
 	m.Target = target
+	mentioned := append([]string{}, ParseParticipantMentions(text, rs.room.Participants)...)
+	m.Mentions = &mentioned
 	if err := h.store.AppendMessage(id, m); err != nil {
 		rs.msgs = rs.msgs[:len(rs.msgs)-1]
 		return nil, err
@@ -725,7 +727,6 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 	rs.broadcast("message", m)
 	_ = h.store.SaveRoom(rs.room)
 	ids := h.enabledIDs(rs)
-	mentioned := ParseParticipantMentions(text, rs.room.Participants)
 	var targets []string
 	for _, id := range mentioned {
 		if slices.Contains(ids, id) {
@@ -1261,6 +1262,8 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		}
 	}
 	msg.Text = text
+	mentions := append([]string{}, ParseParticipantMentions(ordinaryMentionText(text), rs.room.Participants)...)
+	msg.Mentions = &mentions
 	switch {
 	case tracePersistenceError != nil:
 		msg.Status, msg.Error = "error", fmt.Sprintf("실행 기록 저장 실패: %v", tracePersistenceError)
@@ -1437,13 +1440,12 @@ func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, part
 }
 
 func (h *Hub) chainMentions(rs *roomState, msg *Message, t *Turn) {
-	var others []*Participant
-	for _, p := range rs.room.enabled() {
-		if p.ID != msg.Author {
-			others = append(others, p)
+	var targets []string
+	for _, id := range msg.mentionIDs(rs.room.Participants) {
+		if p := rs.room.participant(id); p != nil && p.Enabled && !p.Removed && p.ID != msg.Author {
+			targets = append(targets, id)
 		}
 	}
-	targets := ParseParticipantMentions(ordinaryMentionText(msg.Text), others)
 	for _, id := range msg.Requests {
 		if r := rs.request(id); r != nil && r.Status == "pending" && !slices.Contains(targets, r.To) {
 			targets = append(targets, r.To)
