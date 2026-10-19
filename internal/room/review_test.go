@@ -8,12 +8,12 @@ import (
 	"unicode/utf8"
 )
 
-const findingHeader = "[지적]\n| 번호 | 심각도 | 파일:줄 | 재현 시나리오 | 확신도 |\n| --- | --- | --- | --- | --- |\n"
+const findingHeader = "| 번호 | 심각도 | 파일:줄 | 재현 시나리오 | 확신도 |\n| --- | --- | --- | --- | --- |\n"
 const findingOne = "| 1 | high | head:src/example.go:42 | 조건에서 잘못된 결과 | high |\n"
 const findingTwo = "| 2 | low | base:src/deleted.go:3 | 삭제된 검증이 필요함 | medium |\n"
-const authorHeader = "[작성자 응답]\n| 번호 | 응답 | 근거 |\n| --- | --- | --- |\n"
-const rebuttalHeader = "[반박 검토]\n| 번호 | 판정 | 근거 |\n| --- | --- | --- |\n"
-const recheckHeader = "[수정 확인]\n| 번호 | 확인 | 근거 |\n| --- | --- | --- |\n"
+const authorHeader = "| 번호 | 응답 | 근거 |\n| --- | --- | --- |\n"
+const rebuttalHeader = "| 번호 | 판정 | 근거 |\n| --- | --- | --- |\n"
+const recheckHeader = "| 번호 | 확인 | 근거 |\n| --- | --- | --- |\n"
 
 func protocolInput(head string) ReviewInput {
 	return ReviewInput{
@@ -93,23 +93,26 @@ func TestReviewFindingsParsing(t *testing.T) {
 
 func TestReviewFindingErrorsAreAtomic(t *testing.T) {
 	cases := map[string]string{
-		"empty": "", "whitespace": " \n\t", "missing label": strings.TrimPrefix(findingHeader, "[지적]\n"),
-		"duplicate":       findingHeader + findingOne + findingOne,
-		"gap":             findingHeader + findingOne + strings.Replace(findingTwo, "| 2 |", "| 3 |", 1),
-		"zero":            findingHeader + strings.Replace(findingOne, "| 1 |", "| 0 |", 1),
-		"server id":       findingHeader + strings.Replace(findingOne, "| 1 |", "| r1-1 |", 1),
-		"leading zero":    findingHeader + strings.Replace(findingOne, "| 1 |", "| 01 |", 1),
-		"severity":        findingHeader + strings.Replace(findingOne, "high", "urgent", 1),
-		"confidence":      findingHeader + strings.Replace(findingOne, "| high |\n", "| certain |\n", 1),
-		"blank scenario":  findingHeader + strings.Replace(findingOne, "조건에서 잘못된 결과", " ", 1),
-		"unescaped pipe":  findingHeader + strings.Replace(findingOne, "조건에서 잘못된 결과", "조건 | 결과", 1),
-		"multiline cell":  findingHeader + strings.Replace(findingOne, "조건에서 잘못된 결과", "조건\n결과", 1),
-		"wrong header":    strings.Replace(findingHeader, "심각도", "중요도", 1),
-		"bad separator":   strings.Replace(findingHeader, "---", "--", 1),
-		"extra text":      findingHeader + "문제 없음",
-		"code fence":      "```\n" + findingHeader + "```",
-		"extra table":     findingHeader + findingHeader,
-		"no closing pipe": findingHeader + strings.TrimSuffix(findingOne, "|\n"),
+		"empty": "", "whitespace": " \n\t", "prose only": "지적 없음",
+		"duplicate":         findingHeader + findingOne + findingOne,
+		"gap":               findingHeader + findingOne + strings.Replace(findingTwo, "| 2 |", "| 3 |", 1),
+		"zero":              findingHeader + strings.Replace(findingOne, "| 1 |", "| 0 |", 1),
+		"server id":         findingHeader + strings.Replace(findingOne, "| 1 |", "| r1-1 |", 1),
+		"leading zero":      findingHeader + strings.Replace(findingOne, "| 1 |", "| 01 |", 1),
+		"severity":          findingHeader + strings.Replace(findingOne, "high", "urgent", 1),
+		"confidence":        findingHeader + strings.Replace(findingOne, "| high |\n", "| certain |\n", 1),
+		"blank scenario":    findingHeader + strings.Replace(findingOne, "조건에서 잘못된 결과", " ", 1),
+		"unescaped pipe":    findingHeader + strings.Replace(findingOne, "조건에서 잘못된 결과", "조건 | 결과", 1),
+		"multiline cell":    findingHeader + strings.Replace(findingOne, "조건에서 잘못된 결과", "조건\n결과", 1),
+		"wrong header":      strings.Replace(findingHeader, "심각도", "중요도", 1),
+		"bad separator":     strings.Replace(findingHeader, "---", "--", 1),
+		"unexpected table":  findingHeader + "\n설명\n| 이름 | 값 |\n| --- | --- |\n",
+		"wrong stage table": findingHeader + authorHeader,
+		"missing separator": strings.Split(findingHeader, "\n")[0],
+		"reordered header":  strings.Replace(findingHeader, "심각도 | 파일:줄", "파일:줄 | 심각도", 1),
+		"extra table":       findingHeader + findingHeader,
+		"no closing pipe":   findingHeader + strings.TrimSuffix(findingOne, "|\n"),
+		"no opening pipe":   findingHeader + strings.TrimPrefix(findingOne, "|"),
 	}
 	for _, location := range []string{"src/example.go:42", "other:src/example.go:42", "head:../secret:1", "head:/root/file:1", "head:C:/file:1", `head:src\file:1`, "head:src/../file:1", "head:.:1", "head:src/file:0", "head:src/file:-1", "head:src/file:01", "head:src/file:999999999999999999999999"} {
 		cases[location] = findingHeader + strings.Replace(findingOne, "head:src/example.go:42", location, 1)
@@ -160,7 +163,7 @@ func TestReviewRebuttal(t *testing.T) {
 
 func TestReviewActionErrorsAreAtomic(t *testing.T) {
 	for _, phase := range []string{"author_reply", "rebuttal", "recheck"} {
-		for _, fault := range []string{"empty", "missing", "duplicate", "unknown", "enum", "blank reason", "wrong section", "late finding error"} {
+		for _, fault := range []string{"empty", "missing", "duplicate", "unknown", "enum", "blank reason", "wrong header", "duplicate table", "unexpected table"} {
 			t.Run(phase+"/"+fault, func(t *testing.T) {
 				rs := startedReview(t, 3)
 				applyReview(t, rs, findingHeader+findingOne+findingTwo, "author_reply", "")
@@ -192,10 +195,12 @@ func TestReviewActionErrorsAreAtomic(t *testing.T) {
 					reply = header + first + strings.Replace(second, action, "YES", 1) + suffix
 				case "blank reason":
 					reply = header + first + strings.Replace(second, "확인", "", 1) + suffix
-				case "wrong section":
+				case "wrong header":
 					reply = findingHeader + first + second + suffix
-				case "late finding error":
-					reply += "잘못된 응답"
+				case "duplicate table":
+					reply += "\n설명\n" + header
+				case "unexpected table":
+					reply += "\n설명\n| 이름 | 값 |\n| --- | --- |\n"
 				}
 				assertReviewErrorUnchanged(t, rs, reply)
 			})
@@ -303,7 +308,7 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{in.Goal, in.Brief, "src/", "base-commit", "head-one", "src/last.go", "diff 잘림: true", "worktree에서 파일을 직접 읽을 수", "[지적]", "대화 이력은 제공하지 않는다"} {
+	for _, text := range []string{in.Goal, in.Brief, "src/", "base-commit", "head-one", "src/last.go", "diff 잘림: true", "worktree에서 파일을 직접 읽을 수", findingHeader, "대화 이력은 제공하지 않는다", "표 밖 설명은 무시됨"} {
 		if !strings.Contains(step.Prompt, text) {
 			t.Errorf("missing prompt text %q", text)
 		}
@@ -319,7 +324,7 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 		t.Fatal("caller mutated retained input or pending step")
 	}
 	applyReview(t, rs, authorHeader+"| r1-1 | REJECT | 호출자 검사 확인 |\n", "rebuttal", "")
-	for _, text := range []string{"[반박 검토]", "MAINTAIN", "WITHDRAW", "r1-1", "호출자 검사 확인", in.Goal, "head-one"} {
+	for _, text := range []string{rebuttalHeader, "MAINTAIN", "WITHDRAW", "r1-1", "호출자 검사 확인", in.Goal, "head-one"} {
 		if !strings.Contains(rs.Pending.Prompt, text) {
 			t.Errorf("missing rebuttal context %q", text)
 		}
@@ -333,6 +338,48 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	applyReview(t, &restored, rebuttalHeader+"| r1-1 | WITHDRAW | 확인 |\n", "", "passed")
+}
+
+func TestReviewTablesWithoutLabelsAndWithProse(t *testing.T) {
+	for name, reply := range map[string]string{
+		"bare table":             findingHeader,
+		"observed CLI reply":     "참조 SHA와 두 파일을 읽어서 확인할게. 코드는 수정하거나 테스트를 실행하지 않을게.\n\n\n" + findingHeader,
+		"prose before and after": "파일을 확인했어.\n" + findingHeader + "추가 지적은 없어.",
+		"fenced table":           "```\n" + findingHeader + "```",
+	} {
+		t.Run(name, func(t *testing.T) {
+			applyReview(t, startedReview(t, 3), reply, "", "passed")
+		})
+	}
+	rs := startedReview(t, 3)
+	applyReview(t, rs, "지적할 항목이 있어.\n"+findingHeader+findingOne+"코드 확인을 마쳤어.", "author_reply", "")
+	applyReview(t, rs, "호출 경로를 확인했어.\n"+authorHeader+"| r1-1 | REJECT | 기존 검증 있음 |\n"+"근거를 표에 적었어.", "rebuttal", "")
+	applyReview(t, rs, "반박을 확인했어.\n"+rebuttalHeader+"| r1-1 | WITHDRAW | 기존 검증 확인 |\n"+"지적을 철회해.", "", "passed")
+}
+
+func TestReviewRecheckTableOrderAndPresence(t *testing.T) {
+	recheck := recheckHeader + "| r1-1 | FIXED | 수정 확인 |\n"
+	for _, reverse := range []bool{false, true} {
+		for _, separator := range []string{"", "\n", "\n수정과 새 지적을 각각 확인했어.\n"} {
+			rs := startedReview(t, 3)
+			applyReview(t, rs, findingHeader+findingOne, "author_reply", "")
+			applyReview(t, rs, authorHeader+"| r1-1 | ACCEPT | 수정 필요 |\n", "", "fix")
+			if _, err := rs.Resubmit(protocolInput("head-two")); err != nil {
+				t.Fatal(err)
+			}
+			for _, invalid := range []string{recheck, findingHeader, recheck + findingHeader + findingHeader, recheck + recheck + findingHeader} {
+				assertReviewErrorUnchanged(t, rs, invalid)
+			}
+			first, second := recheck, findingHeader+findingOne
+			if reverse {
+				first, second = second, first
+			}
+			applyReview(t, rs, "검토 결과야.\n"+first+separator+second+"검토를 마쳤어.", "author_reply", "")
+			if rs.Rounds[0].Items[0].Status != "fixed" || rs.Rounds[1].Items[0].Finding.ID != "r2-1" {
+				t.Fatal("table order changed the meaning of recheck and findings")
+			}
+		}
+	}
 }
 
 func roundTripReview(t *testing.T, rs *ReviewState) *ReviewState {
