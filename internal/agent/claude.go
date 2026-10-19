@@ -59,6 +59,9 @@ func claudeArgs(o RunOptions) []string {
 	if o.SessionID != "" {
 		args = append(args, "--resume", o.SessionID)
 	}
+	// Print mode cannot prompt for permission, so every tool that needs approval
+	// must be listed here; one --allowedTools carries the whole list.
+	var allowed []string
 	if o.MCP != nil && o.Mode != ModeChat {
 		// --strict-mcp-config (above) keeps the user's own MCP servers out; this
 		// adds only the given server and pre-approves its tools, since print mode
@@ -66,15 +69,22 @@ func claudeArgs(o RunOptions) []string {
 		cfg, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
 			o.MCP.Name: map[string]any{"type": "stdio", "command": o.MCP.Command, "args": o.MCP.Args},
 		}})
-		args = append(args, "--mcp-config", string(cfg), "--allowedTools", "mcp__"+o.MCP.Name)
+		args = append(args, "--mcp-config", string(cfg))
+		allowed = append(allowed, "mcp__"+o.MCP.Name)
 	}
 	switch o.Mode {
 	case ModeRead:
 		args = append(args, "--tools", "Read,Grep,Glob,Agent,Task,WebSearch,WebFetch", "--add-dir", o.Workspace)
 	case ModeWrite:
+		// Bash runs unsandboxed on the user's machine; the user accepted that so
+		// Claude seats can build and test like the Codex and agy seats (2026-10-19).
 		args = append(args, "--permission-mode", "acceptEdits", "--add-dir", o.Workspace)
+		allowed = append(allowed, "Bash", "PowerShell") // Claude Code on Windows runs shell commands through PowerShell
 	default:
 		args = append(args, "--tools", "")
+	}
+	if len(allowed) > 0 {
+		args = append(args, "--allowedTools", strings.Join(allowed, ","))
 	}
 	return args
 }

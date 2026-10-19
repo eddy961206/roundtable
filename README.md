@@ -98,9 +98,9 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 |---|---|---|---|
 | `chat` | `--tools ""` | `sandbox_mode=read-only`, 스크래치 폴더 | `--mode plan --sandbox` |
 | `read` (기본) | `--tools Read,Grep,Glob,Agent,Task,WebSearch,WebFetch --add-dir <ws>` | `sandbox_mode=read-only --cd <ws>` | `--mode plan --sandbox --add-dir <ws>` |
-| `write` | `--permission-mode acceptEdits --add-dir <ws>` | `sandbox_mode=workspace-write` | `--mode accept-edits --sandbox --disable-slash-commands --add-dir <ws>` |
+| `write` | `--permission-mode acceptEdits --add-dir <ws> --allowedTools Bash,PowerShell` (셸은 **샌드박스 없이** 실행됨) | `sandbox_mode=workspace-write` | `--mode accept-edits --sandbox --disable-slash-commands --add-dir <ws>` |
 
-2026-10-17의 9가지 호출에서는 read·chat의 요청 대상 파일 생성이 거절되고 write의 생성이 허용됐다. 이 관측은 모든 도구 호출·읽기 범위·서브에이전트 동작에 대한 보장은 아니다. 특히 Codex·Antigravity의 chat은 읽기 또는 계획 도구가 남아 있을 수 있다. Claude의 도구 목록과 `--add-dir`도 운영체제 수준의 파일 격리를 의미하지 않는다. Antigravity는 `--disable-slash-commands`와 `--mode plan`을 같이 주면 plan이 무시되는 것을 확인했기 때문에, 그 플래그는 write 모드에만 붙인다.
+2026-10-17의 9가지 호출에서는 read·chat의 요청 대상 파일 생성이 거절되고 write의 생성이 허용됐다. 이 관측은 모든 도구 호출·읽기 범위·서브에이전트 동작에 대한 보장은 아니다. 특히 Codex·Antigravity의 chat은 읽기 또는 계획 도구가 남아 있을 수 있다. Claude의 도구 목록과 `--add-dir`도 운영체제 수준의 파일 격리를 의미하지 않는다. Claude write 모드는 빌드·테스트를 돌릴 수 있게 셸 도구(Windows에서는 PowerShell)를 미리 허용한다. Codex·Antigravity와 달리 운영체제 샌드박스가 없으므로, 작업 폴더 밖 파일도 바꿀 수 있다는 점을 알고 써야 한다. Antigravity는 `--disable-slash-commands`와 `--mode plan`을 같이 주면 plan이 무시되는 것을 확인했기 때문에, 그 플래그는 write 모드에만 붙인다.
 
 서버는 인증 없는 로컬 도구다. loopback 클라이언트와 로컬 Host만 허용하고, 다른 웹사이트의 Origin 또는 교차 사이트 요청을 거절한다. `-addr`를 외부 주소로 열더라도 원격 클라이언트는 허용하지 않는다.
 
