@@ -5,7 +5,7 @@ import { activeParticipants, openSeq, participantLabel, state } from "./state.js
 import { updateHint } from "./composer.js";
 import { renderWork } from "./work.js";
 import { loadRooms, renderRoomHead } from "./rooms.js";
-import { catalogMessage, fillModelSelect, getEffortsForModel, refreshProviderCatalog, syncEffortSelect } from "./participants.js";
+import { buildRoleField, catalogMessage, fillModelSelect, getEffortsForModel, refreshProviderCatalog, syncEffortSelect } from "./participants.js";
 import { openRoom } from "./room.js";
 
 // ---------- Work Plan Dialog (POST /api/rooms/{id}/work) ----------
@@ -319,12 +319,19 @@ export function addSeatSpec(box, providerId = "", removable = true, seed = null)
   const label = field("이름 (선택)", el("input", "seat-label"));
   label.maxLength = 80;
   label.placeholder = "예: 설계 검토자";
+  const roleBox = el("div", "seat-role");
+  roleBox.appendChild(el("div", "role-label", "역할 (선택 · 이 관점을 먼저 깊게 본다)"));
+  row.appendChild(roleBox);
+  const selectedModel = () => (model.value === "__custom__" ? custom.value.trim() : model.value);
+  // A copied seat keeps its own (possibly empty) role; only a fresh seat gets the model suggestion.
+  const role = buildRoleField(roleBox, { initial: seed ? seed.role || "" : "", getModel: selectedModel, autoSuggest: !seed });
   const syncEffort = () => {
     const info = state.providers.find((p) => p.id === provider.value);
-    const selected = model.value === "__custom__" ? custom.value.trim() : model.value;
+    const selected = selectedModel();
     const efforts = selected ? getEffortsForModel(info, selected) : [];
     syncEffortSelect(effort, efforts, info.default_effort);
     effort.parentElement.hidden = !efforts.length;
+    role.syncSuggestion();
   };
   const syncModel = () => {
     custom.parentElement.hidden = model.value !== "__custom__";
@@ -387,6 +394,7 @@ export function readSeatSpecs(box) {
     model: $(".seat-model", row).value === "__custom__" ? $(".seat-custom-model", row).value.trim() : $(".seat-model", row).value,
     effort: $(".seat-effort", row).hidden ? "" : $(".seat-effort", row).value,
     label: $(".seat-label", row).value.trim(),
+    role: $(".role-input", row).value.trim(),
     count: Number($(".seat-count", row).value),
   }));
 }
