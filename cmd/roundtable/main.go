@@ -24,12 +24,15 @@ import (
 	"roundtable/internal/agyhook"
 	"roundtable/internal/giteamcp"
 	"roundtable/internal/room"
+	"roundtable/internal/rtmcp"
 	"roundtable/internal/server"
 )
 
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "mcp":
+			os.Exit(runMCP(os.Args[2:]))
 		case agyhook.Marker:
 			os.Exit(runAgyStatusline(os.Args[2:]))
 		case "agy-hook":
@@ -130,6 +133,26 @@ func main() {
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatal(err)
 	}
+}
+
+func runMCP(args []string) int {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	url := fs.String("url", "", "Roundtable HTTP URL (loopback only)")
+	readOnly := fs.Bool("read-only", false, "expose only read tools")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *url == "" {
+		fmt.Fprintln(os.Stderr, "사용법: roundtable mcp --url http://127.0.0.1:8787 [--read-only]")
+		return 2
+	}
+	s, err := rtmcp.New(*url, *readOnly)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if err := s.Serve(os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
 }
 
 func openBrowser(url string) {

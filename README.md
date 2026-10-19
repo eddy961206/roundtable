@@ -35,6 +35,24 @@ go build -o roundtable.exe ./cmd/roundtable
 
 옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy` `-opencode`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`, `-codex-windows-sandbox`(`elevated` | `unelevated`, 비우면 Codex 설정 유지. Windows에서 다른 프로그램이 Codex 런타임 파일을 잡고 있어 elevated 샌드박스 준비가 실패할 때 `unelevated`를 쓴다).
 
+### 에이전트에서 Roundtable 사용하기
+
+실행 중인 Roundtable HTTP 서버에 `roundtable mcp --url http://127.0.0.1:8787`로 연결한다. MCP 프로세스는 별도 방 서버를 띄우지 않고 기존 HTTP API만 호출한다. `roundtable`이 PATH에 있다는 전제의 등록 예시다.
+
+- Claude Code: `claude mcp add --transport stdio roundtable -- roundtable mcp --url http://127.0.0.1:8787`
+- Codex: `codex mcp add roundtable -- roundtable mcp --url http://127.0.0.1:8787`
+- agy: `agy mcp add roundtable roundtable mcp --url http://127.0.0.1:8787`
+
+기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_decisions`다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·요청·결정 카드 조회 4개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
+
+`rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
+
+`timed_out:true`는 대기 시간 초과이며 실행 취소가 아니다. 긴 대기를 쓸 때는 MCP 클라이언트의 도구 제한 시간도 그보다 길게 설정해야 한다. MCP의 `notifications/cancelled`는 해당 요청의 HTTP 조회와 대기만 취소한다. 클라이언트가 stdin을 닫으면 진행 중인 MCP 요청을 모두 취소하고 MCP 서버를 종료한다. 방에서 실행 중인 에이전트 턴은 취소하지 않는다. 대기 중에도 `ping`과 다른 도구 호출을 처리하며, 응답은 요청 id로 구분한다. `rt_list_rooms`는 좌석의 `enabled`와 `removed`도 반환하므로 호출 대상이 활성 상태인지 확인할 수 있다.
+
+`rt_read`는 `after_seq` 이후 메시지를 오래된 순으로 반환한다. `max_chars`는 본문 합계의 Unicode 문자 수이며 기본값은 20000이다. 초과하면 오래된 본문부터 줄여 최신 내용을 보존하고, 전체와 해당 메시지에 `truncated:true`, 전체에 `omitted_chars`를 표시한다. 작성자·역할·상태·seq는 유지한다. 이어 읽기는 `next_seq`를 사용하되, 시간 초과 시 아직 `streaming`인 메시지는 같은 `after_seq`로 다시 조회해야 갱신된 본문을 볼 수 있다. `rt_discuss`의 `blind_first`를 생략하면 방 설정을 따른다. 결정 카드 조회에는 계약 C의 HTTP API가 필요하며 API 오류를 빈 목록으로 바꾸지 않는다.
+
+등록 명령은 각 CLI의 `mcp add --help`와 [Codex 공식 MCP 문서](https://developers.openai.com/codex/mcp)를 기준으로 확인했다. stdio는 기존 `gitea-mcp`와 같은 줄 단위 JSON-RPC이며 [MCP stdio 규격](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#stdio)을 따른다.
+
 ### 여러 모델을 함께 쓰기
 
 1. **새 방**에서 공급사·모델·추론 수준·인원을 고른다. **다른 모델 구성**으로 Opus 2명, Fable 1명, GPT 2명, Gemini 2명 같은 조합을 만든다.
