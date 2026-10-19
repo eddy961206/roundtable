@@ -337,6 +337,7 @@ export function bindRoomTitleEdit() {
       btn.focus();
     } catch (err) {
       alert("방 이름을 바꾸지 못했습니다: " + err.message);
+      input.disabled = false; // a disabled input cannot take focus back
       input.focus();
     } finally {
       saving = false;
