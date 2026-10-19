@@ -103,6 +103,71 @@
     return { kind: "unsafe", url: raw };
   }
 
+  function stripWorkspacePrefix(rawPath) {
+    const norm = String(rawPath ?? "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+([a-zA-Z]:\/)/, "$1");
+    const roots = [];
+    if (state.work && Array.isArray(state.work.parts)) {
+      for (const p of state.work.parts) {
+        if (p && p.worktree) roots.push(p.worktree);
+      }
+    }
+    if (state.room && state.room.workspace) {
+      roots.push(state.room.workspace);
+    }
+    for (const root of roots) {
+      const ws = String(root)
+        .replace(/\\/g, "/")
+        .replace(/^\/+([a-zA-Z]:\/)/, "$1")
+        .replace(/\/+$/, "");
+      if (!ws) continue;
+      const normLower = norm.toLowerCase();
+      const wsLower = ws.toLowerCase();
+      if (normLower.startsWith(wsLower + "/")) {
+        return norm.slice(ws.length + 1);
+      }
+      if (normLower === wsLower) {
+        return norm.split("/").pop() || norm;
+      }
+      // Also strip sibling git worktree prefix (<workspace>-wt/<branch>/...)
+      if (normLower.startsWith(wsLower + "-wt/")) {
+        const rest = norm.slice((ws + "-wt/").length);
+        const slashIdx = rest.indexOf("/");
+        if (slashIdx >= 0 && slashIdx + 1 < rest.length) {
+          return rest.slice(slashIdx + 1);
+        }
+      }
+      const wtMatch = ws.match(/^(.*)-wt\/[^/]+$/i);
+      if (wtMatch && normLower.startsWith(wtMatch[1].toLowerCase() + "/")) {
+        return norm.slice(wtMatch[1].length + 1);
+      }
+    }
+    if (!/^[a-zA-Z]:\//.test(norm)) {
+      return norm.replace(/^\/+/, "");
+    }
+    return norm;
+  }
+
+  function formatFileHref(rawHref) {
+    let raw = String(rawHref ?? "").trim().replace(/^file:(?:\/\/(?:localhost(?=\/))?)?/i, "");
+    try {
+      raw = decodeURIComponent(raw);
+    } catch {
+      // keep raw path when percent sequence is not valid URI encoding
+    }
+    raw = raw.replace(/\\/g, "/").replace(/^\/+([a-zA-Z]:\/)/, "$1");
+    const m = raw.match(/^(.*?)(?:#L?(\d+)(?:-L?(\d+))?|:(\d+)(?:-(\d+))?)?$/i);
+    const filePath = m ? m[1] : raw;
+    const startLine = m ? m[2] || m[4] || "" : "";
+    const endLine = m ? m[3] || m[5] || "" : "";
+    const lines = startLine ? ":" + startLine + (endLine ? "-" + endLine : "") : "";
+    const relPath = stripWorkspacePrefix(filePath);
+    const pathDisplay = (relPath || filePath) + lines;
+    const fullPath = filePath + (startLine ? "#L" + startLine + (endLine ? "-L" + endLine : "") : "");
+    return { fullPath, relPath, lines, pathDisplay };
+  }
+
   if (typeof marked !== "undefined") {
     marked.use({
       gfm: true,
@@ -117,15 +182,9 @@
           const title = token && token.title != null ? String(token.title) : "";
           const check = classifyMarkdownUrl(href);
           if (check.kind === "file") {
-            // Agents cite local files as file:///abs/path#L10-L20. A browser cannot open
-            // them, and the absolute path drowns the sentence: show the agent's label
-            // (or file name + lines) and keep the full path in the tooltip.
-            const pathTxt = decodeURIComponent(href.replace(/^file:\/\/\/?/i, ""));
-            const m = pathTxt.match(/^(.*?)(?:#L(\d+)(?:-L(\d+))?)?$/);
-            const file = m[1].split(/[\\/]/).pop();
-            const lines = m[2] ? ":" + m[2] + (m[3] ? "-" + m[3] : "") : "";
-            const label = text.trim() && text.trim() !== href ? text.trim() : file + lines;
-            return '<code class="file-path" title="' + esc(pathTxt) + '">' + esc(label) + "</code>";
+            const info = formatFileHref(href);
+            const label = info.pathDisplay || text.trim() || href;
+            return '<code class="file-path" title="' + esc(info.fullPath) + '">' + esc(label) + "</code>";
           }
           if (check.kind !== "safe") {
             return esc(text || href);
@@ -200,6 +259,7 @@
     roomId: null,
     room: null,
     work: null,
+    workRevision: 0,
     partNotices: new Map(),
     partReviewOpen: new Map(),
     workBoardCollapsed: false,
@@ -640,6 +700,7 @@
       state.roomId = id;
       state.target = "";
       state.work = null;
+      state.workRevision = 0;
       state.partNotices.clear();
       state.partReviewOpen.clear();
       state.workBoardCollapsed = false;
@@ -652,6 +713,7 @@
       const pbox = $("#participants");
       if (pbox) pbox.innerHTML = "";
     }
+    const workRev = state.workRevision;
     const snap = await api("GET", "/api/rooms/" + id + (preserveHistory ? "?before=" + before + "&limit=200" : ""));
     if (my !== openSeq || state.roomId !== id) return;
 
@@ -673,7 +735,10 @@
       if (m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim()) seedLive(id, m.id);
     }
     state.room = snap.room;
-    state.work = snap.work;
+    if (state.workRevision === workRev) {
+      state.workRevision++;
+      state.work = snap.work;
+    }
     state.history = snap.history;
     state.browsingHistory = preserveHistory;
     state.historyLoading = false;
@@ -812,6 +877,7 @@
         break;
       case "work":
         state.roomStateRevision++;
+        state.workRevision++;
         state.work = data;
         renderRoomHead();
         renderWork();
@@ -2630,12 +2696,16 @@
     if (!state.roomId || !state.work) return;
     const roomId = state.roomId;
     const sequence = openSeq;
+    const workRev = state.workRevision;
     if (btn) btn.disabled = true;
     try {
       const updated = await api("PATCH", "/api/rooms/" + roomId + "/work", { merge_mode: nextMode });
       if (state.roomId !== roomId || openSeq !== sequence) return;
-      if (updated && updated.merge_mode) state.work = updated;
-      else state.work.merge_mode = nextMode;
+      if (state.workRevision === workRev && state.work) {
+        state.workRevision++;
+        if (updated && updated.merge_mode) state.work = updated;
+        else state.work.merge_mode = nextMode;
+      }
       renderWorkHeadBar();
       renderWork();
       announce("병합 모드를 " + (nextMode === "auto" ? "자동(auto)" : "확인(confirm)") + "으로 변경했습니다.");
@@ -2801,6 +2871,7 @@
     if (!state.roomId || !state.work) return;
     const roomId = state.roomId;
     const sequence = openSeq;
+    const workRev = state.workRevision;
     const url = "/api/rooms/" + roomId + "/work/parts/" + encodeURIComponent(part.id) + "/" + action;
     const body =
       action === "approve"
@@ -2814,7 +2885,8 @@
     try {
       const res = await api("POST", url, body);
       if (state.roomId !== roomId || openSeq !== sequence) return;
-      if (res && res.parts) {
+      if (state.workRevision === workRev && res && res.parts) {
+        state.workRevision++;
         state.work = res;
       }
       renderWorkHeadBar();
@@ -2822,7 +2894,7 @@
       announce(part.id + " 파트 " + action + " 요청 완료");
     } catch (err) {
       if (state.roomId !== roomId || openSeq !== sequence) return;
-      if (action === "approve" && err.status === 409) {
+      if ((action === "approve" || action === "resolve") && err.status === 409) {
         state.partNotices.set(part.id, "변경됨, 다시 확인");
         announce("변경됨, 다시 확인");
         delete $("#work-board").dataset.sig;
@@ -2846,10 +2918,23 @@
     };
 
     const totalItems = rev.rounds.reduce((acc, r) => acc + (r.items ? r.items.length : 0), 0);
+    const ovSuffix = rev.resolution
+      ? " · 사람 판정으로 통과 · " + rev.resolution.item_ids.length + "건"
+      : "";
     const sum = el(
       "summary",
       "",
-      "교차 리뷰 상세 (" + rev.rounds.length + " / " + rev.max_rounds + " 라운드 · 총 지적 " + totalItems + "건 · 미해결 " + rev.summary.unresolved + "건)"
+      "교차 리뷰 상세 (" +
+        rev.rounds.length +
+        " / " +
+        rev.max_rounds +
+        " 라운드 · 총 지적 " +
+        totalItems +
+        "건 · 미해결 " +
+        rev.summary.unresolved +
+        "건" +
+        ovSuffix +
+        ")"
     );
     det.appendChild(sum);
 
@@ -3016,6 +3101,15 @@
       }
       top.appendChild(titleGroup);
 
+      const rev = part.review;
+      const unresolved = rev && rev.summary ? rev.summary.unresolved : 0;
+      const isReviewEscalated =
+        part.state === "blocked" &&
+        !!part.block &&
+        part.block.kind === "review" &&
+        !!rev &&
+        (rev.phase === "disputed" || rev.phase === "limit");
+
       const actions = el("div", "part-actions");
       const btnSubmit = el("button", "", part.state === "fixing" ? "재제출" : "제출");
       btnSubmit.type = "button";
@@ -3036,12 +3130,25 @@
       btnApprove.onclick = () => partAction(part, "approve", btnApprove);
       actions.appendChild(btnApprove);
 
-      const btnRetry = el("button", "", "재시도");
+      const btnRetry = el("button", "", isReviewEscalated ? "라운드 1회 추가 후 수정" : "재시도");
       btnRetry.type = "button";
       btnRetry.disabled = part.state !== "blocked";
-      btnRetry.title = "차단(blocked)을 해제하고 이전 상태에서 다시 시도합니다";
+      btnRetry.title = isReviewEscalated
+        ? "작성자가 고쳐 다시 제출하면 재리뷰합니다"
+        : "차단(blocked)을 해제하고 이전 상태에서 다시 시도합니다";
       btnRetry.onclick = () => partAction(part, "retry", btnRetry);
       actions.appendChild(btnRetry);
+
+      if (isReviewEscalated) {
+        const btnResolve = el("button", "primary", "사람 판정");
+        btnResolve.type = "button";
+        btnResolve.title = "미해결 " + unresolved + "건을 넘기고 병합 대기열로 보냅니다";
+        btnResolve.onclick = () => {
+          if (!confirm("미해결 " + unresolved + "건을 넘기고 병합 대기열로 보냅니다")) return;
+          partAction(part, "resolve", btnResolve);
+        };
+        actions.appendChild(btnResolve);
+      }
 
       const btnAbandon = el("button", "danger ghost", "포기");
       btnAbandon.type = "button";
@@ -3074,16 +3181,23 @@
       );
       meta.appendChild(reviewerChip);
 
-      const rev = part.review;
       const curRound = rev && rev.rounds && rev.rounds.length ? rev.rounds[rev.rounds.length - 1].ref.round : 0;
       const maxRounds = rev && rev.max_rounds ? rev.max_rounds : w.review_rounds;
-      const unresolved = rev && rev.summary ? rev.summary.unresolved : 0;
       const revBadgeCls =
         "badge review-summary-badge" +
-        (unresolved > 0 ? " warn" : rev && rev.summary && rev.summary.passed ? " ok" : "");
-      meta.appendChild(
-        el("span", revBadgeCls, "리뷰 " + curRound + "/" + maxRounds + "R · 미해결 " + unresolved + "건")
-      );
+        (unresolved > 0 && !(rev && rev.resolution) ? " warn" : rev && ((rev.summary && rev.summary.passed) || rev.resolution) ? " ok" : "");
+      const revSummaryTxt =
+        "리뷰 " +
+        curRound +
+        "/" +
+        maxRounds +
+        "R · 미해결 " +
+        unresolved +
+        "건" +
+        (rev && rev.resolution
+          ? " · 사람 판정으로 통과 · " + rev.resolution.item_ids.length + "건"
+          : "");
+      meta.appendChild(el("span", revBadgeCls, revSummaryTxt));
       if (rev && rev.phase) {
         meta.appendChild(el("span", "badge", "단계: " + rev.phase));
       }
@@ -3351,10 +3465,11 @@
     nameLabel.appendChild(nameInput);
     row.appendChild(nameLabel);
 
-    const argvLabel = el("label", "verify-argv-label", "실행 인자 (argv, 공백 구분)");
-    const argvInput = el("input", "verify-argv mono");
-    argvInput.placeholder = "예: go test ./...";
-    if (initial && initial.argv) argvInput.value = initial.argv.join(" ");
+    const argvLabel = el("label", "verify-argv-label", "실행 인자 (argv, 한 줄에 인자 1개)");
+    const argvInput = el("textarea", "verify-argv mono");
+    argvInput.rows = 3;
+    argvInput.placeholder = "예:\ngo\ntest\n./...";
+    if (initial && Array.isArray(initial.argv)) argvInput.value = initial.argv.join("\n");
     argvLabel.appendChild(argvInput);
     row.appendChild(argvLabel);
 
@@ -3488,15 +3603,15 @@
     const verify = [];
     for (const row of $$(".work-verify-row", $("#work-verify-rows"))) {
       const name = $(".verify-name", row).value.trim();
-      const argvRaw = $(".verify-argv", row).value.trim();
+      const argvRaw = $(".verify-argv", row).value.replace(/\r\n/g, "\n");
       const timeout_sec = Number($(".verify-timeout", row).value);
-      if (!name && !argvRaw) continue;
-      if (!name || !argvRaw) {
+      if (!name && argvRaw === "") continue;
+      if (!name || argvRaw === "") {
         return showErr("검증 명령의 이름과 실행 인자(argv)를 모두 입력하세요.");
       }
-      const argv = argvRaw.split(/\s+/).filter(Boolean);
-      if (!argv.length) {
-        return showErr("검증 명령의 실행 인자(argv)를 입력하세요.");
+      const argv = argvRaw.split("\n");
+      if (!argv[0].trim()) {
+        return showErr("검증 명령의 첫 번째 인자(실행 파일)는 비워둘 수 없습니다.");
       }
       if (!Number.isFinite(timeout_sec) || timeout_sec < 1) {
         return showErr("검증 명령 제한 시간은 1초 이상이어야 합니다.");
@@ -3540,6 +3655,7 @@
 
     const roomId = state.roomId;
     const sequence = openSeq;
+    const workRev = state.workRevision;
     submitBtn.disabled = true;
     try {
       const plan = await api("POST", "/api/rooms/" + roomId + "/work", {
@@ -3550,7 +3666,10 @@
         parts,
       });
       if (state.roomId !== roomId || openSeq !== sequence) return;
-      state.work = plan;
+      if (state.workRevision === workRev) {
+        state.workRevision++;
+        state.work = plan;
+      }
       state.workBoardCollapsed = false;
       $("#dlg-work").close();
       renderRoomHead();
