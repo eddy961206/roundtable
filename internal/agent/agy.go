@@ -126,6 +126,9 @@ func agyArgs(o RunOptions) []string {
 	if o.Timeout > 0 {
 		args = append(args, "--print-timeout", fmt.Sprintf("%ds", int(o.Timeout.Seconds())))
 	}
+	for _, d := range o.ExtraDirs {
+		args = append(args, "--add-dir", d)
+	}
 	switch o.Mode {
 	case ModeRead:
 		args = append(args, "--mode", "plan", "--add-dir", o.Workspace)
@@ -169,6 +172,18 @@ func (a *Agy) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, 
 		return Result{}, fmt.Errorf("agy CLI를 찾지 못함: %w", err)
 	}
 	started := time.Now()
+	// agy only takes the prompt as a command-line argument (Windows caps the whole
+	// line near 32K). Cutting the middle silently dropped other participants'
+	// answers, so a long turn is handed over as a file the agent must read first.
+	if escapedLen(o.Prompt) > agyPromptLimit {
+		file, cleanup, err := writeAgyPromptFile(o)
+		if err != nil {
+			return Result{}, err
+		}
+		defer cleanup()
+		o.Prompt = agyFilePointer(file, len(o.Prompt))
+		o.ExtraDirs = append(o.ExtraDirs, filepath.Dir(file))
+	}
 	cmd := exec.Command(path, agyArgs(o)...)
 	cmd.Dir = workDir(o)
 	cmd.Env = os.Environ()
@@ -424,4 +439,37 @@ func (p *agyParser) Finish(emit func(Event)) Final {
 		emit(x)
 	}
 	return Final{Text: text, SessionID: p.conv, Err: p.errText, Usage: p.usage, Complete: p.completed}
+}
+
+// writeAgyPromptFile stores the full turn input for agy to read. The file lives in
+// roundtable's own scratch folder, never in the user's workspace, and is removed
+// when the turn ends.
+func writeAgyPromptFile(o RunOptions) (string, func(), error) {
+	if o.ScratchDir == "" {
+		return "", nil, fmt.Errorf("agy 긴 입력을 둘 임시 폴더가 설정되지 않았어")
+	}
+	dir := filepath.Join(o.ScratchDir, "agy-input")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", nil, err
+	}
+	f, err := os.CreateTemp(dir, "turn-*.md")
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := f.WriteString(o.Prompt); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", nil, err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", nil, err
+	}
+	return f.Name(), func() { os.Remove(f.Name()) }, nil
+}
+
+func agyFilePointer(file string, size int) string {
+	return fmt.Sprintf("이번 턴의 전체 입력(참가자 규칙, 방 공지, 새 대화 내용, 지시)은 길어서 파일로 전달했어: %s (%d바이트)\n"+
+		"반드시 이 파일을 처음부터 끝까지 빠짐없이 읽은 뒤, 그 안의 규칙과 마지막 지시에 따라 답해. 이 파일의 내용이 이번 사용자 메시지야. "+
+		"파일을 다 읽지 못했으면 그 사실을 답에 밝혀.", file, size)
 }
