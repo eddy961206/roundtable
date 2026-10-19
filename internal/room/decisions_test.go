@@ -152,6 +152,41 @@ func TestDecisionEditsReplayAfterRestart(t *testing.T) {
 
 func ptr(s string) *string { return &s }
 
+// The client drops any card state whose at is older than the one it shows
+// (web/js/decisions.js isStaleDecision); that is sound only if every change of
+// a card gets a strictly larger at, including several changes in one
+// millisecond and a wall clock that moved back.
+func TestDecisionAtStrictlyIncreasesPerChange(t *testing.T) {
+	h, r := newTestHub(t, &fakeProvider{id: "claude"})
+	d, err := h.AddDecision(r.ID, DecisionInput{Text: ptr("start")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := d.At
+	for i, in := range []DecisionInput{{Text: ptr("edit")}, {Status: ptr("dropped")}, {Status: ptr("active")}, {Dissent: ptr("반대")}} {
+		next, err := h.UpdateDecision(r.ID, d.ID, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next.At <= last {
+			t.Fatalf("change %d: at %d did not pass %d", i, next.At, last)
+		}
+		last = next.At
+	}
+	h.mu.Lock()
+	future := *h.rooms[r.ID].decision(d.ID)
+	future.At = nowMs() + time.Hour.Milliseconds()
+	err = h.saveDecision(h.rooms[r.ID], future)
+	h.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := h.UpdateDecision(r.ID, d.ID, DecisionInput{Status: ptr("superseded")})
+	if err != nil || next.At != future.At+1 {
+		t.Fatalf("clock moved back: at %d, want %d (%v)", next.At, future.At+1, err)
+	}
+}
+
 func TestStandingBriefCarriesTenNewestActiveDecisionTexts(t *testing.T) {
 	a := &fakeProvider{id: "claude"}
 	h, r := newTestHub(t, a)

@@ -31,9 +31,10 @@ function sortedDecisions() {
   });
 }
 
-// Decisions are never deleted and every change carries a newer "at", so a
-// state older than the one already shown (a late PATCH reply after a newer
-// SSE event, or a snapshot read before it) is not applied.
+// Decisions are never deleted and the server makes "at" strictly increase on
+// every change of a card, so a state older than the one already shown (a late
+// PATCH reply after a newer SSE event, or a snapshot read before it) is not
+// applied. An equal "at" is the same state line (a reply and its SSE echo).
 export function isStaleDecision(prev, next) {
   return !!prev && prev.at > next.at;
 }

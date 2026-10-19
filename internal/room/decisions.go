@@ -22,7 +22,7 @@ type Decision struct {
 	By         string `json:"by"`         // participant id or "user"
 	SourceMsg  string `json:"source_msg"` // message that recorded the card; empty for cards added on screen
 	Status     string `json:"status"`     // active | superseded | dropped
-	At         int64  `json:"at"`         // time of this state line
+	At         int64  `json:"at"`         // time of this state line; strictly increases per card
 }
 
 const (
@@ -237,7 +237,9 @@ func (h *Hub) UpdateDecision(roomID, id string, in DecisionInput) (Decision, err
 	if next == *old {
 		return next, nil
 	}
-	next.At = nowMs()
+	// At strictly increases per card, even for two changes in one millisecond,
+	// so clients can drop any state older than the one they show.
+	next.At = max(nowMs(), old.At+1)
 	if err := h.saveDecision(rs, next); err != nil {
 		return Decision{}, err
 	}
