@@ -3,6 +3,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -88,6 +89,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/rooms/{id}/trace/{msg}", s.trace)
 	s.mux.HandleFunc("GET /api/rooms/{id}/stream", s.stream)
 	s.mux.HandleFunc("GET /api/rooms/{id}/export.md", s.export)
+	s.mux.HandleFunc("POST /api/rooms/{id}/work", s.createWork)
+	s.mux.HandleFunc("PATCH /api/rooms/{id}/work", s.patchWork)
+	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/submit", s.submitPart)
+	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/approve", s.approvePart)
+	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/retry", s.retryPart)
+	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/abandon", s.abandonPart)
+	s.mux.HandleFunc("GET /api/rooms/{id}/work/parts/{pid}/diff", s.partDiff)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -294,6 +302,74 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"roundtable-%s.md\"", r.PathValue("id")))
 	_, _ = w.Write([]byte(md))
+}
+
+// writeWork answers a work-plan call; state conflicts (D6 approval mismatch,
+// existing plan, wrong part state) are 409.
+func writeWork(w http.ResponseWriter, code int, v any, err error) {
+	switch {
+	case errors.Is(err, room.ErrWorkConflict):
+		writeErr(w, 409, err)
+	case err != nil:
+		writeErr(w, 400, err)
+	default:
+		writeJSON(w, code, v)
+	}
+}
+
+func (s *Server) createWork(w http.ResponseWriter, r *http.Request) {
+	var spec room.WorkSpec
+	if err := decode(r, &spec); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	plan, err := s.hub.CreateWork(r.PathValue("id"), spec)
+	writeWork(w, 201, plan, err)
+}
+
+func (s *Server) patchWork(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MergeMode string `json:"merge_mode"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	plan, err := s.hub.SetMergeMode(r.PathValue("id"), body.MergeMode)
+	writeWork(w, 200, plan, err)
+}
+
+func (s *Server) submitPart(w http.ResponseWriter, r *http.Request) {
+	plan, err := s.hub.SubmitPart(r.PathValue("id"), r.PathValue("pid"))
+	writeWork(w, 200, plan, err)
+}
+
+func (s *Server) approvePart(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SubmitSHA      string `json:"submit_sha"`
+		IntegrationSHA string `json:"integration_sha"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	plan, err := s.hub.ApprovePart(r.PathValue("id"), r.PathValue("pid"), body.SubmitSHA, body.IntegrationSHA)
+	writeWork(w, 200, plan, err)
+}
+
+func (s *Server) retryPart(w http.ResponseWriter, r *http.Request) {
+	plan, err := s.hub.RetryPart(r.PathValue("id"), r.PathValue("pid"))
+	writeWork(w, 200, plan, err)
+}
+
+func (s *Server) abandonPart(w http.ResponseWriter, r *http.Request) {
+	plan, err := s.hub.AbandonPart(r.PathValue("id"), r.PathValue("pid"))
+	writeWork(w, 200, plan, err)
+}
+
+func (s *Server) partDiff(w http.ResponseWriter, r *http.Request) {
+	diff, err := s.hub.PartDiff(r.PathValue("id"), r.PathValue("pid"))
+	writeWork(w, 200, diff, err)
 }
 
 // stream is the SSE feed of one room.

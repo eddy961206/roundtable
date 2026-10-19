@@ -31,6 +31,12 @@ func (s *Store) Root() string { return s.root }
 
 func (s *Store) roomDir(id string) string { return filepath.Join(s.root, "rooms", id) }
 
+// roomFile is room.json: the room plus its work plan, which room events omit (D13).
+type roomFile struct {
+	*Room
+	Work *WorkPlan `json:"work,omitempty"`
+}
+
 func (s *Store) SaveRoom(r *Room) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -38,7 +44,7 @@ func (s *Store) SaveRoom(r *Room) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(r, "", "  ")
+	b, err := json.MarshalIndent(roomFile{Room: r, Work: r.Work}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -132,9 +138,11 @@ func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[
 			continue
 		}
 		var r Room
-		if err := json.Unmarshal(b, &r); err != nil {
+		file := roomFile{Room: &r}
+		if err := json.Unmarshal(b, &file); err != nil {
 			return nil, nil, nil, fmt.Errorf("room %s: %w", e.Name(), err)
 		}
+		r.Work = file.Work
 		// Older rooms used the provider ID as their single seat identity.
 		// Keep that identity so messages and resumable sessions remain attached.
 		for _, p := range r.Participants {

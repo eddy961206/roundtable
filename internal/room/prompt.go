@@ -19,7 +19,8 @@ type turnContext struct {
 	Parallel    bool   // broadcast delivered to several agents at once
 	Round       int
 	TotalRounds int
-	FirstTurn   bool // no resumable session: the whole transcript is included
+	FirstTurn   bool  // no resumable session: the whole transcript is included
+	Part        *Part // the seat's working/fixing part (D9)
 }
 
 var signalRe = regexp.MustCompile(`\[\[DISCUSSION:(CONTINUE|AGREE|PASS|CONCLUDE)\]\]\s*$`)
@@ -84,6 +85,9 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 	default:
 		b.WriteString("- 도구 실행이나 파일 수정 없이 대화로만 답하세요.\n")
 	}
+	if tc.Part != nil {
+		fmt.Fprintf(&b, "- 지금은 작업 계획의 파트 %s(%s)를 맡고 있습니다. branch %s 에만 커밋하세요. 파트를 끝냈으면 모든 변경을 커밋한 뒤 응답 마지막 줄에 %s 한 줄만 쓰세요.\n", tc.Part.ID, tc.Part.Title, tc.Part.Branch, workDoneSignal)
+	}
 	b.WriteString("- 대화에서 쓰인 언어로 답하세요. 채팅에 어울리게 간결하되, 판단에 필요한 근거는 생략하지 마세요.\n")
 	if tc.Parallel {
 		b.WriteString("- 같은 메시지를 다른 참가자들도 동시에 받았습니다. 다른 답변을 기다리지 말고 독립적으로 답하세요.\n")
@@ -102,6 +106,48 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 	b.WriteString("=== 끝 ===\n\n")
 	fmt.Fprintf(&b, "지금 \"@%s\"로서 답할 차례입니다.", me.ID)
 	return b.String()
+}
+
+// BuildPartPrompt starts a part session from the plan alone; room history is never included (D9).
+func BuildPartPrompt(plan *WorkPlan, part *Part) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "작업 계획의 파트 %s \"%s\"를 맡았습니다.\n\n", part.ID, part.Title)
+	fmt.Fprintf(&b, "전체 목표:\n%s\n\n", plan.Goal)
+	fmt.Fprintf(&b, "완료 조건:\n%s\n\n", part.Brief)
+	fmt.Fprintf(&b, "범위: %s\n", strings.Join(part.Scope, ", "))
+	fmt.Fprintf(&b, "작업 폴더: %s (branch %s, 기준 커밋 %s)\n\n", part.Worktree, part.Branch, plan.BaseSHA)
+	b.WriteString("규칙:\n")
+	b.WriteString("- 이 작업 폴더 안에서만 수정하고, 범위 밖의 파일은 바꾸지 마세요.\n")
+	fmt.Fprintf(&b, "- 변경은 branch %s 에 커밋하세요. 커밋하지 않은 변경이나 추적하지 않는 파일이 남아 있으면 제출이 거부됩니다.\n", part.Branch)
+	fmt.Fprintf(&b, "- 파트를 끝냈으면 응답 마지막 줄에 %s 한 줄만 쓰세요. 그러면 다른 공급사 참가자가 diff를 리뷰합니다.\n", workDoneSignal)
+	b.WriteString("- 무엇을 바꿨는지 답변에 적으세요.\n")
+	return b.String()
+}
+
+// BuildFixPrompt asks the author to fix the review items it accepted.
+func BuildFixPrompt(part *Part) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "파트 %s 리뷰에서 수용한 항목을 고치세요. 고친 뒤 branch %s 에 커밋하고 응답 마지막 줄에 %s 한 줄만 쓰세요. 새 커밋으로 다시 리뷰합니다.\n", part.ID, part.Branch, workDoneSignal)
+	for _, round := range part.Review.Rounds {
+		for _, item := range round.Items {
+			if item.Status != "accepted_pending" {
+				continue
+			}
+			f := item.Finding
+			fmt.Fprintf(&b, "- %s [%s] %s:%s:%d — %s\n", f.ID, f.Severity, f.Side, f.File, f.Line, f.Scenario)
+		}
+	}
+	return b.String()
+}
+
+// ParseWorkDone strips a final WORK:DONE line and reports whether it was there.
+func ParseWorkDone(text string) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	cut := strings.LastIndexByte(trimmed, '\n')
+	if strings.TrimSpace(trimmed[cut+1:]) != workDoneSignal {
+		return trimmed, false
+	}
+	return strings.TrimSpace(trimmed[:cut+1]), true
 }
 
 func renderHistory(r *Room, history []*Message) string {
