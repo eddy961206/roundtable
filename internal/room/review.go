@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -214,15 +215,14 @@ func (rs *ReviewState) updateSummary() {
 }
 
 type reviewTableSpec struct {
-	label   string
 	headers []string
 }
 
 var (
-	findingsTable = reviewTableSpec{"[지적]", []string{"번호", "심각도", "파일:줄", "재현 시나리오", "확신도"}}
-	authorTable   = reviewTableSpec{"[작성자 응답]", []string{"번호", "응답", "근거"}}
-	rebuttalTable = reviewTableSpec{"[반박 검토]", []string{"번호", "판정", "근거"}}
-	recheckTable  = reviewTableSpec{"[수정 확인]", []string{"번호", "확인", "근거"}}
+	findingsTable = reviewTableSpec{[]string{"번호", "심각도", "파일:줄", "재현 시나리오", "확신도"}}
+	authorTable   = reviewTableSpec{[]string{"번호", "응답", "근거"}}
+	rebuttalTable = reviewTableSpec{[]string{"번호", "판정", "근거"}}
+	recheckTable  = reviewTableSpec{[]string{"번호", "확인", "근거"}}
 )
 
 func parseReviewTables(reply string, specs []reviewTableSpec) ([][][]string, error) {
@@ -232,22 +232,25 @@ func parseReviewTables(reply string, specs []reviewTableSpec) ([][][]string, err
 			lines = append(lines, line)
 		}
 	}
-	pos := 0
-	tables := make([][][]string, 0, len(specs))
-	for _, spec := range specs {
-		if pos+3 > len(lines) || lines[pos] != spec.label {
-			return nil, fmt.Errorf("review: expected %s and its header/separator", spec.label)
+	// Return tables in the requested order, independent of their reply order.
+	tables := make([][][]string, len(specs))
+	for pos := 0; pos < len(lines); {
+		if !isReviewTableLine(lines[pos]) {
+			pos++ // Prose outside a table does not participate in the protocol.
+			continue
 		}
-		headers, err := parseReviewRow(lines[pos+1], len(spec.headers))
-		if err != nil {
-			return nil, err
+		index := reviewHeaderIndex(lines[pos], specs)
+		if index < 0 {
+			return nil, fmt.Errorf("review: unexpected table header %q", lines[pos])
 		}
-		for i, h := range spec.headers {
-			if headers[i] != h {
-				return nil, fmt.Errorf("review: %s column %d must be %q", spec.label, i+1, h)
-			}
+		spec := specs[index]
+		if tables[index] != nil {
+			return nil, fmt.Errorf("review: duplicate table with header %v", spec.headers)
 		}
-		separator, err := parseReviewRow(lines[pos+2], len(spec.headers))
+		if pos+1 == len(lines) {
+			return nil, fmt.Errorf("review: missing separator for header %v", spec.headers)
+		}
+		separator, err := parseReviewRow(lines[pos+1], len(spec.headers))
 		if err != nil {
 			return nil, err
 		}
@@ -257,9 +260,12 @@ func parseReviewTables(reply string, specs []reviewTableSpec) ([][][]string, err
 				return nil, fmt.Errorf("review: invalid table separator")
 			}
 		}
-		pos += 3
+		pos += 2
 		rows := [][]string{}
-		for pos < len(lines) && strings.HasPrefix(lines[pos], "|") {
+		for pos < len(lines) && isReviewTableLine(lines[pos]) {
+			if reviewHeaderIndex(lines[pos], specs) >= 0 {
+				break
+			}
 			row, err := parseReviewRow(lines[pos], len(spec.headers))
 			if err != nil {
 				return nil, err
@@ -267,12 +273,28 @@ func parseReviewTables(reply string, specs []reviewTableSpec) ([][][]string, err
 			rows = append(rows, row)
 			pos++
 		}
-		tables = append(tables, rows)
+		tables[index] = rows
 	}
-	if pos != len(lines) {
-		return nil, fmt.Errorf("review: unexpected text outside required tables")
+	for i, rows := range tables {
+		if rows == nil {
+			return nil, fmt.Errorf("review: missing table with header %v", specs[i].headers)
+		}
 	}
 	return tables, nil
+}
+
+func isReviewTableLine(line string) bool {
+	return strings.HasPrefix(line, "|") || strings.HasSuffix(line, "|")
+}
+
+func reviewHeaderIndex(line string, specs []reviewTableSpec) int {
+	for i, spec := range specs {
+		cells, err := parseReviewRow(line, len(spec.headers))
+		if err == nil && slices.Equal(cells, spec.headers) {
+			return i
+		}
+	}
+	return -1
 }
 
 func parseReviewRow(line string, columns int) ([]string, error) {
@@ -383,7 +405,7 @@ func (rs *ReviewState) prompt(kind string) string {
 	records, _ := json.Marshal(rs.Rounds) // This concrete type contains only JSON-safe values.
 	b.WriteString("\n[이전 라운드와 현재 라운드 구조화 기록]\n")
 	b.Write(records)
-	b.WriteString("\n응답에는 요구된 표만 쓴다. 코드 펜스나 표 밖 설명은 금지한다. 셀은 한 줄이며 셀 안 |는 \\|로 쓴다. 빈 셀, 번호 중복·누락·모르는 번호, 다른 열거값은 오류다.\n")
+	b.WriteString("\n표는 머리글의 열 이름과 순서가 예시와 정확히 일치해야 한다. 요구된 표를 각각 정확히 한 번 쓴다. 다른 머리글의 표나 중복 표는 오류다. 표 밖 설명은 무시됨. 각 행은 |로 시작하고 끝낸다. 셀은 한 줄이며 셀 안 |는 \\|로 쓴다. 빈 셀, 번호 중복·누락·모르는 번호, 다른 열거값은 오류다.\n")
 	switch kind {
 	case "findings":
 		writeFindingsInstructions(&b)
@@ -394,7 +416,7 @@ func (rs *ReviewState) prompt(kind string) string {
 		b.WriteString("각 disputed 항목의 작성자 반박을 검토한다. 결함이 남으면 MAINTAIN, 반박이 타당하면 WITHDRAW와 근거를 쓴다.\n")
 		rs.writeActionInstructions(&b, rebuttalTable, "disputed", "MAINTAIN")
 	case "recheck":
-		b.WriteString("새 head SHA에서 각 accepted_pending 항목을 확인한다. 해결됐으면 FIXED, 남아 있으면 UNFIXED와 근거를 쓴다. [수정 확인] 다음에 새 [지적] 표를 반드시 쓴다. 기존 항목을 새 지적으로 중복 등록하지 않는다.\n")
+		b.WriteString("새 head SHA에서 각 accepted_pending 항목을 확인한다. 해결됐으면 FIXED, 남아 있으면 UNFIXED와 근거를 쓴다. 수정 확인 표와 새 지적 표를 각각 한 번 쓴다. 두 표의 순서는 상관없다. 기존 항목을 새 지적으로 중복 등록하지 않는다.\n")
 		rs.writeActionInstructions(&b, recheckTable, "accepted_pending", "FIXED")
 		writeFindingsInstructions(&b)
 	}
@@ -402,7 +424,7 @@ func (rs *ReviewState) prompt(kind string) string {
 }
 
 func writeTableHeader(b *strings.Builder, spec reviewTableSpec) {
-	b.WriteString(spec.label + "\n| " + strings.Join(spec.headers, " | ") + " |\n|")
+	b.WriteString("| " + strings.Join(spec.headers, " | ") + " |\n|")
 	for range spec.headers {
 		b.WriteString(" --- |")
 	}
