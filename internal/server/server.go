@@ -29,7 +29,9 @@ type Server struct {
 func New(hub *room.Hub, reg *agent.Registry, web fs.FS) *Server {
 	s := &Server{hub: hub, reg: reg, web: web, mux: http.NewServeMux()}
 	s.routes()
-	go func() { _ = reg.RefreshVersions(context.Background()) }()
+	if reg != nil {
+		go func() { _ = reg.RefreshVersions(context.Background()) }()
+	}
 	return s
 }
 

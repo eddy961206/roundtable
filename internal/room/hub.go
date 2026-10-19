@@ -1252,7 +1252,7 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	msg.Provider, msg.SessionID, msg.Mode, msg.Effort = p.Provider, pr.opts.SessionID, pr.opts.Mode, pr.opts.Effort
 	msg.Role = p.Role
 	msg.Timing = &TurnTiming{QueuedMs: max(0, pr.started.UnixMilli()-t.Created)}
-	if t.Reason == "review" {
+	if t.Reason == "review" && pr.part.Review != nil {
 		msg.Round = pr.part.Review.Input.Ref.Round
 	}
 	msg.SessionDirectory = pr.opts.Workspace
