@@ -68,12 +68,14 @@
     if (activeCount >= MAX_ATTACHMENTS) {
       return { ok: false, code: "count", reason: "최대 4장까지 첨부할 수 있습니다 (4장 초과)" };
     }
-    const checkMime = magicMime !== undefined ? magicMime : mime;
-    if (checkMime && !ALLOWED_IMAGE_MIMES.has(checkMime)) {
-      return { ok: false, code: "format", reason: "PNG·JPEG·WEBP 형식만 첨부할 수 있습니다" };
-    }
-    if (magicMime !== undefined && !ALLOWED_IMAGE_MIMES.has(magicMime)) {
-      return { ok: false, code: "format", reason: "PNG·JPEG·WEBP 형식만 첨부할 수 있습니다" };
+    if (magicMime !== undefined) {
+      if (!ALLOWED_IMAGE_MIMES.has(magicMime)) {
+        return { ok: false, code: "format", reason: "PNG·JPEG·WEBP 형식만 첨부할 수 있습니다" };
+      }
+    } else if (mime) {
+      if (!ALLOWED_IMAGE_MIMES.has(mime)) {
+        return { ok: false, code: "format", reason: "PNG·JPEG·WEBP 형식만 첨부할 수 있습니다" };
+      }
     }
     if (size <= 0) {
       return { ok: false, code: "size", reason: "빈 파일은 첨부할 수 없습니다" };
@@ -117,6 +119,28 @@
       }
       return String(a.id).localeCompare(String(b.id));
     });
+  }
+  function mergeSnapshotRequests(currentMap, snapRequests, updatedDuringFetchIds) {
+    const next = new Map();
+    const updated = updatedDuringFetchIds instanceof Set ? updatedDuringFetchIds : new Set();
+    if (Array.isArray(snapRequests)) {
+      for (const req of snapRequests) {
+        if (!req || !req.id) continue;
+        const prev = currentMap && typeof currentMap.get === "function" ? currentMap.get(req.id) : undefined;
+        const keepPrev =
+          prev &&
+          (updated.has(req.id) || (!isIncompleteRequest(prev.status) && isIncompleteRequest(req.status)));
+        next.set(req.id, keepPrev ? prev : req);
+      }
+    }
+    if (currentMap && typeof currentMap.entries === "function") {
+      for (const [id, prev] of currentMap.entries()) {
+        if (!next.has(id) && updated.has(id) && prev) {
+          next.set(id, prev);
+        }
+      }
+    }
+    return next;
   }
   const fmtTime = (ms) =>
     ms ? new Date(ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
@@ -788,6 +812,7 @@
 
   // ---------- room ----------
   let openSeq = 0;
+  let activeSyncUpdatedReqIds = null;
   async function openRoom(id, resync, latest = false) {
     const preserveHistory = !!(resync && !latest && state.roomId === id && state.browsingHistory && state.order.length);
     const before = preserveHistory ? state.messages.get(state.order[state.order.length - 1]).seq + 1 : 0;
@@ -801,6 +826,7 @@
       state.target = "";
       state.work = null;
       state.workRevision = 0;
+      state.requests.clear();
       state.partNotices.clear();
       state.partReviewOpen.clear();
       state.workBoardCollapsed = false;
@@ -820,7 +846,10 @@
       if (pbox) pbox.innerHTML = "";
     }
     const workRev = state.workRevision;
+    const updatedReqIds = new Set();
+    activeSyncUpdatedReqIds = updatedReqIds;
     const snap = await api("GET", "/api/rooms/" + id + (preserveHistory ? "?before=" + before + "&limit=200" : ""));
+    if (activeSyncUpdatedReqIds === updatedReqIds) activeSyncUpdatedReqIds = null;
     if (my !== openSeq || state.roomId !== id) return;
 
     const tl = $("#timeline");
@@ -849,12 +878,7 @@
       state.workRevision++;
       state.work = snap.work;
     }
-    state.requests.clear();
-    if (Array.isArray(snap.requests)) {
-      for (const req of snap.requests) {
-        if (req && req.id) state.requests.set(req.id, req);
-      }
-    }
+    state.requests = mergeSnapshotRequests(state.requests, snap.requests, updatedReqIds);
     state.history = snap.history;
     state.browsingHistory = preserveHistory;
     state.historyLoading = false;
@@ -1414,9 +1438,19 @@
 
   async function focusTimelineMessage(msgId) {
     if (!msgId || !state.roomId) return;
+    const roomId = state.roomId;
     closeDrawers();
     if (!state.messages.has(msgId) && (state.browsingHistory || state.pendingMessages > 0)) {
       await jumpToLatestMessages();
+      if (state.roomId !== roomId) return;
+    }
+    const sequence = openSeq;
+    while (!state.messages.has(msgId) && state.history && state.history.has_more && state.order.length > 0) {
+      if (state.historyLoading) break;
+      const prevOldest = state.order[0];
+      await loadOlderMessages();
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (!state.order.length || state.order[0] === prevOldest) break;
     }
     const idx = state.order.indexOf(msgId);
     if (idx >= 0 && (idx < state.winStart || idx >= state.winEnd)) {
@@ -3202,6 +3236,7 @@
 
   function upsertRequest(req) {
     if (!req || !req.id) return;
+    if (activeSyncUpdatedReqIds) activeSyncUpdatedReqIds.add(req.id);
     state.requests.set(req.id, req);
     if (req.source_msg) {
       const srcMsg = state.messages.get(req.source_msg);
@@ -5101,6 +5136,7 @@
   function clearDraftAttachments() {
     for (const item of state.draftAttachments) {
       item.cancelled = true;
+      item.sending = false;
       if (item.previewUrl) {
         URL.revokeObjectURL(item.previewUrl);
         item.previewUrl = "";
@@ -5110,9 +5146,34 @@
     renderDraftAttachments();
   }
 
+  function removeDraftAttachmentsByIds(localIds) {
+    if (!localIds || !localIds.size) return;
+    const kept = [];
+    for (const item of state.draftAttachments) {
+      if (localIds.has(item.localId)) {
+        item.cancelled = true;
+        item.sending = false;
+        if (item.previewUrl) {
+          URL.revokeObjectURL(item.previewUrl);
+          item.previewUrl = "";
+        }
+      } else {
+        kept.push(item);
+      }
+    }
+    state.draftAttachments = kept;
+    promoteWaitingCountAttachments();
+    if (!hasAttachmentError()) {
+      clearComposerError();
+    }
+    renderDraftAttachments();
+  }
+
   function removeDraftAttachment(localId) {
+    if (isSendingMessage) return;
     const idx = state.draftAttachments.findIndex((item) => item.localId === localId);
     if (idx < 0) return;
+    if (state.draftAttachments[idx].sending) return;
     const [removed] = state.draftAttachments.splice(idx, 1);
     removed.cancelled = true;
     if (removed.previewUrl) {
@@ -5131,8 +5192,9 @@
     for (const item of state.draftAttachments) {
       if (activeDraftAttachmentCount() >= MAX_ATTACHMENTS) break;
       if (item.status === "error" && item.errorCode === "count" && item.file) {
+        const canSlice = typeof item.file.slice === "function";
         const check = validateAttachmentCandidate({
-          mime: item.file.type,
+          mime: canSlice ? "" : item.file.type,
           size: item.size,
           activeCount: activeDraftAttachmentCount(),
         });
@@ -5199,6 +5261,7 @@
       rmBtn.type = "button";
       rmBtn.title = "첨부 제거";
       rmBtn.setAttribute("aria-label", item.name + " 첨부 제거");
+      rmBtn.disabled = isSendingMessage || Boolean(item.sending);
       rmBtn.onclick = () => removeDraftAttachment(item.localId);
       chip.appendChild(rmBtn);
       return chip;
@@ -5211,7 +5274,7 @@
     const out = [];
     if (clipboardData.items && clipboardData.items.length) {
       for (const item of Array.from(clipboardData.items)) {
-        if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
+        if (item.kind === "file") {
           const f = item.getAsFile();
           if (f) out.push(f);
         }
@@ -5219,14 +5282,14 @@
     }
     if (!out.length && clipboardData.files && clipboardData.files.length) {
       for (const f of Array.from(clipboardData.files)) {
-        if (f.type && f.type.startsWith("image/")) out.push(f);
+        out.push(f);
       }
     }
     return out;
   }
 
   function addAttachmentFiles(fileList) {
-    if (!state.roomId || !fileList) return;
+    if (isSendingMessage || !state.roomId || !fileList) return;
     const files = Array.from(fileList);
     if (!files.length) return;
 
@@ -5235,8 +5298,9 @@
       const name = file.name ? file.name : "clipboard-image.png";
       const size = typeof file.size === "number" ? file.size : 0;
       const activeCount = activeDraftAttachmentCount();
+      const canSlice = Boolean(file && typeof file.slice === "function");
       const check = validateAttachmentCandidate({
-        mime: file.type,
+        mime: canSlice ? "" : file.type,
         size,
         activeCount,
       });
@@ -5263,6 +5327,7 @@
         uploaded: null,
         uploadPromise: null,
         cancelled: false,
+        sending: false,
       };
       state.draftAttachments.push(item);
       if (check.ok) {
@@ -5291,6 +5356,7 @@
             item.status = "error";
             item.error = magicCheck.reason;
             item.errorCode = magicCheck.code;
+            promoteWaitingCountAttachments();
             renderDraftAttachments();
             return null;
           }
@@ -5331,6 +5397,7 @@
       item.status = "error";
       item.error = "업로드 실패: " + (err && err.message ? err.message : "알 수 없는 오류");
       item.errorCode = "upload";
+      promoteWaitingCountAttachments();
       renderDraftAttachments();
       return null;
     }
@@ -5338,10 +5405,24 @@
 
   let isSendingMessage = false;
 
+  function setComposerBusy(busy) {
+    isSendingMessage = busy;
+    const input = $("#input");
+    if (input) input.readOnly = busy;
+    const sendBtn = $("#send");
+    if (sendBtn) sendBtn.disabled = busy;
+    const attachBtn = $("#btn-attach");
+    if (attachBtn) attachBtn.disabled = busy;
+    const fileInput = $("#file-input");
+    if (fileInput) fileInput.disabled = busy;
+    renderDraftAttachments();
+  }
+
   async function send() {
     if (isSendingMessage || !state.roomId) return;
     const input = $("#input");
-    const draft = input.value.trim();
+    const rawInput = input.value;
+    const draft = rawInput.trim();
     let text;
     try { text = encodedMentions(draft); }
     catch (err) {
@@ -5354,44 +5435,47 @@
       return;
     }
     clearComposerError();
-    if (!text && state.draftAttachments.length === 0) return;
+    const sendingItems = state.draftAttachments.filter(
+      (item) => !item.cancelled && (item.status === "uploading" || item.status === "ready")
+    );
+    if (!text && sendingItems.length === 0) return;
+
+    const sendingIds = new Set(sendingItems.map((item) => item.localId));
+    for (const item of sendingItems) item.sending = true;
 
     const roomId = state.roomId;
     const sequence = openSeq;
-    const pendingUploads = state.draftAttachments
-      .filter((item) => item.status === "uploading" && item.uploadPromise)
-      .map((item) => item.uploadPromise);
+    const target = state.target;
+    closeMentionPop();
+    setComposerBusy(true);
 
-    if (pendingUploads.length > 0) {
-      isSendingMessage = true;
-      try {
+    try {
+      const pendingUploads = sendingItems
+        .filter((item) => item.status === "uploading" && item.uploadPromise)
+        .map((item) => item.uploadPromise);
+
+      if (pendingUploads.length > 0) {
         await Promise.all(pendingUploads);
-      } finally {
-        isSendingMessage = false;
+        if (state.roomId !== roomId || openSeq !== sequence) return;
       }
-      if (state.roomId !== roomId || openSeq !== sequence) return;
-      if (hasAttachmentError()) {
+
+      if (sendingItems.some((item) => item.status === "error" || !item.uploaded || !item.uploaded.id)) {
         showComposerError("이미지 업로드에 실패했습니다. 오류 칩을 확인하세요.");
         return;
       }
-    }
 
-    const attachmentIds = state.draftAttachments
-      .filter((item) => item.status === "ready" && item.uploaded && item.uploaded.id)
-      .map((item) => item.uploaded.id);
+      const attachmentIds = sendingItems.map((item) => item.uploaded.id);
+      if (input.value === rawInput) {
+        input.value = "";
+      }
 
-    const target = state.target;
-    input.value = "";
-    closeMentionPop();
-    isSendingMessage = true;
-    try {
       const payload = { text, target };
       if (attachmentIds.length > 0) {
         payload.attachments = attachmentIds;
       }
       await api("POST", "/api/rooms/" + roomId + "/messages", payload);
       if (state.roomId !== roomId || openSeq !== sequence) return;
-      clearDraftAttachments();
+      removeDraftAttachmentsByIds(sendingIds);
       if (!input.value) state.draftMentions.clear();
       if (target) {
         setTarget("", false);
@@ -5401,10 +5485,15 @@
     } catch (e) {
       if (state.roomId !== roomId || openSeq !== sequence) return;
       alert(e.message);
-      if (!input.value) input.value = draft;
+      if (!input.value) {
+        input.value = rawInput;
+      } else if (input.value !== rawInput) {
+        input.value = rawInput + "\n" + input.value;
+      }
       updateHint();
     } finally {
-      isSendingMessage = false;
+      for (const item of sendingItems) item.sending = false;
+      setComposerBusy(false);
     }
   }
 
@@ -5594,6 +5683,7 @@
       requestStatusLabel,
       isIncompleteRequest,
       sortRequests,
+      mergeSnapshotRequests,
       formatLightboxMeta,
     };
   }
