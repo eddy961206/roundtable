@@ -1666,7 +1666,13 @@ func (h *Hub) discussionStep(rs *roomState, agentID, signal, status string) {
 			allAgree = false
 		}
 	}
+	// Nobody has seen a peer's answer at the end of a blind round 1, so its
+	// CONCLUDE/AGREE cannot end the discussion; the reveal round always runs.
+	revealPending := d.Blind && d.Round == 1 && d.Round < d.Total && len(rs.room.enabled()) >= 2
 	switch {
+	case revealPending:
+		d.Round++
+		rs.enqueueRound(h.enabledIDs(rs))
 	case concluded:
 		rs.addSystem(fmt.Sprintf("토론 종료 · %d라운드에서 결론 제시(CONCLUDE)", d.Round))
 		rs.disc = nil

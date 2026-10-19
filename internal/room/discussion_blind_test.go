@@ -185,3 +185,26 @@ func TestDiscussionPromptAsksForCheckedAndUncheckedClaims(t *testing.T) {
 		t.Fatalf("round 3 is an ordinary sequential round:\n%s", prompt)
 	}
 }
+
+func TestBlindFirstRoundConcludeStillReveals(t *testing.T) {
+	h, r, ps := controlledHub(t, "claude", "codex")
+	if err := h.StartDiscussion(r.ID, 2, nil); err != nil {
+		t.Fatal(err)
+	}
+	a1, b1 := nextCall(t, ps[0]), nextCall(t, ps[1])
+	finishCall(a1, "claude-blind\n[[DISCUSSION:CONCLUDE]]")
+	finishCall(b1, "codex-blind\n[[DISCUSSION:AGREE]]")
+	a2 := nextCall(t, ps[0])
+	if !strings.Contains(a2.opts.Prompt, "codex-blind") {
+		t.Fatalf("a blind round-1 CONCLUDE must not skip the reveal round:\n%s", a2.opts.Prompt)
+	}
+	finishCall(a2, "[[DISCUSSION:CONCLUDE]]")
+	b2 := nextCall(t, ps[1])
+	finishCall(b2, "[[DISCUSSION:AGREE]]")
+	snap := queueSnapshot(t, h, r.ID, func(s *Snapshot) bool { return s.Discussion == nil && len(s.Queue) == 0 })
+	for _, m := range snap.Messages {
+		if m.Kind == "system" && strings.Contains(m.Text, "1라운드에서 결론") {
+			t.Fatal("discussion ended in the blind round")
+		}
+	}
+}
