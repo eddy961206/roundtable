@@ -366,7 +366,9 @@
         reqText !== "" &&
         reqs.some((r) => {
           if (!r || typeof r.text !== "string") return false;
-          if (r.to && r.to !== targetSeat) return false;
+          // 서버는 [[REQUEST:@x]]의 x를 좌석 ID 또는 고유한 표시 이름으로 받는다.
+          const seat = state.room.participants.find((p) => p.id === r.to);
+          if (r.to !== targetSeat && !(seat && seat.label.toLowerCase() === targetSeat.toLowerCase())) return false;
           return r.text.trim() === reqText;
         });
       return { action: matched ? "hide" : "chip", raw: trimmed };
@@ -2126,7 +2128,6 @@
             "</span>"
         );
       }
-      meta.push('<span class="muted">' + fmtTime(m.ts) + "</span>");
 
       if (m.status === "streaming") {
         const act = activeTraceActivity(m.id, m.author);
@@ -2206,9 +2207,11 @@
           '<div class="trace" id="t-' +
           esc(id) +
           '" hidden></div>' +
-          "</div>";
+          "</div>" +
+          '<div class="msg-time"></div>';
         bubble = node.querySelector(".bubble");
       }
+      node.querySelector(".msg-time").textContent = fmtTime(m.ts);
 
       bubble.querySelector(".meta").innerHTML = meta.join("");
       const bodyEl = bubble.querySelector(".body");
