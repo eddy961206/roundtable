@@ -126,6 +126,11 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 	defer h.mu.Unlock()
 	for _, rs := range h.rooms {
 		h.advanceQueue(rs)
+		if rs.room.Work != nil {
+			if err := h.store.SaveRoom(rs.room); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return h, nil
 }
@@ -455,7 +460,7 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 		}
 	}
 	for _, p := range next.Participants {
-		if p.Enabled && h.nativeSessions[nativeSessionKey(p.Provider, p.SessionID)] {
+		if p.Enabled && h.seatNativeOpen(rs, p) {
 			return nil, fmt.Errorf("%s의 CLI 창을 닫은 뒤 다시 켜야 함", p.Label)
 		}
 	}
@@ -670,6 +675,7 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 			select {
 			case run.steer <- text:
 				m.Live = true
+				m.Part = run.turn.Part
 				run.live = append(run.live, m)
 			default:
 			}
@@ -890,7 +896,7 @@ func (h *Hub) pump(rs *roomState) {
 	for i := 0; i < len(rs.queue); {
 		t := rs.queue[i]
 		p := rs.room.participant(t.Agent)
-		if p == nil || !p.Enabled || p.Removed || h.reg.Get(p.Provider) == nil || h.nativeSessions[nativeSessionKey(p.Provider, p.SessionID)] {
+		if p == nil || !p.Enabled || p.Removed || h.reg.Get(p.Provider) == nil || h.seatNativeOpen(rs, p) {
 			rs.queue = slices.Delete(rs.queue, i, i+1)
 			if t.Reason == "discussion" {
 				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
@@ -898,6 +904,10 @@ func (h *Hub) pump(rs *roomState) {
 			if t.Reason == "review" {
 				h.reviewTurnLost(rs, t, "리뷰 턴을 맡은 좌석을 실행할 수 없음")
 			}
+			continue
+		}
+		if part := rs.seatPart(p.ID); t.Reason != "review" && part != nil && (rs.workBusy[part.ID] || (part.State != "working" && part.State != "fixing")) {
+			i++
 			continue
 		}
 		// Ordinary priority turns must not block a later discussion turn for
@@ -935,19 +945,20 @@ func (h *Hub) pump(rs *roomState) {
 
 // prepared contains a prompt rendered from live messages up to the turn's cap.
 type prepared struct {
-	t        *Turn
-	p        *Participant
-	seen     int64
-	unseen   []int64
-	stopGen  int
-	resetGen int
-	prov     agent.Provider
-	msg      *Message
-	opts     agent.RunOptions
-	ctx      context.Context
-	cancel   context.CancelFunc
-	part     *Part // the turn runs in this part's worktree (D9, review)
-	reviewer bool  // fresh reviewer session that must not be kept (D10)
+	t         *Turn
+	p         *Participant
+	seen      int64
+	unseen    []int64
+	stopGen   int
+	resetGen  int
+	prov      agent.Provider
+	msg       *Message
+	opts      agent.RunOptions
+	ctx       context.Context
+	cancel    context.CancelFunc
+	part      *Part // the turn runs in this part's worktree (D9, review)
+	reviewer  bool  // fresh reviewer session that must not be kept (D10)
+	bootstrap bool  // first part turn contains plan context only
 }
 
 // buildTurn renders a prompt without reserving a participant. Caller holds h.mu.
@@ -994,11 +1005,12 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 // part session and worktree (D9). The first part turn gets only plan context.
 func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.Provider, part *Part) *prepared {
 	t.Part = part.ID
-	seen, unseen := p.LastSeen, slices.Clone(p.Unseen)
+	seen, unseen := part.LastSeen, slices.Clone(part.Unseen)
+	bootstrap := part.SessionID == ""
 	var prompt string
 	switch {
 	case part.SessionID == "":
-		prompt, seen, unseen = BuildPartPrompt(rs.room.Work, part), rs.room.Seq, nil
+		prompt = BuildPartPrompt(rs.room.Work, part)
 		if t.prompt != "" {
 			prompt += "\n\n" + t.prompt
 		}
@@ -1010,9 +1022,11 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 			cap = rs.room.Seq
 		}
 		var hist []*Message
-		hist, seen, unseen = rs.deltaFor(p, false, cap)
+		cursor := *p
+		cursor.LastSeen, cursor.Unseen = part.LastSeen, part.Unseen
+		hist, seen, unseen = rs.deltaForContext(&cursor, false, cap, part.ID)
 		if len(hist) == 0 && t.Reason != "discussion" {
-			p.LastSeen, p.Unseen = seen, unseen
+			part.LastSeen, part.Unseen = seen, unseen
 			return nil
 		}
 		tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, Part: part}
@@ -1024,7 +1038,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 		prompt = BuildPrompt(&view, p, hist, tc)
 	}
 	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
-	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part}
+	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, bootstrap: bootstrap}
 }
 
 // buildReviewTurn runs a ReviewState step: the reviewer in a fresh read-only
@@ -1066,7 +1080,7 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), turnTimeout)
 	var steer chan string
-	if prov.CanSteer() {
+	if prov.CanSteer() && t.Reason != "review" {
 		steer = make(chan string, 8)
 	}
 	t.Status = "running"
@@ -1200,8 +1214,17 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	default:
 		msg.Status = "done"
 	}
-	if msg.Status == "done" && pr.resetGen == rs.resetGen {
-		p.LastSeen, p.Unseen = pr.seen, pr.unseen
+	if msg.Status == "done" && t.Reason != "review" {
+		if pr.part != nil {
+			pr.part.LastSeen, pr.part.Unseen = pr.seen, pr.unseen
+		} else if pr.resetGen == rs.resetGen {
+			p.LastSeen, p.Unseen = pr.seen, pr.unseen
+		}
+		if pr.bootstrap && t.Reason != "part" && pr.part.SessionID != "" && pr.stopGen == rs.stopGen {
+			replay := *t
+			replay.ID, replay.Status = newID(), "queued"
+			rs.enqueueFront(&replay)
+		}
 	}
 	// Only this invocation's steers count against Result.Steered. Earlier
 	// accepted steers may still lie above this turn's delivery boundary.
@@ -1292,6 +1315,10 @@ func applyUsage(p *Participant, prov agent.Provider, u map[string]any) {
 // remain holes below LastSeen; own replies never become undelivered holes.
 // Delivery is committed only after success (or when no CLI input is needed).
 func (rs *roomState) deltaFor(p *Participant, first bool, cap int64) ([]*Message, int64, []int64) {
+	return rs.deltaForContext(p, first, cap, "")
+}
+
+func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, partID string) ([]*Message, int64, []int64) {
 	last := p.LastSeen
 	if first {
 		last = 0
@@ -1314,7 +1341,7 @@ func (rs *roomState) deltaFor(p *Participant, first bool, cap int64) ([]*Message
 		if m.Seq > seen {
 			seen = m.Seq
 		}
-		if (m.Target != "" && m.Target != p.ID) || (!first && (m.Author == p.ID || m.Live)) {
+		if (m.Target != "" && m.Target != p.ID) || (!first && (m.Author == p.ID || (m.Live && m.Part == partID))) {
 			continue
 		}
 		if m.Status == "streaming" {

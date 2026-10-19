@@ -10,6 +10,14 @@ import (
 
 func nativeSessionKey(provider, session string) string { return provider + "\x00" + session }
 
+func (h *Hub) seatNativeOpen(rs *roomState, p *Participant) bool {
+	if h.nativeSessions[nativeSessionKey(p.Provider, p.SessionID)] {
+		return true
+	}
+	part := rs.seatPart(p.ID)
+	return part != nil && h.nativeSessions[nativeSessionKey(p.Provider, part.SessionID)]
+}
+
 // NativeSessionOptions returns the original session and invocation settings.
 // Legacy current sessions use the room's last saved settings; historical sessions
 // without a recorded absolute working directory cannot be reopened through this API.
@@ -98,6 +106,9 @@ func (h *Hub) DetachNativeSession(roomID, seatID, messageID string) (agent.Provi
 	rs := h.rooms[roomID]
 	p := rs.room.participant(seatID)
 	paused := p.SessionID == opts.SessionID && p.Provider == prov.ID()
+	if part := rs.seatPart(p.ID); part != nil && part.SessionID == opts.SessionID && p.Provider == prov.ID() {
+		paused = true
+	}
 	if paused && p.Enabled {
 		next := *rs.room
 		next.Participants = slices.Clone(next.Participants)

@@ -16,9 +16,8 @@ import (
 	"roundtable/internal/agent"
 )
 
-// Work tests use real git repositories in temporary folders. Review turns are
-// not exercised here (P1 owns ReviewState); parts reach the merge queue through
-// queuePart with a passed summary.
+// Work tests use real git repositories in temporary folders. Queue-only tests
+// inject a passed summary; lifecycle tests exercise the real review protocol.
 
 type workFixture struct {
 	hub   *Hub
@@ -65,7 +64,7 @@ func newGitRepo(t *testing.T) string {
 	return dir
 }
 
-func newWorkFixture(t *testing.T, parts int, mutate func(*WorkSpec)) *workFixture {
+func newWorkFixture(t *testing.T, parts int, mutate func(*WorkSpec), beforePlan ...func(*Hub, *Room)) *workFixture {
 	t.Helper()
 	repo := newGitRepo(t)
 	store, err := NewStore(t.TempDir())
@@ -81,6 +80,9 @@ func newWorkFixture(t *testing.T, parts int, mutate func(*WorkSpec)) *workFixtur
 	r, err := hub.CreateRoom(RoomSpec{Title: "work", Mode: agent.ModeWrite, Workspace: repo, Participants: []string{"claude", "codex"}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, before := range beforePlan {
+		before(hub, r)
 	}
 	if _, err := hub.CreateWork(r.ID, workSpec(parts, mutate)); err != nil {
 		t.Fatal(err)
