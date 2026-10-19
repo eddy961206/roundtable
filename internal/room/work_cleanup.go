@@ -137,7 +137,7 @@ func (h *Hub) recordWorktreeCleanup(rs *roomState, target worktreeCleanup, err e
 		if errors.Is(err, errCleanupNativeOpen) {
 			h.workNote(rs, fmt.Sprintf("%s worktree 정리 보류 · %v", label, err))
 		} else {
-			h.workNote(rs, fmt.Sprintf("%s worktree 정리 실패 · 상태와 branch는 유지: %v\n조치: 미커밋 파일을 커밋하거나 따로 보관한 뒤 정리하고, 경로·HEAD·branch를 확인해. 폴더와 Git 등록이 어긋났으면 보존할 파일 확인 후 git worktree prune으로 남은 등록을 정리해.", label, err))
+			h.workNote(rs, fmt.Sprintf("%s worktree 정리 실패 · 상태와 branch는 유지: %v\n조치: 미커밋 파일을 커밋하거나 따로 보관하고 경로·HEAD·branch를 확인해. 폴더와 Git 등록이 어긋났으면 git worktree prune으로 남은 등록을 정리하고, 보존할 파일 확인 후 남은 폴더도 지워. 저장 경로의 폴더와 등록이 모두 없으면 다음 정리 시도에서 완료로 처리해.", label, err))
 		}
 		return
 	}
@@ -196,17 +196,37 @@ func (h *Hub) removePlanWorktree(repo, roomID string, target worktreeCleanup) er
 		return err
 	}
 	registered := false
-	for _, field := range strings.Split(list, "\x00") {
-		if strings.HasPrefix(field, "worktree ") && sameWorktreePath(strings.TrimPrefix(field, "worktree "), target.path) {
-			registered = true
-			break
+	var branchPath string
+	for _, record := range strings.Split(list, "\x00\x00") {
+		var path, branch string
+		for _, field := range strings.Split(record, "\x00") {
+			if strings.HasPrefix(field, "worktree ") {
+				path = strings.TrimPrefix(field, "worktree ")
+			} else if strings.HasPrefix(field, "branch ") {
+				branch = strings.TrimPrefix(field, "branch ")
+			}
 		}
+		if sameWorktreePath(path, target.path) {
+			registered = true
+		}
+		if branch == "refs/heads/"+target.branch {
+			branchPath = path
+		}
+	}
+	if !registered && branchPath != "" {
+		return fmt.Errorf("branch의 등록 경로가 저장 경로와 다름: %s (저장 %s)", branchPath, target.path)
+	}
+	_, pathErr := os.Lstat(target.path)
+	if !registered && os.IsNotExist(pathErr) {
+		// A previous remove may have completed before its result was saved.
+		// Only the validated, persisted path can be reconciled this way.
+		return nil
 	}
 	if !registered {
 		return fmt.Errorf("Git worktree 등록 목록에 저장 경로가 없음: %s", target.path)
 	}
-	if _, err := os.Lstat(target.path); err != nil {
-		return fmt.Errorf("등록된 worktree 경로를 읽지 못함: %w", err)
+	if pathErr != nil {
+		return fmt.Errorf("등록된 worktree 경로를 읽지 못함: %w", pathErr)
 	}
 	if target.partID != "" {
 		branch, err := gitLine(target.path, "symbolic-ref", "--quiet", "HEAD")

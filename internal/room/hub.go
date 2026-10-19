@@ -138,18 +138,31 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		}
 		h.rooms[r.ID] = rs
 	}
+	if err := h.resumeRecoveredWork(); err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+func (h *Hub) resumeRecoveredWork() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, rs := range h.rooms {
-		h.startWorktreeCleanup(rs)
-		h.advanceQueue(rs)
+		// Rooms awaiting cleanup resume their queue when that worker finishes.
+		if len(h.worktreeCleanupTargets(rs)) == 0 {
+			h.advanceQueue(rs)
+		}
 		if rs.room.Work != nil {
 			if err := h.store.SaveRoom(rs.room); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
-	return h, nil
+	// Do not launch any cleanup worker until every startup save has succeeded.
+	for _, rs := range h.rooms {
+		h.startWorktreeCleanup(rs)
+	}
+	return nil
 }
 
 func newID() string {

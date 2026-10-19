@@ -53,9 +53,120 @@ func TestCleanupReviewUnregisteredIntegration(t *testing.T) {
 	markCleanupReady(t, f)
 	integration := filepath.Join(f.hub.workRoot, f.room.ID, "integration")
 	gitT(t, f.repo, "worktree", "remove", integration)
-	if retryCleanup(t, f).IntegrationWorktreeRemoved {
-		t.Fatal("missing registration recorded as a successful removal")
+	if !retryCleanup(t, f).IntegrationWorktreeRemoved {
+		t.Fatal("absent saved path and registration did not reconcile as removed")
 	}
+}
+
+func TestCleanupRoundTwoSaveFailureRecovery(t *testing.T) {
+	f := newWorkFixture(t, 1, nil)
+	markCleanupReady(t, f)
+	// Git can remove both worktrees, but the result cannot replace room.json.
+	tmp := filepath.Join(f.store.roomDir(f.room.ID), "room.json.tmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan := retryCleanup(t, f)
+	if !plan.part("p1").WorktreeRemoved || !plan.IntegrationWorktreeRemoved {
+		t.Fatal("fixture did not remove both worktrees")
+	}
+	rooms, _, err := f.store.LoadRooms()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rooms[0].Work.part("p1").WorktreeRemoved || rooms[0].Work.IntegrationWorktreeRemoved {
+		t.Fatal("fixture did not fail cleanup result persistence")
+	}
+	if err := os.Remove(tmp); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.hub.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHub(f.store, f.reg, t.TempDir(), log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Shutdown(context.Background())
+	f.hub = h
+	plan = waitWorktreeCleanup(t, f)
+	if !plan.part("p1").WorktreeRemoved || !plan.IntegrationWorktreeRemoved {
+		t.Fatal("restart did not reconcile removal after result save failure")
+	}
+	rooms, _, err = f.store.LoadRooms()
+	if err != nil || !rooms[0].Work.part("p1").WorktreeRemoved || !rooms[0].Work.IntegrationWorktreeRemoved {
+		t.Fatalf("reconciled removal was not persisted: %v", err)
+	}
+}
+
+func TestCleanupRoundTwoPruneAndLeftoverDirectory(t *testing.T) {
+	for _, leftover := range []bool{false, true} {
+		t.Run(fmt.Sprint(leftover), func(t *testing.T) {
+			f := newWorkFixture(t, 1, nil)
+			markCleanupReady(t, f)
+			path := f.part(t, "p1").Worktree
+			// Move the files aside without updating Git's registration, then prune.
+			if err := os.Rename(path, filepath.Join(t.TempDir(), "saved-files")); err != nil {
+				t.Fatal(err)
+			}
+			if retryCleanup(t, f).part("p1").WorktreeRemoved {
+				t.Fatal("registered but missing worktree was marked removed")
+			}
+			gitT(t, f.repo, "worktree", "prune", "--expire", "now")
+			if leftover {
+				// Emulate an empty directory left by a partially successful removal.
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if retryCleanup(t, f).part("p1").WorktreeRemoved {
+					t.Fatal("unregistered leftover directory was marked removed")
+				}
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !retryCleanup(t, f).part("p1").WorktreeRemoved {
+				t.Fatal("absent path after prune/manual cleanup did not reconcile")
+			}
+		})
+	}
+}
+
+func TestCleanupRoundTwoStartupSaveBeforeCleanup(t *testing.T) {
+	f := newWorkFixture(t, 1, nil)
+	markCleanupReady(t, f)
+	plan := f.plan(t)
+	tmp := filepath.Join(f.store.roomDir(f.room.ID), "room.json.tmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.hub.resumeRecoveredWork(); err == nil {
+		t.Fatal("startup save unexpectedly succeeded")
+	}
+	waitWorktreeCleanup(t, f)
+	assertWorktreeExists(t, plan.part("p1").Worktree, true)
+	assertWorktreeExists(t, plan.IntegrationWorktree, true)
+	if err := os.Remove(tmp); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.hub.resumeRecoveredWork(); err != nil {
+		t.Fatal(err)
+	}
+	plan = waitWorktreeCleanup(t, f)
+	if !plan.part("p1").WorktreeRemoved || !plan.IntegrationWorktreeRemoved {
+		t.Fatal("successful startup save did not start cleanup")
+	}
+}
+
+func TestCleanupRoundTwoRelocatedRegistration(t *testing.T) {
+	f := newWorkFixture(t, 1, nil)
+	markCleanupReady(t, f)
+	moved := filepath.Join(t.TempDir(), "moved")
+	gitT(t, f.repo, "worktree", "move", f.part(t, "p1").Worktree, moved)
+	if retryCleanup(t, f).part("p1").WorktreeRemoved {
+		t.Fatal("part branch still registered at another path was marked removed")
+	}
+	assertWorktreeExists(t, moved, true)
 }
 
 func TestCleanupReviewStoredIntegrationPath(t *testing.T) {
