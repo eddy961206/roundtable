@@ -150,7 +150,7 @@
   }
 
   function formatFileHref(rawHref) {
-    let raw = String(rawHref ?? "").trim().replace(/^file:(?:\/\/\/?)?/i, "");
+    let raw = String(rawHref ?? "").trim().replace(/^file:(?:\/\/(?:localhost(?=\/))?)?/i, "");
     try {
       raw = decodeURIComponent(raw);
     } catch {
