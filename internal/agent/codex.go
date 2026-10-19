@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,19 @@ func codexArgs(o RunOptions) []string {
 	}
 	if o.Effort != "" {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", o.Effort))
+	}
+	if o.MCP != nil && o.Mode != ModeChat {
+		// MCP servers run outside Codex's command sandbox, so a read-only
+		// server can reach the network while shell commands stay offline.
+		key := "mcp_servers." + o.MCP.Name
+		quoted := make([]string, len(o.MCP.Args))
+		for i, a := range o.MCP.Args {
+			quoted[i] = tomlString(a)
+		}
+		// approval_policy="never" rejects MCP calls that need approval; the
+		// server is read-only by construction, so its tools are pre-approved.
+		args = append(args, "-c", key+".command="+tomlString(o.MCP.Command), "-c", key+".args=["+strings.Join(quoted, ",")+"]",
+			"-c", key+`.default_tools_approval_mode="approve"`)
 	}
 	switch o.Mode {
 	case ModeWrite:
@@ -382,4 +396,13 @@ func windowLabel(minutes int) string {
 		return fmt.Sprintf("%d시간", minutes/60)
 	}
 	return fmt.Sprintf("%d분", minutes)
+}
+
+// tomlString quotes s as a TOML literal string when possible ('...' keeps
+// Windows backslashes as-is), otherwise as a basic string with escapes.
+func tomlString(s string) string {
+	if !strings.ContainsAny(s, "'\n\r") {
+		return "'" + s + "'"
+	}
+	return strconv.Quote(s)
 }

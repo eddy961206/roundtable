@@ -25,6 +25,15 @@ type RunOptions struct {
 	ScratchDir string // cwd for chat mode
 	Timeout    time.Duration
 	Steer      <-chan string // live user messages while the turn runs (providers that CanSteer)
+	MCP        *MCPServer    // extra read-only tool server for this run (nil = none)
+}
+
+// MCPServer is a stdio MCP server handed to a CLI for one run. Name becomes the
+// tool prefix (Claude shows tools as mcp__<Name>__<tool>).
+type MCPServer struct {
+	Name    string
+	Command string
+	Args    []string
 }
 
 // Result is the outcome of a turn.

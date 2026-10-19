@@ -114,3 +114,22 @@ func TestAgyStatusRoundTrip(t *testing.T) {
 		t.Fatal("status without quota must report not ok")
 	}
 }
+
+func TestMCPArgs(t *testing.T) {
+	m := &MCPServer{Name: "gitea", Command: `C:\rt\roundtable.exe`, Args: []string{"gitea-mcp", "--repos", "Acme/app"}}
+	c := strings.Join(claudeArgs(RunOptions{Mode: ModeRead, Workspace: `D:\ws`, MCP: m}), " ")
+	if !strings.Contains(c, "--strict-mcp-config") || !strings.Contains(c, `"mcpServers":{"gitea"`) || !strings.Contains(c, "--allowedTools mcp__gitea") {
+		t.Fatalf("claude: %s", c)
+	}
+	x := strings.Join(codexArgs(RunOptions{Mode: ModeRead, Workspace: `D:\ws`, MCP: m}), " ")
+	for _, want := range []string{`mcp_servers.gitea.command='C:\rt\roundtable.exe'`, `mcp_servers.gitea.args=['gitea-mcp','--repos','Acme/app']`, `mcp_servers.gitea.default_tools_approval_mode="approve"`, `sandbox_mode="read-only"`} {
+		if !strings.Contains(x, want) {
+			t.Errorf("codex missing %s: %s", want, x)
+		}
+	}
+	for _, mode := range []string{ModeChat} {
+		if a := strings.Join(claudeArgs(RunOptions{Mode: mode, MCP: m}), " ") + strings.Join(codexArgs(RunOptions{Mode: mode, MCP: m}), " "); strings.Contains(a, "gitea") {
+			t.Errorf("chat mode must not get the tool server: %s", a)
+		}
+	}
+}

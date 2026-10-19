@@ -184,6 +184,7 @@
     queue: [],
     discussion: null,
     traces: new Map(),
+    live: new Map(), // msgId -> live progress of a streaming reply (subagents, tools)
     traceFetching: new Set(),
     traceErrors: new Map(),
     expanded: new Set(),
@@ -631,6 +632,10 @@
     state.traceControllers.clear();
     state.traceFetching.clear();
     state.traceErrors.clear();
+    state.live.clear();
+    for (const m of snap.messages || []) {
+      if (m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim()) seedLive(id, m.id);
+    }
     state.room = snap.room;
     state.history = snap.history;
     state.browsingHistory = preserveHistory;
@@ -729,6 +734,7 @@
           const metadata = state.traceMeta.get(data.msg_id);
           if (data.index > metadata.total) cacheTrace(data.msg_id, [...list, data.event], data.index);
         }
+        if (m && m.status === "streaming") liveFeed(m.id, data.event);
         if (m) {
           // Fix #4: Only auto-expand if the user has not manually collapsed this message's trace
           if (state.autoTrace && !state.userCollapsed.has(m.id) && !state.expanded.has(m.id)) {
@@ -1201,6 +1207,94 @@
     );
   }
 
+  // ---------- live progress for replies that have no text yet ----------
+  // Codex narrates while it works; Claude and Antigravity often stay silent and
+  // delegate to subagents for minutes. Without this the bubble is just a cursor.
+  const firstLine = (s) => String(s || "").replace(/\s+/g, " ").trim().slice(0, 160);
+
+  function liveFeed(id, e) {
+    if (!e) return;
+    let lv = state.live.get(id);
+    if (!lv) {
+      lv = { subs: new Map(), tools: 0, lastTool: "", thought: "", ver: 0 };
+      state.live.set(id, lv);
+    }
+    const sub = (key, name) => {
+      let s = lv.subs.get(key);
+      if (!s) {
+        s = { name: name || "서브에이전트", task: "", last: "", tools: 0, done: false };
+        lv.subs.set(key, s);
+      }
+      return s;
+    };
+    switch (e.kind) {
+      case "subagent_start": {
+        const s = sub(e.parent, e.name);
+        s.name = e.name || s.name;
+        s.task = firstLine((e.meta && e.meta.description) || e.input);
+        break;
+      }
+      case "subagent_msg": {
+        const s = sub(e.parent);
+        if (e.role === "assistant" && (e.text || "").trim()) s.last = firstLine(e.text);
+        else if (e.role === "tool_call") { s.tools++; s.lastTool = e.name || "도구"; }
+        else if (e.role === "status" && e.text) s.last = s.last || firstLine(e.text);
+        break;
+      }
+      case "subagent_end": {
+        const s = sub(e.parent);
+        s.done = true;
+        if ((e.output || "").trim()) s.last = firstLine(e.output);
+        break;
+      }
+      case "tool_call":
+        lv.tools++;
+        lv.lastTool = e.name || "도구";
+        break;
+      case "thinking":
+        if ((e.text || "").trim()) lv.thought = firstLine(e.text);
+        break;
+      default:
+        return;
+    }
+    lv.ver++;
+  }
+
+  function liveHtml(lv) {
+    const subs = [...lv.subs.values()];
+    const running = subs.filter((s) => !s.done).length;
+    const head = [];
+    if (subs.length) head.push("서브에이전트 " + subs.length + "개 (실행 중 " + running + ")");
+    if (lv.tools) head.push("도구 " + lv.tools + "회" + (lv.lastTool ? " · 최근 " + lv.lastTool : ""));
+    if (!head.length && !lv.thought) return '<p class="muted live-progress">아직 본문을 쓰지 않았어. 작업을 준비하는 중…</p>';
+    let html = '<div class="live-progress" aria-live="off"><div class="muted">진행 요약 · ' + esc(head.join(" · ") || "생각 중") + "</div>";
+    if (lv.thought) html += '<div class="live-thought">💭 ' + esc(lv.thought) + "</div>";
+    for (const s of subs.slice(-6)) {
+      html +=
+        '<div class="live-sub' + (s.done ? " done" : "") + '"><span class="live-sub-name">' + (s.done ? "✓ " : "🧩 ") + esc(s.name) + "</span>" +
+        (s.task ? ' <span class="muted">' + esc(s.task) + "</span>" : "") +
+        (s.last ? '<div class="live-sub-last">↳ ' + esc(s.last) + "</div>" : s.tools ? '<div class="live-sub-last">↳ 도구 ' + s.tools + "회 · " + esc(s.lastTool || "") + "</div>" : "") +
+        "</div>";
+    }
+    if (subs.length > 6) html += '<div class="muted">… 외 ' + (subs.length - 6) + "개</div>";
+    return html + "</div>";
+  }
+
+  // A page opened mid-run has no live state yet: rebuild it once from the stored trace.
+  async function seedLive(roomId, id) {
+    try {
+      const events = await api("GET", "/api/rooms/" + roomId + "/trace/" + id);
+      if (state.roomId !== roomId) return;
+      // The stored trace already contains anything SSE delivered meanwhile:
+      // rebuild from it instead of adding to a partial state.
+      state.live.delete(id);
+      for (const e of events) liveFeed(id, e);
+      scheduleRender(id);
+    } catch (err) {
+      console.warn("live progress seed failed", id, err.message);
+    }
+  }
+
   function activeTraceActivity(id, author) {
     const list = state.traces.get(id);
     if (list && list.length) {
@@ -1359,8 +1453,11 @@
         meta.push('<span class="signal ' + esc(m.signal) + '">' + esc(m.signal) + "</span>");
       }
 
+      const live = m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim() ? state.live.get(m.id) : null;
+      if (m.status !== "streaming") state.live.delete(m.id);
       const bodyHtml =
-        m.kind === "user" ? "<p>" + esc(rewriteProseMentions(m.text, visibleMentions)).replace(/\n/g, "<br>") + "</p>" : md(m.text);
+        m.kind === "user" ? "<p>" + esc(rewriteProseMentions(m.text, visibleMentions)).replace(/\n/g, "<br>") + "</p>" : live ? liveHtml(live) : md(m.text);
+      const bodyKey = live ? "live:" + live.ver : visibleMentions(m.text);
 
       const foot = [];
       if (m.duration_ms) foot.push("⏱ " + fmtDur(m.duration_ms));
@@ -1395,8 +1492,8 @@
       bubble.querySelector(".meta").innerHTML = meta.join("");
       const bodyEl = bubble.querySelector(".body");
       bodyEl.className = "body" + (m.status === "streaming" ? " cursor" : "");
-      if (bodyEl.dataset.rawText !== visibleMentions(m.text) || isInitialMount) {
-        bodyEl.dataset.rawText = visibleMentions(m.text);
+      if (bodyEl.dataset.rawText !== bodyKey || isInitialMount) {
+        bodyEl.dataset.rawText = bodyKey;
         bodyEl.innerHTML = bodyHtml;
         bodyEl.querySelectorAll("pre").forEach((preEl) => {
           const b = el("button", "copy", "복사");

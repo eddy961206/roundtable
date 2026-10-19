@@ -15,12 +15,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
 	"roundtable"
 	"roundtable/internal/agent"
 	"roundtable/internal/agyhook"
+	"roundtable/internal/giteamcp"
 	"roundtable/internal/room"
 	"roundtable/internal/server"
 )
@@ -32,6 +34,8 @@ func main() {
 			os.Exit(runAgyStatusline(os.Args[2:]))
 		case "agy-hook":
 			os.Exit(runAgyHook(os.Args[2:]))
+		case "gitea-mcp":
+			os.Exit(runGiteaMCP(os.Args[2:]))
 		}
 	}
 	home, _ := os.UserHomeDir()
@@ -43,6 +47,9 @@ func main() {
 	openCodeCmd := flag.String("opencode", "opencode", "OpenCode command")
 	open := flag.Bool("open", false, "open the browser after start")
 	agyStatus := flag.String("agy-status", "", "Gemini quota file written by `roundtable agy-statusline` (default <data>/agy-status.json)")
+	giteaRepos := flag.String("gitea-repos", "", "comma-separated Owner/Name list agents may read through the read-only Gitea tool (empty = off)")
+	giteaLogin := flag.String("gitea-login", "", "tea login name used for the read-only Gitea tool")
+	teaCmd := flag.String("tea", "tea", "tea (Gitea CLI) command for the read-only Gitea tool")
 	flag.Parse()
 	if *agyStatus == "" {
 		*agyStatus = filepath.Join(*data, "agy-status.json")
@@ -62,6 +69,14 @@ func main() {
 	hub, err := room.NewHub(store, reg, scratch, logger)
 	if err != nil {
 		logger.Fatalf("load rooms: %v", err)
+	}
+	if *giteaRepos != "" {
+		m, err := giteaMCPServer(*teaCmd, *giteaLogin, *giteaRepos)
+		if err != nil {
+			logger.Fatalf("gitea: %v", err)
+		}
+		hub.SetMCP(m)
+		logger.Printf("gitea read-only tool on for %s (login %s)", *giteaRepos, *giteaLogin)
 	}
 	web, err := fs.Sub(roundtable.WebFS, "web")
 	if err != nil {
@@ -189,6 +204,47 @@ func runAgyHook(args []string) int {
 	default:
 		fmt.Fprintln(os.Stderr, "알 수 없는 동작:", action)
 		return 2
+	}
+	return 0
+}
+
+// giteaMCPServer describes how CLIs launch `roundtable gitea-mcp`.
+func giteaMCPServer(tea, login, repos string) (*agent.MCPServer, error) {
+	if login == "" {
+		return nil, fmt.Errorf("-gitea-login 이 필요함")
+	}
+	teaPath, err := exec.LookPath(tea)
+	if err != nil {
+		return nil, fmt.Errorf("tea 를 찾지 못함(-tea 로 경로 지정): %w", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := giteamcp.New(strings.Split(repos, ","), nil); err != nil {
+		return nil, err
+	}
+	return &agent.MCPServer{Name: "gitea", Command: exe, Args: []string{"gitea-mcp", "--tea", teaPath, "--login", login, "--repos", repos}}, nil
+}
+
+// runGiteaMCP is the read-only Gitea MCP server process that CLIs start.
+func runGiteaMCP(args []string) int {
+	fs := flag.NewFlagSet("gitea-mcp", flag.ContinueOnError)
+	tea := fs.String("tea", "tea", "tea command")
+	login := fs.String("login", "", "tea login name")
+	repos := fs.String("repos", "", "comma-separated Owner/Name allow-list")
+	if err := fs.Parse(args); err != nil || *login == "" || *repos == "" {
+		fmt.Fprintln(os.Stderr, "사용법: roundtable gitea-mcp --login <tea 로그인> --repos Owner/A,Owner/B [--tea 경로]")
+		return 2
+	}
+	s, err := giteamcp.New(strings.Split(*repos, ","), giteamcp.TeaFetcher(*tea, *login))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if err := s.Serve(os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
 	return 0
 }

@@ -62,6 +62,20 @@ Roundtable은 각 공급사의 일반 세션 저장 기능을 사용한다. 대�
 
 화면에서 제공하는 명령에는 당시 모델·추론 수준·권한 옵션도 포함된다. 새 메시지에는 원본 세션 ID와 작업 폴더를 함께 보존한다. 이전 버전의 기록에는 작업 폴더 정보가 없어서 과거 세션의 열기가 제한될 수 있다. 원본 CLI에서 별도로 나눈 새 대화가 Roundtable 기록으로 역수입되지는 않는다. 각 공급사 데스크톱 앱의 대화 목록 동기화는 앱별 동작에 따른다. 열린 CLI 창의 추적은 현재 서버 프로세스에서만 유지되므로 서버를 재시작하기 전에는 해당 창을 닫는다.
 
+### Gitea 이슈·PR 읽기 (선택)
+
+read·write 모드의 에이전트가 Gitea 이슈·PR을 실시간으로 조회하게 한다. 각 CLI의 샌드박스는 셸의 네트워크를 막으므로, roundtable이 **읽기 전용 MCP 서버**(`roundtable gitea-mcp`)를 대신 붙인다. 이 서버는 허용한 저장소에 대해 고정된 GET 조회만 하며, 내부적으로 사용자의 `tea` 로그인을 쓴다. 도구가 URL·HTTP 메서드·본문을 받지 않으므로 댓글·병합·다른 저장소 접근은 구조적으로 불가능하다.
+
+```bash
+./roundtable.exe -gitea-repos Owner/A,Owner/B -gitea-login <tea 로그인> -tea <tea 경로>
+```
+
+- 도구: `gitea_list`(이슈·PR 목록), `gitea_search`(키워드), `gitea_issue`(본문·전체 댓글), `gitea_pull`(상태·변경 파일·리뷰), `gitea_pull_diff`(diff, 최대 120KB).
+- Claude Code: 실행마다 `--mcp-config` 로 붙이고 `--allowedTools mcp__gitea` 로 이 서버 도구만 허용한다. `--strict-mcp-config` 때문에 사용자의 다른 MCP 서버는 붙지 않는다.
+- Codex: 실행마다 `-c mcp_servers.gitea.*` 로 붙이고 `default_tools_approval_mode="approve"` 로 이 서버 도구만 승인한다(그렇지 않으면 `approval_policy="never"` 에서 거절된다).
+- Antigravity: 실행마다 붙이는 옵션이 없어 한 번 전역 등록한다. `agy mcp add roundtable-gitea <roundtable.exe 경로> gitea-mcp --tea <tea 경로> --login <로그인> --repos Owner/A,Owner/B` / 해제는 `agy mcp remove roundtable-gitea`.
+- `chat` 모드에는 붙이지 않는다.
+
 ### Gemini 한도 보이게 하기 (선택)
 
 Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cli/statusline)으로, 상태표시줄을 그릴 때마다(비대화형 `-p` 실행 포함) 남은 할당량을 JSON으로 명령에 넘긴다. Roundtable은 그 명령 앞에 끼어들어 값을 받아 적고, 원래 명령은 그대로 이어 실행한다.
