@@ -150,10 +150,10 @@ func BuildPartPrompt(plan *WorkPlan, part *Part) string {
 // BuildFixPrompt asks the author to fix the review items it accepted.
 func BuildFixPrompt(part *Part) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "파트 %s 리뷰에서 수용한 항목을 고치세요. 고친 뒤 branch %s 에 커밋하고 응답 마지막 줄에 %s 한 줄만 쓰세요. 새 커밋으로 다시 리뷰합니다.\n", part.ID, part.Branch, workDoneSignal)
+	fmt.Fprintf(&b, "파트 %s 리뷰의 수용 항목과 남은 이견 항목을 고치세요. 고친 뒤 branch %s 에 커밋하고 응답 마지막 줄에 %s 한 줄만 쓰세요. 새 커밋으로 다시 리뷰합니다.\n", part.ID, part.Branch, workDoneSignal)
 	for _, round := range part.Review.Rounds {
 		for _, item := range round.Items {
-			if item.Status != "accepted_pending" {
+			if item.Status != "accepted_pending" && item.Status != "disputed" {
 				continue
 			}
 			f := item.Finding

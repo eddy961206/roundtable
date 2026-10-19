@@ -33,6 +33,8 @@ type Part struct {
 	Branch    string       `json:"branch"`   // rt/<roomID>/<partID>
 	Worktree  string       `json:"worktree"`
 	SessionID string       `json:"session_id"`
+	LastSeen  int64        `json:"last_seen"` // delivery boundary independent of the seat's chat session
+	Unseen    []int64      `json:"unseen,omitempty"`
 	State     string       `json:"state"` // working|reviewing|fixing|queued|awaiting_approval|merging|merged|blocked|abandoned
 	SubmitSHA string       `json:"submit_sha"`
 	ReadyMode string       `json:"ready_mode"` // D6: merge_mode captured when the part became queued

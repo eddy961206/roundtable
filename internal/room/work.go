@@ -60,11 +60,20 @@ func (plan *WorkPlan) refreshHalted() {
 
 // activePart is the seat's working or fixing part; its turns run there (D9).
 func (rs *roomState) activePart(seat string) *Part {
+	p := rs.seatPart(seat)
+	if p != nil && (p.State == "working" || p.State == "fixing") {
+		return p
+	}
+	return nil
+}
+
+// seatPart owns the seat's work context until the part is merged or abandoned.
+func (rs *roomState) seatPart(seat string) *Part {
 	if rs.room.Work == nil {
 		return nil
 	}
 	for _, p := range rs.room.Work.Parts {
-		if p.Seat == seat && (p.State == "working" || p.State == "fixing") {
+		if p.Seat == seat && p.State != "merged" && p.State != "abandoned" {
 			return p
 		}
 	}
@@ -228,6 +237,9 @@ func (h *Hub) CreateWork(roomID string, spec WorkSpec) (*WorkPlan, error) {
 		return nil, err
 	}
 	rs.room.Work = plan
+	for _, part := range plan.Parts {
+		part.LastSeen = rs.room.Seq
+	}
 	if err := h.store.SaveRoom(rs.room); err != nil {
 		rs.room.Work = nil
 		return nil, errors.Join(err, removeWorktrees(repo, made))
@@ -385,17 +397,33 @@ func (h *Hub) SetMergeMode(roomID, mode string) (*WorkPlan, error) {
 func (h *Hub) SubmitPart(roomID, partID string) (*WorkPlan, error) {
 	h.mu.Lock()
 	rs, part, err := h.workPart(roomID, partID)
-	if err == nil && part.State != "working" && part.State != "fixing" {
-		err = fmt.Errorf("%w: 파트 %s는 %s 상태라 제출할 수 없음", ErrWorkConflict, partID, part.State)
+	if err == nil {
+		err = h.reserveSubmit(rs, part)
 	}
-	if err == nil && rs.workBusy[partID] {
-		err = fmt.Errorf("%w: 파트 %s 제출 검사가 이미 진행 중", ErrWorkConflict, partID)
-	}
+	h.mu.Unlock()
 	if err != nil {
-		h.mu.Unlock()
 		return nil, err
 	}
-	rs.workBusy[partID] = true
+	return h.submitReserved(rs, part)
+}
+
+// reserveSubmit closes the write-turn gate before releasing h.mu for git.
+func (h *Hub) reserveSubmit(rs *roomState, part *Part) error {
+	switch {
+	case part.State != "working" && part.State != "fixing":
+		return fmt.Errorf("%w: 파트 %s는 %s 상태라 제출할 수 없음", ErrWorkConflict, part.ID, part.State)
+	case rs.workBusy[part.ID]:
+		return fmt.Errorf("%w: 파트 %s 제출 검사가 이미 진행 중", ErrWorkConflict, part.ID)
+	case rs.runningFor(part.Seat) != nil:
+		return fmt.Errorf("%w: 파트 %s 담당 좌석이 실행 중", ErrWorkConflict, part.ID)
+	}
+	rs.workBusy[part.ID] = true
+	return nil
+}
+
+func (h *Hub) submitReserved(rs *roomState, part *Part) (*WorkPlan, error) {
+	h.mu.Lock()
+	roomID, partID := rs.room.ID, part.ID
 	from, prev, repo, base := part.State, part.SubmitSHA, rs.room.Workspace, rs.room.Work.BaseSHA
 	wt, branch := part.Worktree, part.Branch
 	h.mu.Unlock()
@@ -493,7 +521,7 @@ func (h *Hub) ApprovePart(roomID, partID, submitSHA, integrationSHA string) (*Wo
 	return cloneWork(plan), nil
 }
 
-// RetryPart clears a block and returns the part to Block.From.
+// RetryPart clears a block; terminal reviews receive one extra round to fix.
 func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -505,6 +533,14 @@ func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 		return nil, fmt.Errorf("%w: 파트 %s는 정지 상태가 아님", ErrWorkConflict, partID)
 	}
 	from := part.Block.From
+	extraRound := part.Block.Kind == "review" && part.Review != nil && (part.Review.Phase == "disputed" || part.Review.Phase == "limit")
+	if extraRound {
+		if err := part.Review.AllowExtraRound(); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrWorkConflict, err)
+		}
+		from = "fixing"
+		h.workNote(rs, fmt.Sprintf("파트 %s 사람이 리뷰 라운드 1회 추가 허용 · 상한 %d", partID, part.Review.MaxRounds))
+	}
 	var pending *ReviewStep
 	if from == "reviewing" {
 		pending = part.Review.Pending
@@ -518,11 +554,40 @@ func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 	if pending != nil {
 		h.runReviewStep(rs, part, *pending)
 	}
+	if extraRound {
+		rs.enqueue(&Turn{ID: newID(), Agent: part.Seat, Reason: "part", Part: part.ID, Cap: rs.room.Seq, Created: nowMs(), Status: "queued", prompt: BuildFixPrompt(part)})
+	}
 	h.advanceQueue(rs)
 	saveErr := h.saveWork(rs)
 	h.pump(rs)
 	if saveErr != nil {
 		return nil, saveErr
+	}
+	return cloneWork(rs.room.Work), nil
+}
+
+// ResolvePart records the user's decision to waive unresolved review items.
+func (h *Hub) ResolvePart(roomID, partID string) (*WorkPlan, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	rs, part, err := h.workPart(roomID, partID)
+	if err != nil {
+		return nil, err
+	}
+	if part.State != "blocked" || part.Block.Kind != "review" || part.Review == nil || part.SubmitSHA == "" {
+		return nil, fmt.Errorf("%w: 파트 %s는 제출된 리뷰 정지 상태가 아님", ErrWorkConflict, partID)
+	}
+	part.Review.Resolve(nowMs())
+	h.workNote(rs, fmt.Sprintf("파트 %s 사람이 미해결 리뷰 항목을 넘기기로 판정 · user · 시각 %d · 항목 %v", partID, part.Review.Resolution.At, part.Review.Resolution.ItemIDs))
+	// Persist the audit before queuePart can start an automatic merge.
+	if err := h.saveWork(rs); err != nil {
+		return nil, err
+	}
+	part.State, part.Block = "queued", nil
+	rs.room.Work.refreshHalted()
+	h.queuePart(rs, part)
+	if err := h.saveWork(rs); err != nil {
+		return nil, err
 	}
 	return cloneWork(rs.room.Work), nil
 }
@@ -578,21 +643,22 @@ func (h *Hub) PartDiff(roomID, partID string) (*PartDiff, error) {
 
 func (h *Hub) startReview(rs *roomState, part *Part, from, sha string, diff *PartDiff) {
 	plan := rs.room.Work
-	part.SubmitSHA, part.State = sha, "reviewing"
 	in := ReviewInput{Ref: ReviewRef{PartID: part.ID, Round: 1, BaseSHA: plan.BaseSHA, HeadSHA: sha}, Goal: plan.Goal, Brief: part.Brief, Scope: part.Scope, Diff: diff}
 	var step ReviewStep
 	var err error
+	review := part.Review
 	if from == "working" {
-		part.Review = NewReviewState(plan.ReviewRounds)
-		step, err = part.Review.Start(in)
+		review = NewReviewState(plan.ReviewRounds)
+		step, err = review.Start(in)
 	} else {
-		in.Ref.Round = len(part.Review.Rounds) + 1
-		step, err = part.Review.Resubmit(in)
+		in.Ref.Round = len(review.Rounds) + 1
+		step, err = review.Resubmit(in)
 	}
 	if err != nil {
 		h.blockPart(rs, part, "review", from, "리뷰를 시작하지 못함: "+err.Error(), nil)
 		return
 	}
+	part.SubmitSHA, part.State, part.Review = sha, "reviewing", review
 	h.workNote(rs, fmt.Sprintf("파트 %s 제출 · %s · 리뷰 %d라운드", part.ID, shortSHA(sha), in.Ref.Round))
 	h.runReviewStep(rs, part, step)
 }
@@ -616,6 +682,15 @@ func (h *Hub) finishReview(rs *roomState, part *Part, msg *Message, next *Review
 		return // abandoned while the turn ran
 	}
 	defer rs.broadcast("work", rs.room.Work)
+	if next != nil && outcome == "format_retry" {
+		h.workNote(rs, "리뷰 표 형식 오류로 1회 다시 요청: "+strings.TrimPrefix(msg.Error, "리뷰 표 형식 오류: "))
+		if err := h.saveWork(rs); err != nil {
+			h.blockPart(rs, part, "review", "reviewing", "리뷰 재요청 횟수 저장 실패: "+err.Error(), nil)
+			return
+		}
+		h.runReviewStep(rs, part, *next)
+		return
+	}
 	if msg.Status != "done" {
 		h.blockPart(rs, part, "review", "reviewing", "리뷰 턴 실패: "+msg.Error, nil)
 		return
@@ -656,14 +731,18 @@ func (h *Hub) reviewTurnLost(rs *roomState, t *Turn, why string) {
 
 func (h *Hub) queuePart(rs *roomState, part *Part) {
 	plan := rs.room.Work
-	if s := part.Review.Summary; !s.Passed || s.Unresolved != 0 {
-		// D4: any unresolved item keeps the part out of the queue.
+	if s := part.Review.Summary; part.Review.Resolution == nil && (!s.Passed || s.Unresolved != 0) {
+		// D4: unresolved items require an explicit human resolution.
 		h.blockPart(rs, part, "review", "fixing", fmt.Sprintf("리뷰 통과 신호와 요약이 맞지 않음(미해결 %d건)", s.Unresolved), nil)
 		return
 	}
 	part.State, part.ReadyMode, part.Approval = "queued", plan.MergeMode, nil
 	plan.Queue = append(plan.Queue, part.ID)
-	h.workNote(rs, fmt.Sprintf("파트 %s 리뷰 통과 · 병합 대기열 %d번째 · %s", part.ID, len(plan.Queue), part.ReadyMode))
+	reason := "리뷰 통과"
+	if part.Review.Resolution != nil {
+		reason = "사람 판정"
+	}
+	h.workNote(rs, fmt.Sprintf("파트 %s %s · 병합 대기열 %d번째 · %s", part.ID, reason, len(plan.Queue), part.ReadyMode))
 	h.advanceQueue(rs)
 }
 
@@ -726,6 +805,7 @@ func (h *Hub) mergePart(rs *roomState, part *Part, submitSHA, beforeSHA, branch,
 		h.completeMerge(rs, part, mergeSHA)
 		h.advanceQueue(rs)
 	}
+	h.pump(rs)
 	_ = h.saveWork(rs)
 }
 
@@ -847,11 +927,15 @@ func (h *Hub) recoverWork(rs *roomState) error {
 
 // submitAsync runs the submit checks for a WORK:DONE reply outside the turn's lock.
 func (h *Hub) submitAsync(rs *roomState, partID string) {
-	roomID := rs.room.ID
+	part := rs.room.Work.part(partID)
+	if err := h.reserveSubmit(rs, part); err != nil {
+		h.workNote(rs, fmt.Sprintf("파트 %s의 %s 제출을 처리하지 못함: %v", partID, workDoneSignal, err))
+		return
+	}
 	h.turnWG.Add(1)
 	go func() {
 		defer h.turnWG.Done()
-		if _, err := h.SubmitPart(roomID, partID); err != nil {
+		if _, err := h.submitReserved(rs, part); err != nil {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			if !rs.deleted {
