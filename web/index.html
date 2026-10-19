@@ -145,7 +145,13 @@
         <span id="history-status" role="status"></span>
         <button type="button" id="btn-latest-history">최신 대화로 이동</button>
       </div>
-      <div id="timeline" role="log" aria-live="off" aria-label="대화 메시지 목록"></div>
+      <div class="timeline-stage">
+        <div id="timeline" role="log" aria-live="off" aria-label="대화 메시지 목록"></div>
+        <button type="button" id="btn-jump-bottom" class="jump-bottom-btn" aria-label="맨 아래로 이동" title="맨 아래로 이동" hidden>
+          <span aria-hidden="true">↓</span>
+          <span id="jump-bottom-count" class="badge jump-bottom-badge" hidden>0</span>
+        </button>
+      </div>
       <div id="discussion-bar" role="status" aria-live="polite" hidden></div>
 
       <form id="composer" aria-label="메시지 작성 및 조정">
