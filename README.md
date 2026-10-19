@@ -136,6 +136,8 @@ go test ./...
 - `internal/server` — JSON API + SSE + 정적 UI.
 - `web/` — 단일 페이지 UI. 설계 기준은 [디자인 브리프](docs/디자인_브리프.md).
 
+web 화면은 `web/js/` 아래 ES 모듈이다. 모듈을 고친 뒤에는 `python tools/modcheck.py web/js`로 다른 모듈의 이름을 import 없이 쓰는 곳이 없는지(0건) 확인한다.
+
 ## 어떻게 만들었나
 
 이 저장소 자체가 세 모델의 협업으로 만들어졌다. Claude가 설계·통합·검증을 맡아 오케스트레이션하고, Codex(GPT-6.1 Sol)가 백엔드 스케줄러와 웹 조사·결함 리뷰를, Gemini 4 Argon이 UI를 맡았다. 작업 지시도 Roundtable의 write 모드 방으로 했다. 과정과 검증 결과는 [통합 테스트 기록](docs/통합테스트_20261016.md)과 [협업 기록](docs/협업기록_20261017.md)에 있다.
