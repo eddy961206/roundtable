@@ -162,3 +162,67 @@ func TestAPIFlow(t *testing.T) {
 		t.Fatal("room should be gone")
 	}
 }
+
+func TestRoomListStream(t *testing.T) {
+	ts := newTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", ts.URL+"/api/stream", nil)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if ct := res.Header.Get("Content-Type"); res.StatusCode != 200 || !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("stream %d %s", res.StatusCode, ct)
+	}
+	lines := make(chan string)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(res.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+	}()
+	waitLine := func(step, want string) {
+		t.Helper()
+		timeout := time.After(3 * time.Second)
+		for {
+			select {
+			case line, ok := <-lines:
+				if !ok {
+					t.Fatalf("%s: stream ended", step)
+				}
+				if line == want {
+					return
+				}
+			case <-timeout:
+				t.Fatalf("%s: no %q", step, want)
+			}
+		}
+	}
+	signal := `data: {"type":"rooms"}`
+	waitLine("connect", "event: hello")
+
+	code, rm := call(t, ts, "POST", "/api/rooms", map[string]any{"title": "list", "mode": "chat", "participants": []string{"claude"}})
+	if code != 201 {
+		t.Fatalf("create %d %v", code, rm)
+	}
+	waitLine("create", signal)
+	id := rm["id"].(string)
+	if code, _ := call(t, ts, "PATCH", "/api/rooms/"+id, map[string]any{"title": "renamed"}); code != 200 {
+		t.Fatal("patch failed")
+	}
+	waitLine("patch", signal)
+	if code, _ := call(t, ts, "DELETE", "/api/rooms/"+id, nil); code != 200 {
+		t.Fatal("delete failed")
+	}
+	waitLine("delete", signal)
+
+	_, other := call(t, ts, "POST", "/api/rooms", map[string]any{"title": "activity", "mode": "chat", "participants": []string{"claude"}})
+	waitLine("create other", signal)
+	if code, _ := call(t, ts, "POST", "/api/rooms/"+other["id"].(string)+"/messages", map[string]any{"text": "hi"}); code != 201 {
+		t.Fatal("post failed")
+	}
+	waitLine("message", signal)
+}

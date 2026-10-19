@@ -8,7 +8,7 @@ import { refreshLimits, renderProviderStatus, renderUsagePanel, scheduleUsageRef
 import { addAttachmentFiles, clearComposerError, clearDraftAttachments, closeLightbox, extractClipboardImageFiles, renderRequests } from "./attachments.js";
 import { applyMention, closeMentionPop, mentionPopup, renderMentionButtons, send, setTarget, updateHint } from "./composer.js";
 import { closeDiffDrawer } from "./work.js";
-import { loadRooms, renderRoomHead, renderRoomList } from "./rooms.js";
+import { connectRoomsFeed, loadRooms, renderRoomHead, renderRoomList } from "./rooms.js";
 import { getAgentElapsedMs, renderParticipants } from "./participants.js";
 import { ensureAndRenderTrace, expandTrace } from "./trace.js";
 import { bindTimeline, focusTimelineMessage, jumpToLatestMessages, onTimelineImageLoad, renderMessage, renderTimeline, scheduleRender, scrollToTimelineBottom, syncPendingScrollRestore } from "./timeline.js";
@@ -27,6 +27,8 @@ async function boot() {
   state.config = cfg || {};
   renderProviderStatus();
   renderUsagePanel();
+  // Subscribe before the first read so no change falls between them.
+  connectRoomsFeed();
   await loadRooms();
   const last = localStorage.getItem("rt.room");
   if (last && state.rooms.some((r) => r.id === last)) {
@@ -42,7 +44,7 @@ async function boot() {
       if (state.room) { renderTimeline(false); schedulePanels(); }
     }
   });
-  window.addEventListener("pagehide", () => { stopBackground(); if (state.es) state.es.close(); });
+  window.addEventListener("pagehide", () => { stopBackground(); state.roomsEs.close(); if (state.es) state.es.close(); });
 }
 
 let watchTimer = null;
@@ -58,7 +60,9 @@ function resumeBackground() {
   scheduleUsageRefresh();
 }
 function watchdog() {
-  if (!state.roomId || document.hidden) return;
+  if (document.hidden) return;
+  if (state.roomsEs.readyState === 2) connectRoomsFeed();
+  if (!state.roomId) return;
   if (state.es && state.es.readyState === 2) {
     connect(state.roomId);
     openRoom(state.roomId, true);
@@ -373,21 +377,7 @@ function bindUI() {
     closeMoreMenu();
     if (!confirm("방과 대화 기록을 영구 삭제할까요? 되돌릴 수 없습니다.")) return;
     await api("DELETE", "/api/rooms/" + state.roomId);
-    state.roomId = null;
-    state.room = null;
-    state.work = null;
-    state.requests.clear();
-    closeLightbox();
-    clearDraftAttachments();
-    closeDiffDrawer();
-    renderUsagePanel();
-    renderRequests();
-    $("#btn-add-participant").disabled = true;
-    $("#participants").replaceChildren();
-    localStorage.removeItem("rt.room");
-    if (state.es) state.es.close();
-    $("#room").hidden = true;
-    $("#empty").hidden = false;
+    closeRoom("");
     loadRooms();
   };
 
@@ -437,8 +427,31 @@ function bindUI() {
   });
 }
 
+// Leaves the open room for the empty screen; notice says why when it is not the user's own action.
+function closeRoom(notice) {
+  state.roomId = null;
+  state.room = null;
+  state.work = null;
+  state.requests.clear();
+  closeLightbox();
+  clearDraftAttachments();
+  closeDiffDrawer();
+  renderUsagePanel();
+  renderRequests();
+  $("#btn-add-participant").disabled = true;
+  $("#participants").replaceChildren();
+  localStorage.removeItem("rt.room");
+  if (state.es) state.es.close();
+  $("#room").hidden = true;
+  $("#empty").hidden = false;
+  const emptyNotice = $("#empty-notice");
+  emptyNotice.textContent = notice;
+  emptyNotice.hidden = !notice;
+}
+
 Object.assign(hooks, {
   openRoom,
+  closeRoom,
   renderMessage,
   scheduleRender,
   syncPendingScrollRestore,
