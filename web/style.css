@@ -671,7 +671,14 @@ kbd {
   overflow-wrap: anywhere;
 }
 #provider-panel .token-strip { display: grid; gap: 8px; min-width: 0; font-size: 11.5px; }
-.usage-account { min-width: 0; }
+.usage-account {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--seat, var(--border)) 55%, var(--border));
+  border-left: 3px solid var(--seat, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--seat, var(--border)) 4%, var(--panel));
+}
 .usage-account-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; margin-bottom: 1px; }
 .usage-account-head .prov-name { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
 .usage-quality { flex: none; font-size: 10.5px; color: var(--muted); }
@@ -791,6 +798,12 @@ kbd {
 .avatar.codex { background: var(--codex-avatar); }
 .avatar.agy { background: var(--agy-avatar); }
 .avatar.user { background: var(--user-avatar); }
+.avatar img {
+  display: block;
+  width: 22px;
+  height: 22px;
+  filter: brightness(0) invert(1);
+}
 
 .bubble {
   background: var(--panel);

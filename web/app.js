@@ -59,6 +59,18 @@
   };
 
   const LABEL = { claude: "Claude", codex: "Codex", agy: "Antigravity", opencode: "OpenCode", user: "나", system: "시스템" };
+  const PROVIDER_ICONS = Object.freeze({
+    claude: "claude.svg",
+    codex: "codex.svg",
+    agy: "gemini.svg",
+  });
+
+  function avatarContent(provider, label) {
+    const icon = Object.hasOwn(PROVIDER_ICONS, provider) ? PROVIDER_ICONS[provider] : null;
+    return icon
+      ? '<img src="vendor/provider-icons/' + icon + '" alt="" width="22" height="22" draggable="false">'
+      : esc(label[0]);
+  }
 
   // ---------- Safe Markdown Rendering (Fix P1 #1: XSS & file:// handling) ----------
   function decodeHtmlEntities(str) {
@@ -1015,7 +1027,9 @@
       const source = state.usageSources[provider];
       const unsupported = source && source.refresh_kind === "unsupported";
       const remaining = windows.map((w) => Math.max(0, Math.min(100, 100 - Number(w.used_percent))));
-      const account = el("section", "usage-account");
+      const seat = participants.find((p) => p.provider === provider && !p.removed);
+      const account = el("section", "usage-account" + (seat ? seatClass(seat.id) : ""));
+      account.setAttribute("aria-label", (LABEL[provider] || provider) + " 남은 사용량");
       const heading = el("div", "usage-account-head");
       heading.appendChild(el("span", "prov-name " + provider, LABEL[provider] || provider));
       if (!unsupported) {
@@ -1496,7 +1510,7 @@
           '<div class="avatar ' +
           esc(authorProvider(m.author)) +
           '" aria-hidden="true">' +
-          esc(participantLabel(m.author)[0]) +
+          avatarContent(m.kind === "user" ? "user" : authorProvider(m.author), who) +
           "</div>" +
           '<div class="bubble">' +
           '<div class="meta"></div>' +
