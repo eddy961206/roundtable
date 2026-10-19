@@ -13,7 +13,7 @@ import (
 )
 
 func TestResolvePartHTTPConflict(t *testing.T) {
-	for _, state := range []string{"working", "fixing", "queued", "awaiting_approval", "merged", "abandoned", "blocked"} {
+	for _, state := range []string{"working", "fixing", "queued", "awaiting_approval", "merged", "abandoned", "blocked", "review_start_failed"} {
 		t.Run(state, func(t *testing.T) {
 			store, err := room.NewStore(t.TempDir())
 			if err != nil {
@@ -23,7 +23,12 @@ func TestResolvePartHTTPConflict(t *testing.T) {
 			if state == "blocked" {
 				part.Block = &room.Block{Kind: "submit", From: "working"}
 			}
-			r := &room.Room{ID: "resolve-test", Work: &room.WorkPlan{Parts: []*room.Part{part}}}
+			if state == "review_start_failed" {
+				part.State, part.SubmitSHA = "blocked", "old-submission-sha"
+				part.Block = &room.Block{Kind: "review", From: "fixing"}
+				part.Review = &room.ReviewState{Phase: "fix"}
+			}
+			r := &room.Room{ID: "resolve-test", Work: &room.WorkPlan{MergeMode: "confirm", Parts: []*room.Part{part}}}
 			if err := store.SaveRoom(r); err != nil {
 				t.Fatal(err)
 			}

@@ -906,7 +906,16 @@ func (h *Hub) pump(rs *roomState) {
 			}
 			continue
 		}
-		if part := rs.seatPart(p.ID); t.Reason != "review" && part != nil && (rs.workBusy[part.ID] || (part.State != "working" && part.State != "fixing")) {
+		part := rs.seatPart(p.ID)
+		partActive := part != nil && (part.State == "working" || part.State == "fixing")
+		if t.Reason == "part" && !partActive {
+			rs.queue = slices.Delete(rs.queue, i, i+1)
+			skipped = true
+			continue
+		}
+		// Room discussions can run outside an inactive part. Submission still
+		// reserves the author until its state and worktree checks are settled.
+		if t.Reason != "review" && part != nil && (rs.workBusy[part.ID] || (!partActive && t.Reason != "discussion")) {
 			i++
 			continue
 		}

@@ -141,7 +141,7 @@ func (rs *ReviewState) apply(reply string) (*ReviewStep, string, error) {
 	switch rs.Phase {
 	case "findings", "recheck":
 		if rs.Phase == "recheck" {
-			if err := rs.applyActions(tables[0], "FIXED", "UNFIXED", "accepted_pending", "disputed"); err != nil {
+			if err := rs.applyActions(tables[0], rs.itemsWithStatus("accepted_pending", "disputed"), "FIXED", "UNFIXED"); err != nil {
 				return nil, "", err
 			}
 		}
@@ -154,14 +154,14 @@ func (rs *ReviewState) apply(reply string) (*ReviewStep, string, error) {
 			return rs.setStep("author_reply"), "", nil
 		}
 	case "author_reply":
-		if err := rs.applyActions(tables[0], "ACCEPT", "REJECT", "open"); err != nil {
+		if err := rs.applyActions(tables[0], current.itemsWithStatus("open"), "ACCEPT", "REJECT"); err != nil {
 			return nil, "", err
 		}
-		if len(rs.itemsWithStatus("disputed")) > 0 {
+		if len(current.itemsWithStatus("disputed")) > 0 {
 			return rs.setStep("rebuttal"), "", nil
 		}
 	case "rebuttal":
-		if err := rs.applyActions(tables[0], "MAINTAIN", "WITHDRAW", "disputed"); err != nil {
+		if err := rs.applyActions(tables[0], current.itemsWithStatus("disputed"), "MAINTAIN", "WITHDRAW"); err != nil {
 			return nil, "", err
 		}
 	}
@@ -181,18 +181,23 @@ func (rs *ReviewState) apply(reply string) (*ReviewStep, string, error) {
 func (rs *ReviewState) itemsWithStatus(statuses ...string) []*ReviewItem {
 	var items []*ReviewItem
 	for r := range rs.Rounds {
-		for i := range rs.Rounds[r].Items {
-			item := &rs.Rounds[r].Items[i]
-			if slices.Contains(statuses, item.Status) {
-				items = append(items, item)
-			}
+		items = append(items, rs.Rounds[r].itemsWithStatus(statuses...)...)
+	}
+	return items
+}
+
+func (round *ReviewRound) itemsWithStatus(statuses ...string) []*ReviewItem {
+	var items []*ReviewItem
+	for i := range round.Items {
+		item := &round.Items[i]
+		if slices.Contains(statuses, item.Status) {
+			items = append(items, item)
 		}
 	}
 	return items
 }
 
-func (rs *ReviewState) applyActions(rows [][]string, first, second string, statuses ...string) error {
-	expected := rs.itemsWithStatus(statuses...)
+func (rs *ReviewState) applyActions(rows [][]string, expected []*ReviewItem, first, second string) error {
 	byID := make(map[string]*ReviewItem, len(expected))
 	for _, item := range expected {
 		byID[item.Finding.ID] = item
@@ -412,7 +417,8 @@ func (rs *ReviewState) prompt(kind string) string {
 		b.WriteString("리뷰어는 매번 새 세션이며 방 대화 이력은 제공하지 않는다. 코드를 수정하지 말고 실제 결함만 지적한다.\n")
 	}
 	fmt.Fprintf(&b, "목표: %s\n파트 완료 조건: %s\n범위: %s\n", rs.Input.Goal, rs.Input.Brief, strings.Join(rs.Input.Scope, ", "))
-	ref := rs.Rounds[len(rs.Rounds)-1].Ref
+	current := &rs.Rounds[len(rs.Rounds)-1]
+	ref := current.Ref
 	fmt.Fprintf(&b, "파트: %s / 라운드: %d / base SHA: %s / head SHA: %s\n", ref.PartID, ref.Round, ref.BaseSHA, ref.HeadSHA)
 	b.WriteString("변경 파일 목록(전체):\n")
 	remaining, truncated := reviewPatchRunes, rs.Input.Diff.Truncated
@@ -443,14 +449,14 @@ func (rs *ReviewState) prompt(kind string) string {
 	case "findings":
 		writeFindingsInstructions(&b)
 	case "author_reply":
-		b.WriteString("각 open 항목에 ACCEPT 또는 REJECT로 응답한다. ACCEPT는 수정할 동작을, REJECT는 반박 근거를 쓴다. 이 단계에서는 응답만 하고, 수정은 fix 결과 후 진행한다.\n")
-		rs.writeActionInstructions(&b, authorTable, "ACCEPT", "open")
+		b.WriteString("현재 라운드의 각 open 항목에 ACCEPT 또는 REJECT로 응답한다. ACCEPT는 수정할 동작을, REJECT는 반박 근거를 쓴다. 이 단계에서는 응답만 하고, 수정은 fix 결과 후 진행한다.\n")
+		writeActionInstructions(&b, authorTable, "ACCEPT", current.itemsWithStatus("open"))
 	case "rebuttal":
-		b.WriteString("각 disputed 항목의 작성자 반박을 검토한다. 결함이 남으면 MAINTAIN, 반박이 타당하면 WITHDRAW와 근거를 쓴다.\n")
-		rs.writeActionInstructions(&b, rebuttalTable, "MAINTAIN", "disputed")
+		b.WriteString("현재 라운드의 각 disputed 항목의 작성자 반박을 검토한다. 이전 라운드 항목은 recheck에서 이미 판정했으므로 이 표에 포함하지 않는다. 결함이 남으면 MAINTAIN, 반박이 타당하면 WITHDRAW와 근거를 쓴다.\n")
+		writeActionInstructions(&b, rebuttalTable, "MAINTAIN", current.itemsWithStatus("disputed"))
 	case "recheck":
 		b.WriteString("새 head SHA에서 각 accepted_pending 및 disputed 항목을 다시 판정한다. 해결됐으면 FIXED, 남아 있으면 UNFIXED와 근거를 쓴다. UNFIXED는 기존 항목 상태를 유지한다. 수정 확인 표와 새 지적 표를 각각 한 번 쓴다. 두 표의 순서는 상관없다. 기존 항목을 새 지적으로 중복 등록하지 않는다.\n")
-		rs.writeActionInstructions(&b, recheckTable, "FIXED", "accepted_pending", "disputed")
+		writeActionInstructions(&b, recheckTable, "FIXED", rs.itemsWithStatus("accepted_pending", "disputed"))
 		writeFindingsInstructions(&b)
 	}
 	return b.String()
@@ -470,8 +476,7 @@ func writeFindingsInstructions(b *strings.Builder) {
 	b.WriteString("| 1 | high | head:src/example.go:42 | 조건 → 동작 → 실제와 기대 | high |\n")
 }
 
-func (rs *ReviewState) writeActionInstructions(b *strings.Builder, spec reviewTableSpec, action string, statuses ...string) {
-	items := rs.itemsWithStatus(statuses...)
+func writeActionInstructions(b *strings.Builder, spec reviewTableSpec, action string, items []*ReviewItem) {
 	b.WriteString("응답할 서버 ID:")
 	for _, item := range items {
 		b.WriteString(" " + item.Finding.ID)

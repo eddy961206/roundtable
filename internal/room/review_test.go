@@ -66,6 +66,41 @@ func TestReviewCorrectionAllowancePerStepAndRound(t *testing.T) {
 	correct(recheckHeader+"| r1-2 | FIXED | verified |\n"+findingHeader, "", "passed")
 }
 
+func TestReviewRebuttalOnlyCurrentRoundRejections(t *testing.T) {
+	for _, action := range []string{"ACCEPT", "REJECT"} {
+		t.Run(action, func(t *testing.T) {
+			rs := startedReview(t, 3)
+			applyReview(t, rs, findingHeader+findingOne, "author_reply", "")
+			applyReview(t, rs, authorHeader+"| r1-1 | REJECT | disagree |\n", "rebuttal", "")
+			applyReview(t, rs, rebuttalHeader+"| r1-1 | MAINTAIN | still broken |\n", "", "disputed")
+			if err := rs.AllowExtraRound(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := rs.Resubmit(protocolInput("head-two")); err != nil {
+				t.Fatal(err)
+			}
+			applyReview(t, rs, recheckHeader+"| r1-1 | UNFIXED | remains on new SHA |\n"+findingHeader+findingOne, "author_reply", "")
+			reply := authorHeader + "| r2-1 | " + action + " | current round evidence |\n"
+			if action == "ACCEPT" {
+				applyReview(t, rs, reply, "", "disputed")
+				if rs.Rounds[1].Items[0].Status != "accepted_pending" {
+					t.Fatal("new acceptance was lost")
+				}
+			} else {
+				applyReview(t, rs, reply, "rebuttal", "")
+				if !strings.Contains(rs.Pending.Prompt, "응답할 서버 ID: r2-1\n") {
+					t.Fatal("rebuttal prompt includes an already rechecked finding")
+				}
+				assertReviewErrorUnchanged(t, rs, rebuttalHeader+"| r1-1 | WITHDRAW | old item |\n| r2-1 | WITHDRAW | new item |\n")
+				applyReview(t, rs, rebuttalHeader+"| r2-1 | WITHDRAW | new item withdrawn |\n", "", "disputed")
+			}
+			if old := rs.Rounds[0].Items[0]; old.Status != "disputed" || old.Reviewer.Action != "UNFIXED" {
+				t.Fatal("current round rebuttal overwrote the previous finding's recheck")
+			}
+		})
+	}
+}
+
 func applyReview(t *testing.T, rs *ReviewState, reply, kind, outcome string) {
 	t.Helper()
 	next, got, err := rs.Apply(reply)

@@ -574,7 +574,9 @@ func (h *Hub) ResolvePart(roomID, partID string) (*WorkPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if part.State != "blocked" || part.Block.Kind != "review" || part.Review == nil || part.SubmitSHA == "" {
+	// A failed Resubmit retains the old review and SubmitSHA in the fix phase;
+	// they cannot authorize merging that old submission.
+	if part.State != "blocked" || part.Block.Kind != "review" || part.Review == nil || part.SubmitSHA == "" || part.Review.Phase == "fix" {
 		return nil, fmt.Errorf("%w: 파트 %s는 제출된 리뷰 정지 상태가 아님", ErrWorkConflict, partID)
 	}
 	part.Review.Resolve(nowMs())
