@@ -70,6 +70,9 @@ func codexArgs(o RunOptions, windowsSandbox string) []string {
 		args = append(args, "resume")
 	}
 	args = append(args, "--json", "--skip-git-repo-check", "-c", "suppress_unstable_features_warning=true")
+	for _, im := range o.Images {
+		args = append(args, "--image", im.Path)
+	}
 	if !resume {
 		args = append(args, "--color", "never")
 	}
@@ -108,6 +111,9 @@ func codexArgs(o RunOptions, windowsSandbox string) []string {
 }
 
 func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, error) {
+	if err := validateImages(o.Images); err != nil {
+		return Result{}, err
+	}
 	path, err := resolveCommand(c.cmd)
 	if err != nil {
 		return Result{}, fmt.Errorf("codex CLI를 찾지 못함: %w", err)

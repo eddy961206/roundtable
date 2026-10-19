@@ -86,6 +86,7 @@ func standingBrief(r *Room, me *Participant) string {
 		b.WriteString("- 도구 실행이나 파일 수정 없이 대화로만 답하세요.\n")
 	}
 	b.WriteString("- 대화에서 쓰인 언어로 답하세요. 채팅에 어울리게 간결하되, 판단에 필요한 근거는 생략하지 마세요.\n")
+	b.WriteString(markerBrief(r.Mode))
 	return b.String()
 }
 
@@ -144,6 +145,7 @@ func BuildPartPrompt(plan *WorkPlan, part *Part) string {
 	fmt.Fprintf(&b, "- 변경은 branch %s 에 커밋하세요. 커밋하지 않은 변경이나 추적하지 않는 파일이 남아 있으면 제출이 거부됩니다.\n", part.Branch)
 	fmt.Fprintf(&b, "- 파트를 끝냈으면 응답 마지막 줄에 %s 한 줄만 쓰세요. 그러면 다른 공급사 참가자가 diff를 리뷰합니다.\n", workDoneSignal)
 	b.WriteString("- 무엇을 바꿨는지 답변에 적으세요.\n")
+	b.WriteString(markerBrief(agent.ModeWrite))
 	return b.String()
 }
 
