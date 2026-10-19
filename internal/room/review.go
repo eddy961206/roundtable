@@ -28,8 +28,8 @@ func (rs *ReviewState) Apply(reply string) (next *ReviewStep, outcome string, er
 	if rs.Pending == nil || rs.Pending.Kind != rs.Phase || len(rs.Rounds) == 0 {
 		return nil, "", fmt.Errorf("review: no pending turn")
 	}
-	if rs.input.Diff == nil {
-		return nil, "", fmt.Errorf("review: interrupted turn has no input; restart recovery is required")
+	if rs.Input.Diff == nil {
+		return nil, "", fmt.Errorf("review: pending turn has no review input")
 	}
 	// Parse and transition on an independent copy: even a late error must not
 	// change previously accepted records or pointers held by callers.
@@ -78,7 +78,7 @@ func (rs *ReviewState) begin(in ReviewInput, round int, kind string) (ReviewStep
 	diff := *in.Diff
 	diff.Files = append([]DiffFile(nil), diff.Files...)
 	in.Diff = &diff
-	rs.input = in
+	rs.Input = in
 	rs.Rounds = append(rs.Rounds, ReviewRound{Ref: in.Ref, Items: []ReviewItem{}})
 	step := rs.setStep(kind)
 	rs.updateSummary()
@@ -356,13 +356,13 @@ func (rs *ReviewState) prompt(kind string) string {
 	if kind != "author_reply" {
 		b.WriteString("리뷰어는 매번 새 세션이며 방 대화 이력은 제공하지 않는다. 코드를 수정하지 말고 실제 결함만 지적한다.\n")
 	}
-	fmt.Fprintf(&b, "목표: %s\n파트 완료 조건: %s\n범위: %s\n", rs.input.Goal, rs.input.Brief, strings.Join(rs.input.Scope, ", "))
+	fmt.Fprintf(&b, "목표: %s\n파트 완료 조건: %s\n범위: %s\n", rs.Input.Goal, rs.Input.Brief, strings.Join(rs.Input.Scope, ", "))
 	ref := rs.Rounds[len(rs.Rounds)-1].Ref
 	fmt.Fprintf(&b, "파트: %s / 라운드: %d / base SHA: %s / head SHA: %s\n", ref.PartID, ref.Round, ref.BaseSHA, ref.HeadSHA)
 	b.WriteString("변경 파일 목록(전체):\n")
-	remaining, truncated := reviewPatchRunes, rs.input.Diff.Truncated
+	remaining, truncated := reviewPatchRunes, rs.Input.Diff.Truncated
 	var patches strings.Builder
-	for _, file := range rs.input.Diff.Files {
+	for _, file := range rs.Input.Diff.Files {
 		fmt.Fprintf(&b, "- %s [%s] +%d -%d\n", file.Path, file.Status, file.Added, file.Deleted)
 		patch := []rune(file.Patch)
 		if len(patch) > remaining {
@@ -374,7 +374,7 @@ func (rs *ReviewState) prompt(kind string) string {
 		}
 		remaining -= len(patch)
 	}
-	fmt.Fprintf(&b, "전체 변경: +%d -%d\ndiff 잘림: %t\n", rs.input.Diff.Added, rs.input.Diff.Deleted, truncated)
+	fmt.Fprintf(&b, "전체 변경: +%d -%d\ndiff 잘림: %t\n", rs.Input.Diff.Added, rs.Input.Diff.Deleted, truncated)
 	if truncated {
 		b.WriteString("diff 일부가 잘렸으므로 없는 내용으로 판단하지 않는다.\n")
 	}

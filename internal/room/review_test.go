@@ -332,5 +332,59 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	if err := json.Unmarshal(data, &restored); err != nil {
 		t.Fatal(err)
 	}
-	assertReviewErrorUnchanged(t, &restored, rebuttalHeader+"| r1-1 | WITHDRAW | 확인 |\n")
+	applyReview(t, &restored, rebuttalHeader+"| r1-1 | WITHDRAW | 확인 |\n", "", "passed")
+}
+
+func roundTripReview(t *testing.T, rs *ReviewState) *ReviewState {
+	t.Helper()
+	data, err := json.Marshal(rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored ReviewState
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rs, &restored) {
+		t.Fatalf("JSON round trip lost review state in phase %q", rs.Phase)
+	}
+	if restored.Pending != nil && restored.Pending.Prompt == "" {
+		t.Fatalf("restored %s turn cannot be executed without its prompt", restored.Phase)
+	}
+	return &restored
+}
+
+func TestReviewResumeAfterJSONRoundTrip(t *testing.T) {
+	rs := roundTripReview(t, startedReview(t, 3))
+	assertReviewErrorUnchanged(t, rs, findingHeader+findingTwo)
+	applyReview(t, rs, findingHeader+findingOne+findingTwo, "author_reply", "")
+
+	rs = roundTripReview(t, rs)
+	applyReview(t, rs, authorHeader+"| r1-1 | ACCEPT | 검증 수정 |\n| r1-2 | REJECT | 기존 검증 있음 |\n", "rebuttal", "")
+
+	rs = roundTripReview(t, rs)
+	applyReview(t, rs, rebuttalHeader+"| r1-2 | WITHDRAW | 기존 검증 확인 |\n", "", "fix")
+
+	rs = roundTripReview(t, rs)
+	if _, err := rs.Resubmit(protocolInput("head-two")); err != nil {
+		t.Fatal(err)
+	}
+	rs = roundTripReview(t, rs)
+	applyReview(t, rs, recheckHeader+"| r1-1 | FIXED | 수정 확인 |\n"+findingHeader+findingOne, "author_reply", "")
+	if !strings.Contains(rs.Pending.Prompt, "head-two") || rs.Rounds[1].Items[0].Finding.ID != "r2-1" {
+		t.Fatal("restored recheck did not build the next step from the current input")
+	}
+
+	rs = roundTripReview(t, rs)
+	applyReview(t, rs, authorHeader+"| r2-1 | ACCEPT | 새 항목 수정 |\n", "", "fix")
+	rs = roundTripReview(t, rs)
+	if _, err := rs.Resubmit(protocolInput("head-three")); err != nil {
+		t.Fatal(err)
+	}
+	rs = roundTripReview(t, rs)
+	applyReview(t, rs, recheckHeader+"| r2-1 | FIXED | 수정 확인 |\n"+findingHeader, "", "passed")
+	rs = roundTripReview(t, rs)
+	if rs.Summary != (ReviewSummary{Complete: true, Passed: true}) || len(rs.Rounds) != 3 {
+		t.Fatalf("resumed review did not pass: %+v", rs)
+	}
 }
