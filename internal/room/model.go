@@ -12,6 +12,7 @@ type Participant struct {
 	Enabled       bool           `json:"enabled"`
 	Model         string         `json:"model"`
 	Effort        string         `json:"effort"`
+	Role          string         `json:"role,omitempty"` // seat role directive; see docs/역할카드_개선_계약.md
 	SessionID     string         `json:"session_id"`
 	Brief         string         `json:"brief,omitempty"`  // briefKey of the standing brief this session holds
 	LastSeen      int64          `json:"last_seen"`        // highest message seq considered for delivery
@@ -100,6 +101,8 @@ type Message struct {
 	Mode             string         `json:"mode,omitempty"`
 	Effort           string         `json:"effort,omitempty"`
 	Duration         int64          `json:"duration_ms,omitempty"`
+	Role             string         `json:"role,omitempty"`   // the seat role when this reply was produced
+	Timing           *TurnTiming    `json:"timing,omitempty"` // stage durations of this agent turn
 	Usage            map[string]any `json:"usage,omitempty"`
 	Trace            int            `json:"trace"` // number of trace events stored
 }
@@ -126,4 +129,13 @@ type Turn struct {
 type TraceLine struct {
 	MsgID string      `json:"msg_id"`
 	Event agent.Event `json:"event"`
+}
+
+// TurnTiming splits an agent turn into stages so slow CLIs and slow service
+// paths can be told apart. All values are milliseconds; zero means the stage
+// did not happen (for example no output before an error).
+type TurnTiming struct {
+	QueuedMs      int64 `json:"queued_ms"`       // turn created -> started
+	FirstOutputMs int64 `json:"first_output_ms"` // started -> first CLI event
+	TotalMs       int64 `json:"total_ms"`        // started -> finished
 }
