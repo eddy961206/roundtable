@@ -17,7 +17,8 @@ function decisionAuthor(d) {
   return d.by === "user" ? "사용자" : participantLabel(d.by);
 }
 
-// Active cards first, newest first within each group (the brief uses the same order).
+// Active cards first, most recently changed first within each group; later
+// records win a tie. The standing brief picks active cards in the same order.
 function sortedDecisions() {
   const list = Array.from(state.decisions.values());
   const order = new Map(list.map((d, i) => [d.id, i]));
@@ -25,23 +26,28 @@ function sortedDecisions() {
     const activeA = a.status === "active";
     const activeB = b.status === "active";
     if (activeA !== activeB) return activeA ? -1 : 1;
+    if (a.at !== b.at) return b.at - a.at;
     return order.get(b.id) - order.get(a.id);
   });
 }
 
 // Decisions are never deleted and every change carries a newer "at", so a
-// snapshot keeps any card that SSE delivered more recently.
+// state older than the one already shown (a late PATCH reply after a newer
+// SSE event, or a snapshot read before it) is not applied.
+export function isStaleDecision(prev, next) {
+  return !!prev && prev.at > next.at;
+}
+
 export function mergeSnapshotDecisions(current, snapDecisions) {
   const next = new Map(current);
   for (const d of snapDecisions || []) {
-    const prev = next.get(d.id);
-    if (!prev || prev.at <= d.at) next.set(d.id, d);
+    if (!isStaleDecision(next.get(d.id), d)) next.set(d.id, d);
   }
   return next;
 }
 
 export function upsertDecision(d) {
-  if (!d || !d.id) return;
+  if (!d || !d.id || isStaleDecision(state.decisions.get(d.id), d)) return;
   state.decisions.set(d.id, d);
   if (document.hidden) return;
   renderDecisions();
@@ -146,7 +152,7 @@ async function patchDecision(id, patch, btn) {
     const updated = await api("PATCH", "/api/rooms/" + roomId + "/decisions/" + encodeURIComponent(id), patch);
     if (state.roomId !== roomId || openSeq !== sequence) return;
     upsertDecision(updated);
-    announce("결정이 " + decisionStatusLabel(updated.status) + " 상태로 저장되었습니다.");
+    announce("결정이 " + decisionStatusLabel(state.decisions.get(id).status) + " 상태로 표시됩니다.");
   } catch (e) {
     if (state.roomId === roomId && openSeq === sequence) alert(e.message);
   } finally {

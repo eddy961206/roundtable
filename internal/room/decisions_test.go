@@ -201,6 +201,23 @@ func TestStandingBriefCarriesTenNewestActiveDecisionTexts(t *testing.T) {
 	if !strings.Contains(third, "현재 결정(최신순):\n- decision-09\n") || strings.Contains(third, "decision-10") {
 		t.Fatal(third)
 	}
+	// With 11 active cards (decision-10 restored), editing the oldest card
+	// makes it the most recent change: it goes first and the oldest unchanged
+	// card (decision-01) leaves the ten.
+	time.Sleep(2 * time.Millisecond)
+	if _, err := h.UpdateDecision(r.ID, snap.Decisions[10].ID, DecisionInput{Status: ptr("active")}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, err := h.UpdateDecision(r.ID, snap.Decisions[0].ID, DecisionInput{Text: ptr("decision-00-edited")}); err != nil {
+		t.Fatal(err)
+	}
+	h.PostUser(r.ID, "fourth", "")
+	waitIdle(t, h, r.ID)
+	fourth := a.prompts[3]
+	if !strings.Contains(fourth, "현재 결정(최신순):\n- decision-00-edited\n- decision-10\n- decision-09\n") || strings.Contains(fourth, "- decision-01\n") {
+		t.Fatal(fourth)
+	}
 }
 
 func TestDecisionMarkerDoesNotTriggerMentions(t *testing.T) {

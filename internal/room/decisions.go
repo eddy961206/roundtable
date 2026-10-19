@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -125,14 +126,38 @@ func (h *Hub) saveDecision(rs *roomState, d Decision) error {
 	return nil
 }
 
-// activeDecisionTexts is the "현재 결정" list of the standing brief: newest
-// first, text only, at most maxBriefDecisions.
-func (rs *roomState) activeDecisionTexts() []string {
-	var out []string
-	for i := len(rs.decisions) - 1; i >= 0 && len(out) < maxBriefDecisions; i-- {
-		if rs.decisions[i].Status == "active" {
-			out = append(out, rs.decisions[i].Text)
+// activeDecisionTexts is the "현재 결정" list of the standing brief: text only,
+// at most maxBriefDecisions, most recently changed first (later records win a
+// tie). A card recorded by a message above cap is left out with that message,
+// so a blind round-1 turn never sees a peer's round-1 decision.
+func (rs *roomState) activeDecisionTexts(cap int64) []string {
+	sources := map[string]int64{}
+	for _, d := range rs.decisions {
+		if d.Status == "active" && d.SourceMsg != "" {
+			sources[d.SourceMsg] = 0
 		}
+	}
+	for _, m := range rs.msgs {
+		if _, ok := sources[m.ID]; ok {
+			sources[m.ID] = m.Seq
+		}
+	}
+	var picked []int
+	for i, d := range rs.decisions {
+		if d.Status == "active" && (d.SourceMsg == "" || sources[d.SourceMsg] <= cap) {
+			picked = append(picked, i)
+		}
+	}
+	sort.SliceStable(picked, func(a, b int) bool {
+		da, db := rs.decisions[picked[a]], rs.decisions[picked[b]]
+		if da.At != db.At {
+			return da.At > db.At
+		}
+		return picked[a] > picked[b]
+	})
+	out := []string{}
+	for _, i := range picked[:min(len(picked), maxBriefDecisions)] {
+		out = append(out, rs.decisions[i].Text)
 	}
 	return out
 }

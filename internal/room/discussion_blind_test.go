@@ -35,14 +35,16 @@ func TestBlindFirstRoundHidesPeersUntilRoundTwo(t *testing.T) {
 	if !strings.Contains(a1.opts.Prompt, "1라운드는 블라인드") {
 		t.Fatal(a1.opts.Prompt)
 	}
-	finishCall(a1, "claude-blind-answer\n[[DISCUSSION:CONTINUE]]")
+	finishCall(a1, "claude-blind-answer\n[[DECISION: claude-blind-decision | 근거: x | 반대: 없음 | 미확인: 없음]]\n[[DISCUSSION:CONTINUE]]")
 	queueSnapshot(t, h, r.ID, func(s *Snapshot) bool {
 		m := roundMessage(s, "claude", 1)
 		return m != nil && m.Status == "done"
 	})
 	finishCall(busy, "busy reply")
 	b1 := nextCall(t, ps[1])
-	if strings.Contains(b1.opts.Prompt, "claude-blind-answer") || !strings.Contains(b1.opts.Prompt, "1라운드는 블라인드") {
+	// Neither the history nor the standing brief's current decisions may carry
+	// claude's round-1 answer or the decision it recorded.
+	if strings.Contains(b1.opts.Prompt, "claude-blind-answer") || strings.Contains(b1.opts.Prompt, "claude-blind-decision") || !strings.Contains(b1.opts.Prompt, "1라운드는 블라인드") {
 		t.Fatalf("blind round leaked a peer answer:\n%s", b1.opts.Prompt)
 	}
 	finishCall(b1, "codex-blind-answer\n[[DISCUSSION:CONTINUE]]")
@@ -54,7 +56,7 @@ func TestBlindFirstRoundHidesPeersUntilRoundTwo(t *testing.T) {
 	finishCall(a2, "claude-round-two\n[[DISCUSSION:AGREE]]")
 	b2 := nextCall(t, ps[1])
 	// Round 2 is sequential again: codex reads claude's round-1 and round-2 answers.
-	if !strings.Contains(b2.opts.Prompt, "claude-blind-answer") || !strings.Contains(b2.opts.Prompt, "claude-round-two") || !strings.Contains(b2.opts.Prompt, "1라운드 답들이 공개됐습니다") {
+	if !strings.Contains(b2.opts.Prompt, "claude-blind-answer") || !strings.Contains(b2.opts.Prompt, "claude-round-two") || !strings.Contains(b2.opts.Prompt, "1라운드 답들이 공개됐습니다") || !strings.Contains(b2.opts.Prompt, "현재 결정(최신순):\n- claude-blind-decision\n") {
 		t.Fatalf("round 2 prompt:\n%s", b2.opts.Prompt)
 	}
 	finishCall(b2, "[[DISCUSSION:AGREE]]")

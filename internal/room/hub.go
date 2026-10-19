@@ -1198,7 +1198,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		p.LastSeen, p.Unseen = seen, unseen
 		return nil
 	}
-	decisions := rs.activeDecisionTexts()
+	decisions := rs.activeDecisionTexts(cap)
 	brief := briefKey(standingBrief(rs.room, p, decisions))
 	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Briefed: !first && p.Brief == brief, Decisions: decisions}
 	if rs.disc != nil && t.Reason == "discussion" {
@@ -1239,7 +1239,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 			part.LastSeen, part.Unseen = seen, unseen
 			return nil
 		}
-		tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, Part: part, Decisions: rs.activeDecisionTexts()}
+		tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, Part: part, Decisions: rs.activeDecisionTexts(cap)}
 		if rs.disc != nil && t.Reason == "discussion" {
 			tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 		}
