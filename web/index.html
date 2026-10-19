@@ -126,6 +126,7 @@
                   <input type="checkbox" id="chk-auto-trace">
                   <span>작업 기록 자동 펼침</span>
                 </label>
+                <button type="button" id="btn-work-plan" title="작업 분배 및 적대적 교차 리뷰 계획을 확정합니다" hidden>작업 계획</button>
                 <button type="button" id="btn-reset" title="각 에이전트의 CLI 세션을 버리고 다음 턴부터 대화 전체를 새로 읽게 합니다">세션 초기화</button>
                 <a id="btn-export" class="button" download title="대화 전체를 마크다운 파일로 저장합니다">내보내기</a>
                 <button type="button" id="btn-settings" title="방 설정 및 공지 수정">설정</button>
@@ -134,7 +135,11 @@
             </details>
           </div>
         </div>
+        <div id="work-head-bar" class="work-head-bar" hidden></div>
       </header>
+
+      <div id="work-halted-banner" class="work-halted-banner" role="alert" hidden></div>
+      <section id="work-board" class="work-board" aria-label="작업 파트 보드" hidden></section>
 
       <div id="history-banner" class="history-banner" hidden>
         <span id="history-status" role="status"></span>
@@ -222,6 +227,46 @@
     </menu>
   </form>
 </dialog>
+
+<dialog id="dlg-work" class="dlg-wide" aria-labelledby="dlg-work-title">
+  <form id="form-work">
+    <h3 id="dlg-work-title">작업 계획</h3>
+    <p class="muted small-note">write 방에서 파트별 worktree·교차 리뷰(다른 공급사 좌석)·통합 branch 병합을 시작합니다.</p>
+    <label>목표 (Goal)
+      <textarea name="goal" rows="2" required placeholder="예: 작업 분배·적대적 교차 리뷰 및 통합 병합 워크플로 구현"></textarea>
+    </label>
+    <div class="row">
+      <label>병합 모드
+        <select name="merge_mode">
+          <option value="confirm">confirm — 확인 후 병합 (승인 필요)</option>
+          <option value="auto">auto — 리뷰·검증 통과 시 자동 병합</option>
+        </select>
+      </label>
+      <label>리뷰 라운드 상한
+        <input name="review_rounds" type="number" min="1" max="10" value="3" required>
+      </label>
+    </div>
+    <fieldset class="checks-fieldset">
+      <legend>검증 명령 (Verify)</legend>
+      <p class="muted small-note">병합 시 통합 worktree에서 순서대로 실행합니다. argv는 셸 문자열이 아닌 공백 구분 인자 배열로 전달됩니다.</p>
+      <div id="work-verify-rows" class="work-form-rows"></div>
+      <button type="button" id="btn-add-verify">+ 검증 명령 추가</button>
+    </fieldset>
+    <fieldset class="checks-fieldset">
+      <legend>파트 분할 (Parts)</legend>
+      <p class="muted small-note">리뷰어 좌석은 담당 좌석과 다른 공급사(Provider)의 활성 좌석만 선택할 수 있습니다.</p>
+      <div id="work-part-rows" class="work-form-rows"></div>
+      <button type="button" id="btn-add-part">+ 파트 추가</button>
+    </fieldset>
+    <div id="work-form-error" class="composer-error" role="alert" hidden></div>
+    <menu>
+      <button type="button" id="dlg-work-cancel">취소</button>
+      <button type="submit" id="dlg-work-ok" class="primary">계획 확정</button>
+    </menu>
+  </form>
+</dialog>
+
+<aside id="diff-drawer" class="diff-drawer" aria-label="파트 Diff 서랍" hidden></aside>
 
 <script src="vendor/marked.min.js"></script>
 <script src="app.js"></script>
