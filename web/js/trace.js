@@ -150,19 +150,13 @@ export function boundedTraceEvent(event) {
   return item;
 }
 
+// The server already cuts the window (?tail=) and keeps the subagent start and
+// model events a window needs; this cache only appends streamed events to it.
 export function cacheTrace(id, events, total) {
-  // A subagent whose lines are still in the window keeps its start and model
-  // events even when they fell out of it, so its header stays complete.
-  const cut = Math.max(0, events.length - TRACE_EVENT_LIMIT);
-  const windowed = events.slice(cut);
-  const parents = new Set(windowed.map((e) => e.parent).filter(Boolean));
-  const heads = events.slice(0, cut).filter((e) => (e.kind === "subagent_start" || e.kind === "subagent_meta") && parents.has(e.parent));
-  const bounded = [...heads, ...windowed].map(boundedTraceEvent);
-  const clipped = total > TRACE_EVENT_LIMIT || events.length > TRACE_EVENT_LIMIT || bounded.some((event) => event._displayTruncated);
-  const previous = state.traceMeta.get(id);
+  const bounded = events.map(boundedTraceEvent);
   state.traces.delete(id);
   state.traces.set(id, bounded);
-  state.traceMeta.set(id, { total, clipped: clipped || !!(previous && previous.clipped) });
+  state.traceMeta.set(id, { total, shortened: bounded.some((event) => event._displayTruncated) });
   while (state.traces.size > TRACE_CACHE_LIMIT) {
     const oldest = state.traces.keys().next().value;
     state.traces.delete(oldest); state.traceMeta.delete(oldest); state.expanded.delete(oldest);
@@ -172,37 +166,52 @@ export function cacheTrace(id, events, total) {
   }
 }
 
-export async function ensureAndRenderTrace(id) {
+// Opening a trace loads the last TRACE_EVENT_LIMIT events; full=true replaces
+// that window with the whole trace when the user asks for the earlier part.
+export async function ensureAndRenderTrace(id, full = false) {
   if (!state.expanded.has(id) || document.hidden) return;
   const roomId = state.roomId; const sequence = openSeq;
-  if (!state.traces.has(id)) {
+  if (full || !state.traces.has(id)) {
     if (state.traceFetching.has(id)) return;
     state.traceFetching.add(id);
     state.tracePending.set(id, new Map());
     const controller = new AbortController();
     state.traceControllers.set(id, controller);
+    if (full) renderTrace(id);
     try {
-      const events = await api("GET", "/api/rooms/" + roomId + "/trace/" + id, undefined, controller.signal);
+      const url = "/api/rooms/" + roomId + "/trace/" + id + (full ? "" : "?tail=" + TRACE_EVENT_LIMIT);
+      const res = await api("GET", url, undefined, controller.signal);
       if (state.roomId !== roomId || openSeq !== sequence || !state.messages.has(id) || !state.expanded.has(id)) return;
+      const events = full ? res : res.events;
+      const fetchedTotal = full ? res.length : res.total;
       const pending = state.tracePending.get(id);
-      const later = [...pending.entries()].filter(([index]) => index > events.length).sort(([a], [b]) => a - b);
-      const total = later.length ? later[later.length - 1][0] : events.length;
+      const later = [...pending.entries()].filter(([index]) => index > fetchedTotal).sort(([a], [b]) => a - b);
+      const total = later.length ? later[later.length - 1][0] : fetchedTotal;
       cacheTrace(id, [...events, ...later.map(([, event]) => event)], total);
       state.messages.get(id).trace = Math.max(state.messages.get(id).trace || 0, total);
       state.traceErrors.delete(id);
-      renderTrace(id);
-      updateTraceCount(id);
     } catch (err) {
       if (controller.signal.aborted) return;
       if (state.roomId !== roomId || openSeq !== sequence) return;
-      state.traceErrors.set(id, err.message);
-      renderTraceError(id);
-      updateTraceCount(id);
+      if (full) {
+        if (!state.expanded.has(id)) return;
+        // The window stays on screen; the failure is shown next to the button that retries it.
+        state.traceMeta.get(id).fullError = err.message;
+      } else {
+        state.traceErrors.set(id, err.message);
+        renderTraceError(id);
+        updateTraceCount(id);
+      }
     } finally {
       if (state.traceControllers.get(id) === controller) {
         state.traceFetching.delete(id);
         state.tracePending.delete(id);
         state.traceControllers.delete(id);
+        // Rendered after the fetch flag is cleared so the window note no longer reads as loading.
+        if (state.traces.has(id)) {
+          renderTrace(id);
+          updateTraceCount(id);
+        }
         hooks.syncPendingScrollRestore();
       }
     }
@@ -261,28 +270,50 @@ function summarize(s) {
   return s.length > 90 ? s.slice(0, 90) + "…" : s;
 }
 
+// Built once per open trace and updated in place so focus on its controls survives renders.
+function buildTraceNotice(box, id) {
+  const notice = el("div", "trace-window-note muted");
+  const more = el("button", "ghost trace-more-btn");
+  more.type = "button";
+  more.onclick = () => ensureAndRenderTrace(id, true);
+  const full = el("a", "", "전체 기록 내려받기");
+  full.href = "/api/rooms/" + state.roomId + "/trace/" + id;
+  full.download = "work-history.json";
+  notice.append(el("span", "trace-window-count"), more, " ", el("span", "trace-shortened"), el("span", "trace-more-error"), full);
+  box.prepend(notice);
+  return notice;
+}
+
 function renderTrace(id) {
   const box = $("#t-" + id);
   if (!box) return;
   const shouldPinBottom = !state.browsingHistory && state.stickToBottom;
   box.hidden = false;
-  const events = state.traces.get(id) || [];
+  const events = state.traces.get(id);
   const metadata = state.traceMeta.get(id);
-  const windowStart = metadata ? metadata.total - events.length : 0;
+  // Events the window leaves out; the subagent context the server adds is counted as shown.
+  const hiddenCount = metadata.total - events.length;
+  const windowStart = hiddenCount;
   const moved = box.dataset.windowStart !== undefined && Number(box.dataset.windowStart) !== windowStart;
   const opened = new Set(moved ? [...box.querySelectorAll("details[open][data-trace-key]")].map((node) => node.dataset.traceKey) : []);
   const focused = moved && box.contains(document.activeElement) ? document.activeElement.closest("[data-trace-key]") : null;
   const focusedKey = focused && focused.dataset.traceKey;
-  if (moved) box.replaceChildren();
-  box.dataset.windowStart = String(windowStart);
   let notice = box.querySelector(".trace-window-note");
-  if (!notice) { notice = el("div", "trace-window-note muted"); box.prepend(notice); }
-  notice.replaceChildren();
-  notice.appendChild(el("span", "", metadata && metadata.clipped ? "최근 " + events.length + "개 이벤트 표시 · 전체 " + metadata.total + "개. 긴 출력은 화면에서 줄였습니다. " : ""));
-  const full = el("a", "", "전체 기록 내려받기");
-  full.href = "/api/rooms/" + state.roomId + "/trace/" + id;
-  full.download = "work-history.json";
-  notice.appendChild(full);
+  if (!notice) notice = buildTraceNotice(box, id);
+  if (moved) for (const child of [...box.children]) if (child !== notice) child.remove();
+  box.dataset.windowStart = String(windowStart);
+  const loading = state.traceFetching.has(id);
+  const more = notice.querySelector(".trace-more-btn");
+  const moreFocused = document.activeElement === more;
+  notice.querySelector(".trace-window-count").textContent =
+    hiddenCount > 0 ? "최근 " + events.length + "개 이벤트 표시 · 전체 " + metadata.total + "개. " : "";
+  // Kept focusable while loading; a second click is dropped by the fetch guard.
+  more.hidden = hiddenCount === 0;
+  more.textContent = loading ? "이전 기록 불러오는 중…" : "이전 기록 " + hiddenCount + "개 더 보기";
+  more.setAttribute("aria-disabled", String(loading));
+  notice.querySelector(".trace-shortened").textContent = metadata.shortened ? "긴 출력은 화면에서 줄였습니다. " : "";
+  notice.querySelector(".trace-more-error").textContent = metadata.fullError ? "⚠ 이전 기록 조회 실패: " + metadata.fullError + " " : "";
+  if (moreFocused && more.hidden) notice.querySelector("a").focus({ preventScroll: true });
   const items = [];
   const byCall = new Map();
   const subs = new Map();

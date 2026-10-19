@@ -141,8 +141,13 @@ function bindUI() {
       openWorkPlanDialog();
     };
   }
+  $("#btn-work-plan-head").onclick = openWorkPlanDialog;
   const dlgWorkCancel = $("#dlg-work-cancel");
   if (dlgWorkCancel) dlgWorkCancel.onclick = () => $("#dlg-work").close();
+  // Esc must not hide a confirm still in flight: its result or error shows in this dialog.
+  $("#dlg-work").addEventListener("cancel", (e) => {
+    if ($("#form-work").getAttribute("aria-busy") === "true") e.preventDefault();
+  });
   const btnAddVerify = $("#btn-add-verify");
   if (btnAddVerify) btnAddVerify.onclick = () => addVerifyRow($("#work-verify-rows"));
   const btnAddPart = $("#btn-add-part");

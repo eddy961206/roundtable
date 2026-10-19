@@ -709,6 +709,8 @@ kbd {
 .message-metrics, .message-identifiers { margin: 6px 0; overflow-wrap: anywhere; }
 .message-detail .session-actions { margin: 4px 0; }
 .trace-window-note { margin-bottom: 8px; font-size: 12px; }
+.trace-window-note button.trace-more-btn { min-height: 22px; padding: 0 8px; font-size: 12px; }
+.trace-more-error { color: var(--danger); }
 .history-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 14px; font-size: 12px; background: var(--panel2); border-bottom: 1px solid var(--border); }
 .history-banner button { min-height: 28px; padding: 3px 8px; font-size: 12px; }
 .participant-model { font-size: 12px; line-height: 1.5; }
@@ -1804,6 +1806,45 @@ dialog menu {
   padding: 2px 8px;
   min-height: 24px;
   font-size: 11.5px;
+}
+.part-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+button.part-fold-btn {
+  min-height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+/* Folded: one line with id, title, state, author, review summary and the actions that apply now. */
+.part-card.folded {
+  padding: 4px 12px;
+}
+.part-card.folded .part-top,
+.part-card.folded .part-title-group,
+.part-card.folded .part-actions {
+  flex-wrap: nowrap;
+}
+.part-card.folded .part-title-group {
+  min-width: 0;
+  overflow: hidden;
+}
+.part-card.folded .part-actions {
+  flex-shrink: 0;
+}
+.part-card.folded .part-title-group > * {
+  flex-shrink: 0;
+}
+.part-card.folded .part-title {
+  flex-shrink: 1;
+  min-width: 3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.part-card.folded .part-fold-extra {
+  display: none;
 }
 .part-state-badge.state-working,
 .part-state-badge.state-reviewing,

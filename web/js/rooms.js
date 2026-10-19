@@ -101,6 +101,8 @@ export function renderRoomHead() {
       ? "이미 작업 계획이 확정된 방입니다"
       : "작업 분배 및 적대적 교차 리뷰 계획을 확정합니다";
   }
+  // Once a plan exists the work head bar takes this place.
+  $("#btn-work-plan-head").hidden = r.mode !== "write" || !!state.work;
 
   $("#rounds").value = r.discussion_rounds || 3;
   $("#btn-export").href = "/api/rooms/" + r.id + "/export.md";

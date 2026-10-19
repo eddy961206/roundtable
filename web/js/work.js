@@ -35,6 +35,34 @@ const PART_STATE_LABELS = {
   abandoned: "포기됨 (abandoned)",
 };
 
+// A folded card is one line. Choices are kept per room in localStorage with the
+// state they were made in: a part that newly needs a person (blocked, awaiting
+// approval) opens again even if it was folded in an earlier state.
+const ATTENTION_STATES = new Set(["blocked", "awaiting_approval"]);
+const partOpenKey = () => "rt.partOpen." + state.roomId;
+function readPartOpen() {
+  try {
+    return JSON.parse(localStorage.getItem(partOpenKey())) || {};
+  } catch (err) {
+    console.warn("part fold state unreadable", err.message);
+    return {};
+  }
+}
+function savePartOpen(part, open) {
+  const saved = readPartOpen();
+  saved[part.id] = { open, state: part.state };
+  try {
+    localStorage.setItem(partOpenKey(), JSON.stringify(saved));
+  } catch (err) {
+    console.warn("part fold state not saved", err.message);
+  }
+}
+function isPartOpen(part, saved) {
+  const choice = saved[part.id];
+  if (ATTENTION_STATES.has(part.state) && (!choice || choice.state !== part.state)) return true;
+  return choice ? choice.open : false;
+}
+
 export function findWorkPart(pid) {
   if (!state.work || !state.work.parts) return null;
   return state.work.parts.find((p) => p.id === pid) || null;
@@ -512,42 +540,85 @@ export function renderWork() {
   board.replaceChildren();
 
   if (!w.parts) return;
+  const savedOpen = readPartOpen();
   for (const part of w.parts) {
-    const card = el("article", "part-card" + seatClass(part.seat) + " state-" + part.state);
+    const open = isPartOpen(part, savedOpen);
+    const card = el("article", "part-card" + seatClass(part.seat) + " state-" + part.state + (open ? "" : " folded"));
     card.dataset.partId = part.id;
+    const detail = el("div", "part-detail");
+    detail.id = "part-detail-" + part.id;
+    detail.hidden = !open;
 
     const top = el("div", "part-top");
     const titleGroup = el("div", "part-title-group");
+    const foldBtn = el("button", "icon-btn part-fold-btn", open ? "▾" : "▸");
+    foldBtn.type = "button";
+    foldBtn.setAttribute("aria-expanded", String(open));
+    foldBtn.setAttribute("aria-controls", detail.id);
+    foldBtn.setAttribute("aria-label", part.id + " 파트 상세 " + (open ? "접기" : "펼치기"));
+    foldBtn.onclick = () => {
+      const next = detail.hidden;
+      detail.hidden = !next;
+      card.classList.toggle("folded", !next);
+      foldBtn.textContent = next ? "▾" : "▸";
+      foldBtn.setAttribute("aria-expanded", String(next));
+      foldBtn.setAttribute("aria-label", part.id + " 파트 상세 " + (next ? "접기" : "펼치기"));
+      savePartOpen(part, next);
+    };
+    titleGroup.appendChild(foldBtn);
     titleGroup.appendChild(el("span", "badge mono part-id-badge", part.id));
-    titleGroup.appendChild(el("strong", "part-title", part.title));
+    const titleEl = el("strong", "part-title", part.title);
+    titleEl.title = part.title;
+    titleGroup.appendChild(titleEl);
     const stBadge = el("span", "badge part-state-badge state-" + part.state, PART_STATE_LABELS[part.state] || part.state);
     titleGroup.appendChild(stBadge);
 
+    const rev = part.review;
+    const unresolved = rev && rev.summary ? rev.summary.unresolved : 0;
+    const curRound = rev && rev.rounds && rev.rounds.length ? rev.rounds[rev.rounds.length - 1].ref.round : 0;
+    const maxRounds = rev && rev.max_rounds ? rev.max_rounds : w.review_rounds;
+    const revBadgeCls =
+      "badge review-summary-badge" +
+      (unresolved > 0 && !(rev && rev.resolution) ? " warn" : rev && ((rev.summary && rev.summary.passed) || rev.resolution) ? " ok" : "");
+    const revSummaryTxt =
+      "리뷰 " +
+      curRound +
+      "/" +
+      maxRounds +
+      "R · 미해결 " +
+      unresolved +
+      "건" +
+      (rev && rev.resolution
+        ? " · 사람 판정으로 통과 · " + rev.resolution.item_ids.length + "건"
+        : "");
+    titleGroup.appendChild(
+      el("span", "seat-chip" + seatClass(part.seat) + " " + authorProvider(part.seat), "담당: " + participantLabel(part.seat))
+    );
+    titleGroup.appendChild(el("span", revBadgeCls, revSummaryTxt));
+
     if (part.branch) {
-      const br = el("span", "badge mono", "🌿 " + part.branch);
+      const br = el("span", "badge mono part-fold-extra", "🌿 " + part.branch);
       br.title = "파트 branch: " + part.branch + (part.worktree ? " (" + part.worktree + ")" : "");
       titleGroup.appendChild(br);
     }
     if (part.worktree_removed) {
-      titleGroup.appendChild(el("span", "badge", "작업 폴더 정리됨"));
+      titleGroup.appendChild(el("span", "badge part-fold-extra", "작업 폴더 정리됨"));
     }
     if (part.submit_sha) {
-      const subSha = el("span", "badge mono", "제출 SHA: " + shortSHA(part.submit_sha));
+      const subSha = el("span", "badge mono part-fold-extra", "제출 SHA: " + shortSHA(part.submit_sha));
       subSha.title = "SubmitSHA: " + part.submit_sha;
       titleGroup.appendChild(subSha);
     }
     if (part.ready_mode) {
-      titleGroup.appendChild(el("span", "badge", "ReadyMode: " + part.ready_mode));
+      titleGroup.appendChild(el("span", "badge part-fold-extra", "ReadyMode: " + part.ready_mode));
     }
     if (part.merged_sha) {
-      const mSha = el("span", "badge mono ok", "병합됨: " + shortSHA(part.merged_sha));
+      const mSha = el("span", "badge mono ok part-fold-extra", "병합됨: " + shortSHA(part.merged_sha));
       mSha.title = "MergedSHA: " + part.merged_sha;
       titleGroup.appendChild(mSha);
     }
     top.appendChild(titleGroup);
 
-    const rev = part.review;
-    const unresolved = rev && rev.summary ? rev.summary.unresolved : 0;
     const isReviewEscalated =
       part.state === "blocked" &&
       !!part.block &&
@@ -595,31 +666,26 @@ export function renderWork() {
       actions.appendChild(btnResolve);
     }
 
-    const btnAbandon = el("button", "danger ghost", "포기");
+    const btnAbandon = el("button", "danger ghost part-fold-extra", "포기");
     btnAbandon.type = "button";
     btnAbandon.disabled = part.state === "merged" || part.state === "abandoned" || part.state === "merging";
     btnAbandon.title = "이 파트를 포기(abandoned) 상태로 전환합니다";
     btnAbandon.onclick = () => partAction(part, "abandon", btnAbandon);
     actions.appendChild(btnAbandon);
 
-    const btnDiff = el("button", "ghost", "Diff 보기");
+    const btnDiff = el("button", "ghost part-fold-extra", "Diff 보기");
     btnDiff.type = "button";
     // Diff reads the repository by SHA, so it stays available after the worktree is cleaned up.
     btnDiff.title = "이 파트의 변경 파일 목록과 패치를 서랍에서 봅니다";
     btnDiff.onclick = () => openDiffDrawer(part.id);
     actions.appendChild(btnDiff);
+    // Marked at build time, not by :disabled, so a button locked during its own request stays in place.
+    for (const b of actions.children) if (b.disabled) b.classList.add("part-fold-extra");
 
     top.appendChild(actions);
     card.appendChild(top);
 
     const meta = el("div", "part-meta");
-    const authorChip = el(
-      "span",
-      "seat-chip" + seatClass(part.seat) + " " + authorProvider(part.seat),
-      "담당: " + participantLabel(part.seat)
-    );
-    meta.appendChild(authorChip);
-
     const reviewerChip = el(
       "span",
       "seat-chip" + seatClass(part.reviewer) + " " + authorProvider(part.reviewer),
@@ -627,23 +693,6 @@ export function renderWork() {
     );
     meta.appendChild(reviewerChip);
 
-    const curRound = rev && rev.rounds && rev.rounds.length ? rev.rounds[rev.rounds.length - 1].ref.round : 0;
-    const maxRounds = rev && rev.max_rounds ? rev.max_rounds : w.review_rounds;
-    const revBadgeCls =
-      "badge review-summary-badge" +
-      (unresolved > 0 && !(rev && rev.resolution) ? " warn" : rev && ((rev.summary && rev.summary.passed) || rev.resolution) ? " ok" : "");
-    const revSummaryTxt =
-      "리뷰 " +
-      curRound +
-      "/" +
-      maxRounds +
-      "R · 미해결 " +
-      unresolved +
-      "건" +
-      (rev && rev.resolution
-        ? " · 사람 판정으로 통과 · " + rev.resolution.item_ids.length + "건"
-        : "");
-    meta.appendChild(el("span", revBadgeCls, revSummaryTxt));
     if (rev && rev.phase) {
       meta.appendChild(el("span", "badge", "단계: " + rev.phase));
     }
@@ -659,13 +708,13 @@ export function renderWork() {
       }
       meta.appendChild(scopeWrap);
     }
-    card.appendChild(meta);
+    detail.appendChild(meta);
 
     if (part.brief) {
       const briefEl = el("div", "part-brief");
       briefEl.appendChild(el("span", "muted", "완료 조건: "));
       briefEl.appendChild(el("span", "", part.brief));
-      card.appendChild(briefEl);
+      detail.appendChild(briefEl);
     }
 
     if (state.partNotices.has(part.id)) {
@@ -675,13 +724,14 @@ export function renderWork() {
     }
 
     if (part.block) {
-      card.appendChild(buildBlockElement(part.block, false));
+      detail.appendChild(buildBlockElement(part.block, false));
     }
 
     if (rev && rev.rounds && rev.rounds.length > 0) {
-      card.appendChild(buildReviewSection(part));
+      detail.appendChild(buildReviewSection(part));
     }
 
+    card.appendChild(detail);
     board.appendChild(card);
   }
   syncBottomPin();

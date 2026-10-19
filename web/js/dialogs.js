@@ -239,7 +239,12 @@ export async function onWorkPlanSubmit(e) {
   const roomId = state.roomId;
   const sequence = openSeq;
   const workRev = state.workRevision;
+  // Creating the worktrees takes seconds; lock the dialog so the plan is not sent twice.
+  const cancelBtn = $("#dlg-work-cancel");
+  f.setAttribute("aria-busy", "true");
   submitBtn.disabled = true;
+  cancelBtn.disabled = true;
+  submitBtn.textContent = "worktree 만드는 중…";
   try {
     const plan = await api("POST", "/api/rooms/" + roomId + "/work", {
       goal,
@@ -263,7 +268,10 @@ export async function onWorkPlanSubmit(e) {
       showErr(err.message);
     }
   } finally {
+    f.removeAttribute("aria-busy");
     submitBtn.disabled = false;
+    cancelBtn.disabled = false;
+    submitBtn.textContent = "계획 확정";
   }
 }
 
