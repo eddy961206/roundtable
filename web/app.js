@@ -24,6 +24,24 @@
   const fmtTime = (ms) =>
     ms ? new Date(ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
   const fmtDur = (ms) => (ms >= 60000 ? (ms / 60000).toFixed(1) + "분" : (ms / 1000).toFixed(1) + "초");
+  // Each seat gets its own colour (8 slots, by position in the room) so a long
+  // reply can be attributed at a glance even when two seats share a provider.
+  const SEAT_COLORS = 8;
+  function seatClass(pid) {
+    const ps = (state.room && state.room.participants) || [];
+    const i = ps.findIndex((p) => p.id === pid);
+    return i < 0 ? "" : " seat-" + (i % SEAT_COLORS);
+  }
+  // Recent and average response time of one seat, from the messages loaded in this view.
+  function seatTimes(pid) {
+    const ds = [];
+    for (const id of state.order) {
+      const m = state.messages.get(id);
+      if (m && m.kind === "agent" && m.author === pid && m.status === "done" && m.duration_ms > 0) ds.push(m.duration_ms);
+    }
+    if (!ds.length) return null;
+    return { last: ds[ds.length - 1], avg: ds.reduce((a, b) => a + b, 0) / ds.length, n: ds.length };
+  }
   const fmtElapsed = (ms) => {
     const sec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
     const m = Math.floor(sec / 60);
@@ -1404,7 +1422,7 @@
     node.className =
       "msg " +
       m.kind +
-      (m.author && m.kind === "agent" ? " " + authorProvider(m.author) : "") +
+      (m.author && m.kind === "agent" ? " " + authorProvider(m.author) + seatClass(m.author) : "") +
       (m.status === "error" ? " error" : "");
 
     if (m.kind === "system") {
@@ -1428,6 +1446,9 @@
       }
       if (m.model) meta.push('<span class="muted">' + esc(modelLabel(authorProvider(m.author), m.model)) + "</span>");
       if (m.effort) meta.push('<span class="muted">' + esc(m.effort) + "</span>");
+      if (m.kind === "agent" && m.status !== "streaming" && m.duration_ms > 0) {
+        meta.push('<span class="resp-time" title="이 답변에 걸린 시간">⏱ ' + esc(fmtElapsed(m.duration_ms)) + "</span>");
+      }
       if (m.reason === "discussion") meta.push('<span class="badge">🗣 토론 ' + m.round + "R</span>");
       else if (m.reason === "mention") meta.push('<span class="badge">@호출</span>');
       meta.push('<span class="muted">' + fmtTime(m.ts) + "</span>");
@@ -2242,6 +2263,7 @@
 
     const stLine = el("div", "status-line");
     card.appendChild(stLine);
+    card.appendChild(el("div", "resp-times muted"));
     const stop = el("button", "danger stop-participant", "작업 중단");
     stop.type = "button";
     stop.onclick = async () => {
@@ -2309,10 +2331,10 @@
   }
 
   function updateParticipantCardInPlace(card, p, info) {
-    const signature = JSON.stringify([p, participantLabel(p.id), info.available, info.catalog_status, info.catalog_error, state.catalogRevision]);
+    const signature = JSON.stringify([p, participantLabel(p.id), info.available, info.catalog_status, info.catalog_error, state.catalogRevision, seatTimes(p.id), seatClass(p.id)]);
     if (card.dataset.signature === signature) return;
     card.dataset.signature = signature;
-    card.className = "pcard" + (p.enabled ? "" : " off");
+    card.className = "pcard" + seatClass(p.id) + (p.enabled ? "" : " off");
     card.querySelector(".name").textContent = participantLabel(p.id);
     card.querySelector(".participant-model").textContent = modelLabel(p.provider, p.model) + (p.effort ? " · " + p.effort : "");
     const catalogNote = card.querySelector(".catalog-note");
@@ -2382,6 +2404,11 @@
       syncEffortSelect(es, effList, p.effort);
     }
 
+    const rt = card.querySelector(".resp-times");
+    if (rt) {
+      const t = seatTimes(p.id);
+      rt.textContent = t ? "응답 시간 · 최근 " + fmtElapsed(t.last) + " · 평균 " + fmtElapsed(t.avg) + " (" + t.n + "회)" : "응답 시간 · 아직 완료한 답변 없음";
+    }
     const stLine = card.querySelector(".status-line");
     if (stLine) {
       stLine.className = "status-line " + (p.status || "idle");
