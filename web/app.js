@@ -707,6 +707,8 @@
       state.workBoardCollapsed = false;
       state.stickToBottom = true;
       state.unreadBelow = 0;
+      pendingRestoreScrollTop = null;
+      suppressScrollStick = false;
       closeDiffDrawer();
       state.draftMentions.clear();
       clearComposerError();
@@ -749,10 +751,19 @@
     state.history = snap.history;
     state.browsingHistory = preserveHistory;
     state.historyLoading = false;
-    state.pendingMessages = preserveHistory ? state.pendingMessages + Math.max(0, snap.room.seq - state.latestSeq) : 0;
+    const prevLatestSeq = state.latestSeq;
+    const seqDelta = prevLatestSeq > 0 ? Math.max(0, (snap.room && snap.room.seq ? snap.room.seq : 0) - prevLatestSeq) : 0;
+    const userNewInSnap = prevLatestSeq > 0 ? (snap.messages || []).filter((m) => m.seq > prevLatestSeq && m.kind === "user").length : 0;
+    const msgNewNonUser = prevLatestSeq > 0 ? (snap.messages || []).filter((m) => m.seq > prevLatestSeq && m.kind !== "user").length : 0;
+    const newUnreadInResync = Math.max(seqDelta - userNewInSnap, msgNewNonUser);
+    state.pendingMessages = preserveHistory ? state.pendingMessages + seqDelta : 0;
     if (shouldScrollBottom) {
+      pendingRestoreScrollTop = null;
+      suppressScrollStick = false;
       state.stickToBottom = true;
       state.unreadBelow = 0;
+    } else if (resync && !preserveHistory) {
+      state.unreadBelow += newUnreadInResync;
     }
     state.latestSeq = snap.room.seq;
     state.queue = snap.queue || [];
@@ -780,11 +791,7 @@
     renderRoomHead();
     renderWork();
     pruneMessageCaches();
-    renderTimeline(shouldScrollBottom);
-    if (!shouldScrollBottom && tl) {
-      tl.scrollTop = priorTop;
-      updateJumpBottomBtn();
-    }
+    renderTimeline(shouldScrollBottom, priorTop);
     renderParticipants();
     renderQueue();
     renderDiscussion();
@@ -1204,10 +1211,47 @@
 
   // ---------- timeline (Fix P2 #2: Strict 200 DOM cap in all scroll positions) ----------
   let isRenderingTimeline = false;
+  let suppressScrollStick = false;
+  let pendingRestoreScrollTop = null;
 
   function isTimelineAtBottom(tl = $("#timeline")) {
     if (!tl) return true;
     return tl.scrollHeight - tl.scrollTop - tl.clientHeight < 60;
+  }
+
+  function restoreTimelineScrollTop(targetTop) {
+    const tl = $("#timeline");
+    if (!tl) return;
+    suppressScrollStick = true;
+    tl.scrollTop = targetTop;
+    if (state.traceFetching.size > 0 && !state.stickToBottom) {
+      pendingRestoreScrollTop = targetTop;
+    } else {
+      pendingRestoreScrollTop = null;
+      requestAnimationFrame(() => {
+        suppressScrollStick = false;
+      });
+    }
+  }
+
+  function syncPendingScrollRestore() {
+    if (pendingRestoreScrollTop === null) return;
+    if (state.stickToBottom) {
+      pendingRestoreScrollTop = null;
+      return;
+    }
+    const tl = $("#timeline");
+    if (tl) {
+      suppressScrollStick = true;
+      tl.scrollTop = pendingRestoreScrollTop;
+    }
+    if (state.traceFetching.size === 0) {
+      pendingRestoreScrollTop = null;
+      requestAnimationFrame(() => {
+        suppressScrollStick = false;
+        updateJumpBottomBtn();
+      });
+    }
   }
 
   function updateJumpBottomBtn() {
@@ -1219,9 +1263,8 @@
       if (btn) btn.hidden = true;
       return;
     }
-    const atBottom = !state.browsingHistory && (state.stickToBottom || isTimelineAtBottom(tl));
+    const atBottom = !state.browsingHistory && state.stickToBottom;
     if (atBottom) {
-      state.stickToBottom = true;
       state.unreadBelow = 0;
       btn.hidden = true;
       if (badge) badge.hidden = true;
@@ -1246,6 +1289,8 @@
   async function scrollToTimelineBottom() {
     const tl = $("#timeline");
     if (!tl) return;
+    pendingRestoreScrollTop = null;
+    suppressScrollStick = false;
     state.stickToBottom = true;
     state.unreadBelow = 0;
     if (state.browsingHistory || state.pendingMessages > 0 || state.winEnd < state.order.length) {
@@ -1256,10 +1301,10 @@
     updateJumpBottomBtn();
   }
 
-  function renderTimeline(scrollToBottom) {
+  function renderTimeline(scrollToBottom, explicitPriorTop) {
     const tl = $("#timeline");
     if (!tl) return;
-    const priorTop = tl.scrollTop;
+    const priorTop = explicitPriorTop !== undefined ? explicitPriorTop : tl.scrollTop;
     const shouldPinBottom = scrollToBottom || (state.stickToBottom && !state.browsingHistory);
     isRenderingTimeline = true;
     try {
@@ -1290,11 +1335,13 @@
       updateTimelineBanners(tl);
 
       if (shouldPinBottom) {
+        pendingRestoreScrollTop = null;
+        suppressScrollStick = false;
         tl.scrollTop = tl.scrollHeight;
         state.stickToBottom = true;
         state.unreadBelow = 0;
       } else {
-        tl.scrollTop = priorTop;
+        restoreTimelineScrollTop(priorTop);
       }
     } finally {
       isRenderingTimeline = false;
@@ -1347,7 +1394,10 @@
       pruneMessageCaches();
       renderTimeline(false);
       const restored = anchorId && document.getElementById(anchorId);
-      if (restored) tl.scrollTop += restored.getBoundingClientRect().top - anchorTop;
+      if (restored) {
+        const nextTop = tl.scrollTop + (restored.getBoundingClientRect().top - anchorTop);
+        restoreTimelineScrollTop(nextTop);
+      }
       updateJumpBottomBtn();
       announce("이전 대화 " + page.messages.length + "개를 불러왔습니다. 최신 대화는 아래 버튼으로 돌아갈 수 있습니다.");
     } catch (err) {
@@ -1359,6 +1409,8 @@
 
   async function jumpToLatestMessages() {
     if (!state.roomId) return;
+    pendingRestoreScrollTop = null;
+    suppressScrollStick = false;
     state.stickToBottom = true;
     state.unreadBelow = 0;
     try { await openRoom(state.roomId, true, true); }
@@ -1700,6 +1752,8 @@
         meta.push('<span class="badge" style="color:var(--danger);border-color:var(--danger)">⚠ 실패</span>');
         if (isPartErrorResolved(m)) {
           meta.push('<span class="badge muted resolved-after-badge">이후 해결됨</span>');
+        } else if (isPartErrorAbandoned(m)) {
+          meta.push('<span class="badge muted abandoned-after-badge">파트 포기됨</span>');
         }
       }
       if (m.signal) {
@@ -1841,6 +1895,8 @@
     }
 
     if (!batch && (atBottom || (isNew && m.kind === "user"))) {
+      pendingRestoreScrollTop = null;
+      suppressScrollStick = false;
       tl.scrollTop = tl.scrollHeight;
       state.stickToBottom = true;
       state.unreadBelow = 0;
@@ -1915,18 +1971,27 @@
         cacheTrace(id, [...events.slice(-TRACE_EVENT_LIMIT), ...later.map(([, event]) => event)], total);
         state.messages.get(id).trace = Math.max(state.messages.get(id).trace || 0, total);
         state.traceErrors.delete(id);
+        renderTrace(id);
+        updateTraceCount(id);
       } catch (err) {
         if (controller.signal.aborted) return;
         if (state.roomId !== roomId || openSeq !== sequence) return;
         state.traceErrors.set(id, err.message);
-        renderTraceError(id); updateTraceCount(id); return;
+        renderTraceError(id);
+        updateTraceCount(id);
       } finally {
         if (state.traceControllers.get(id) === controller) {
-          state.traceFetching.delete(id); state.tracePending.delete(id); state.traceControllers.delete(id);
+          state.traceFetching.delete(id);
+          state.tracePending.delete(id);
+          state.traceControllers.delete(id);
+          syncPendingScrollRestore();
         }
       }
+      return;
     }
-    renderTrace(id); updateTraceCount(id);
+    renderTrace(id);
+    updateTraceCount(id);
+    syncPendingScrollRestore();
   }
 
   function renderTraceError(id) {
@@ -2821,7 +2886,7 @@
   function isPartErrorResolved(m) {
     if (!m || m.status !== "error" || (!m.part && !m.review_step)) return false;
     const part = m.part ? findWorkPart(m.part) : null;
-    if (part && (part.state === "merged" || part.state === "abandoned")) {
+    if (part && part.state === "merged") {
       return true;
     }
     const baseStepOrder = m.review_step ? REVIEW_STEP_ORDER[m.review_step] || 0 : 0;
@@ -2841,6 +2906,13 @@
       }
     }
     return false;
+  }
+
+  function isPartErrorAbandoned(m) {
+    if (!m || m.status !== "error" || (!m.part && !m.review_step)) return false;
+    if (isPartErrorResolved(m)) return false;
+    const part = m.part ? findWorkPart(m.part) : null;
+    return !!(part && part.state === "abandoned");
   }
 
   function refreshPartErrorMessages(partId = "") {
@@ -3951,10 +4023,18 @@
     }
     const timelineEl = $("#timeline");
     if (timelineEl) {
+      const cancelPendingScrollRestore = () => {
+        pendingRestoreScrollTop = null;
+        suppressScrollStick = false;
+      };
+      timelineEl.addEventListener("wheel", cancelPendingScrollRestore, { passive: true });
+      timelineEl.addEventListener("touchmove", cancelPendingScrollRestore, { passive: true });
+      timelineEl.addEventListener("pointerdown", cancelPendingScrollRestore, { passive: true });
+      timelineEl.addEventListener("keydown", cancelPendingScrollRestore);
       timelineEl.addEventListener(
         "scroll",
         () => {
-          if (isRenderingTimeline || document.hidden) return;
+          if (isRenderingTimeline || suppressScrollStick || pendingRestoreScrollTop !== null || document.hidden) return;
           const atBottom = !state.browsingHistory && isTimelineAtBottom(timelineEl);
           state.stickToBottom = atBottom;
           if (atBottom) state.unreadBelow = 0;
