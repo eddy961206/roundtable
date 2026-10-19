@@ -15,8 +15,9 @@ import (
 
 // Codex runs `codex exec --json` and watches ~/.codex/sessions for sub-agent threads.
 type Codex struct {
-	cmd         string
-	sessionsDir string
+	cmd            string
+	sessionsDir    string
+	windowsSandbox string // "" keeps the user's config.toml choice
 }
 
 func NewCodex(cmd string) *Codex {
@@ -27,6 +28,12 @@ func NewCodex(cmd string) *Codex {
 	}
 	return &Codex{cmd: cmd, sessionsDir: dir}
 }
+
+// SetWindowsSandbox pins [windows].sandbox for roundtable runs only. On
+// 2026-10-19 the elevated setup refresh failed on every shell command while
+// another process held a Codex runtime binary open; "unelevated" still kept
+// workspace-write runs from writing outside the workspace.
+func (c *Codex) SetWindowsSandbox(mode string) { c.windowsSandbox = mode }
 
 func (c *Codex) ID() string      { return "codex" }
 func (c *Codex) Label() string   { return "Codex" }
@@ -54,7 +61,7 @@ func (c *Codex) Models() []ModelOption {
 	}
 }
 
-func codexArgs(o RunOptions) []string {
+func codexArgs(o RunOptions, windowsSandbox string) []string {
 	// `codex exec resume` accepts fewer flags than `codex exec` (no --color, no --cd),
 	// and wants options before the positional session id.
 	resume := o.SessionID != ""
@@ -85,6 +92,9 @@ func codexArgs(o RunOptions) []string {
 		args = append(args, "-c", key+".command="+tomlString(o.MCP.Command), "-c", key+".args=["+strings.Join(quoted, ",")+"]",
 			"-c", key+`.default_tools_approval_mode="approve"`)
 	}
+	if windowsSandbox != "" {
+		args = append(args, "-c", fmt.Sprintf("windows.sandbox=%q", windowsSandbox))
+	}
 	switch o.Mode {
 	case ModeWrite:
 		args = append(args, "-c", `sandbox_mode="workspace-write"`, "-c", `approval_policy="never"`)
@@ -102,7 +112,7 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 	if err != nil {
 		return Result{}, fmt.Errorf("codex CLI를 찾지 못함: %w", err)
 	}
-	cmd := exec.Command(path, codexArgs(o)...)
+	cmd := exec.Command(path, codexArgs(o, c.windowsSandbox)...)
 	cmd.Dir = workDir(o)
 	cmd.Env = os.Environ()
 	p := newCodexParser()

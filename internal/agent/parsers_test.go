@@ -279,7 +279,7 @@ func TestArgsPerMode(t *testing.T) {
 	if strings.Contains(c, "dangerously") {
 		t.Error("claude args must never bypass permissions")
 	}
-	x := codexArgs(RunOptions{Mode: ModeWrite, Workspace: ws, Model: "gpt-6.1-sol", Effort: "high"})
+	x := codexArgs(RunOptions{Mode: ModeWrite, Workspace: ws, Model: "gpt-6.1-sol", Effort: "high"}, "")
 	xs := strings.Join(x, " ")
 	for _, want := range []string{"exec --json", `model="gpt-6.1-sol"`, `model_reasoning_effort="high"`, `sandbox_mode="workspace-write"`, "--cd " + ws + " -"} {
 		if !strings.Contains(xs, want) {
@@ -289,7 +289,7 @@ func TestArgsPerMode(t *testing.T) {
 	if strings.Contains(xs, "bypass") {
 		t.Error("codex args must never bypass the sandbox")
 	}
-	xr := strings.Join(codexArgs(RunOptions{Mode: ModeRead, Workspace: ws, SessionID: "tid"}), " ")
+	xr := strings.Join(codexArgs(RunOptions{Mode: ModeRead, Workspace: ws, SessionID: "tid"}, ""), " ")
 	if !strings.HasPrefix(xr, "exec resume --json") || !strings.HasSuffix(xr, " tid -") || !strings.Contains(xr, `sandbox_mode="read-only"`) || strings.Contains(xr, "--cd") || strings.Contains(xr, "--color") {
 		t.Errorf("codex resume args wrong: %s", xr)
 	}
