@@ -180,6 +180,9 @@ func TestReviewFindingErrorsAreAtomic(t *testing.T) {
 		"extra table":       findingHeader + findingHeader,
 		"no closing pipe":   findingHeader + strings.TrimSuffix(findingOne, "|\n"),
 		"no opening pipe":   findingHeader + strings.TrimPrefix(findingOne, "|"),
+		"fenced table":      "```\n" + findingHeader + "```",
+		"tilde fence table": "~~~\n" + findingHeader + "~~~",
+		"row after prose":   findingHeader + "중간 설명 문장\n" + findingOne,
 	}
 	for _, location := range []string{"src/example.go:42", "other:src/example.go:42", "head:../secret:1", "head:/root/file:1", "head:C:/file:1", `head:src\file:1`, "head:src/../file:1", "head:.:1", "head:src/file:0", "head:src/file:-1", "head:src/file:01", "head:src/file:999999999999999999999999"} {
 		cases[location] = findingHeader + strings.Replace(findingOne, "head:src/example.go:42", location, 1)
@@ -368,6 +371,8 @@ func TestReviewRecheckLateErrorAndCarriedItems(t *testing.T) {
 
 func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	in := protocolInput("head-one")
+	in.AuthorRole = "구현과 경계 조건을 먼저 깊게 본다."
+	in.ReviewerRole = "시각 검토와 논리를 먼저 깊게 본다."
 	in.Diff.Files[0].Patch = strings.Repeat("가", reviewPatchRunes+10)
 	in.Diff.Files = append(in.Diff.Files, DiffFile{Path: "src/last.go", Status: "A", Patch: "+last"})
 	rs := NewReviewState(3)
@@ -375,7 +380,7 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{in.Goal, in.Brief, "src/", "base-commit", "head-one", "src/last.go", "diff 잘림: true", "worktree에서 파일을 직접 읽을 수", findingHeader, "대화 이력은 제공하지 않는다", "표 밖 설명은 무시됨"} {
+	for _, text := range []string{in.Goal, in.Brief, "src/", "base-commit", "head-one", "src/last.go", "diff 잘림: true", "worktree에서 파일을 직접 읽을 수", findingHeader, "대화 이력은 제공하지 않는다", "당신의 역할: 시각 검토와 논리를 먼저 깊게 본다.", "강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않는다", "표만 쓰고 코드펜스로 감싸지 않는다"} {
 		if !strings.Contains(step.Prompt, text) {
 			t.Errorf("missing prompt text %q", text)
 		}
@@ -387,11 +392,11 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	in.Diff.Files[0].Path = "changed"
 	step.Kind = "changed"
 	applyReview(t, rs, findingHeader+findingOne, "author_reply", "")
-	if strings.Contains(rs.Pending.Prompt, "changed") {
+	if strings.Contains(rs.Pending.Prompt, "changed") || !strings.Contains(rs.Pending.Prompt, "당신의 역할: 구현과 경계 조건을 먼저 깊게 본다.") {
 		t.Fatal("caller mutated retained input or pending step")
 	}
 	applyReview(t, rs, authorHeader+"| r1-1 | REJECT | 호출자 검사 확인 |\n", "rebuttal", "")
-	for _, text := range []string{rebuttalHeader, "MAINTAIN", "WITHDRAW", "r1-1", "호출자 검사 확인", in.Goal, "head-one"} {
+	for _, text := range []string{rebuttalHeader, "MAINTAIN", "WITHDRAW", "r1-1", "호출자 검사 확인", in.Goal, "head-one", "당신의 역할: 시각 검토와 논리를 먼저 깊게 본다."} {
 		if !strings.Contains(rs.Pending.Prompt, text) {
 			t.Errorf("missing rebuttal context %q", text)
 		}
@@ -405,23 +410,33 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	applyReview(t, &restored, rebuttalHeader+"| r1-1 | WITHDRAW | 확인 |\n", "", "passed")
+
+	noRoleRS := startedReview(t, 3)
+	if strings.Contains(noRoleRS.Pending.Prompt, "당신의 역할:") {
+		t.Fatalf("empty ReviewerRole must omit role line:\n%s", noRoleRS.Pending.Prompt)
+	}
 }
 
 func TestReviewTablesWithoutLabelsAndWithProse(t *testing.T) {
 	for name, reply := range map[string]string{
-		"bare table":             findingHeader,
-		"observed CLI reply":     "참조 SHA와 두 파일을 읽어서 확인할게. 코드는 수정하거나 테스트를 실행하지 않을게.\n\n\n" + findingHeader,
-		"prose before and after": "파일을 확인했어.\n" + findingHeader + "추가 지적은 없어.",
-		"fenced table":           "```\n" + findingHeader + "```",
+		"bare table":                 findingHeader,
+		"observed CLI reply":         "참조 SHA와 두 파일을 읽어서 확인할게. 코드는 수정하거나 테스트를 실행하지 않을게.\n\n\n" + findingHeader,
+		"prose before and after":     "파일을 확인했어.\n" + findingHeader + "추가 지적은 없어.",
+		"code fence with pipes":      "예시 코드:\n```go\nif a || b {\n\t// | 이름 | 값 |\n\t// | --- | --- |\n}\n```\n" + findingHeader + "\n```markdown\n| 번호 | 심각도 | 파일:줄 | 재현 시나리오 | 확신도 |\n| --- | --- | --- | --- | --- |\n| 1 | critical | head:src/fake.go:1 | 코드펜스 안 가짜 표 | high |\n```",
+		"tilde fence with fake rows": "~~~text\n| 1 | high | head:src/fake.go:1 | 무시 | high |\n~~~\n" + findingHeader,
+		"prose with pipes":           "조건 a | b 분기와 `|` 구분자, a | b | c 조건을 확인했어.\n| 시작만 파이프인 설명\n끝만 파이프인 설명 |\n\n" + findingHeader + "| 참고: 표 바로 다음 단일 파이프 문장\n검토 완료: x | y 케이스도 정상.",
 	} {
 		t.Run(name, func(t *testing.T) {
 			applyReview(t, startedReview(t, 3), reply, "", "passed")
 		})
 	}
 	rs := startedReview(t, 3)
-	applyReview(t, rs, "지적할 항목이 있어.\n"+findingHeader+findingOne+"코드 확인을 마쳤어.", "author_reply", "")
-	applyReview(t, rs, "호출 경로를 확인했어.\n"+authorHeader+"| r1-1 | REJECT | 기존 검증 있음 |\n"+"근거를 표에 적었어.", "rebuttal", "")
-	applyReview(t, rs, "반박을 확인했어.\n"+rebuttalHeader+"| r1-1 | WITHDRAW | 기존 검증 확인 |\n"+"지적을 철회해.", "", "passed")
+	applyReview(t, rs, "지적할 항목이 있어.\n"+findingHeader+"\n"+findingOne+"\n"+findingTwo+"코드 확인을 마쳤어.", "author_reply", "")
+	if len(rs.Rounds[0].Items) != 2 {
+		t.Fatalf("blank lines inside findings table dropped items: %+v", rs.Rounds[0].Items)
+	}
+	applyReview(t, rs, "호출 경로를 확인했어.\n"+authorHeader+"\n| r1-1 | REJECT | 기존 검증 있음 |\n\n| r1-2 | REJECT | 삭제된 검증 불필요 |\n"+"근거를 표에 적었어.", "rebuttal", "")
+	applyReview(t, rs, "반박을 확인했어.\n"+rebuttalHeader+"\n| r1-1 | WITHDRAW | 기존 검증 확인 |\n| r1-2 | WITHDRAW | 삭제 확인 |\n"+"지적을 철회해.", "", "passed")
 }
 
 func TestReviewRecheckTableOrderAndPresence(t *testing.T) {

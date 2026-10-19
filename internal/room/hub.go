@@ -1160,7 +1160,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
-	h.addTurnImages(rs, p, hist, &opts)
+	h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
 }
 
@@ -1178,7 +1178,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 	var hist []*Message
 	switch {
 	case part.SessionID == "":
-		prompt = BuildPartPrompt(rs.room.Work, part)
+		prompt = BuildPartPrompt(rs.room.Work, part, p.Role)
 		if t.prompt != "" {
 			prompt += "\n\n" + t.prompt
 		}
@@ -1206,7 +1206,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 		prompt = BuildPrompt(&view, p, hist, tc)
 	}
 	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
-	h.addTurnImages(rs, p, hist, &opts)
+	h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, bootstrap: bootstrap}
 }
 

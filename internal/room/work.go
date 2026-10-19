@@ -653,7 +653,22 @@ func (h *Hub) PartDiff(roomID, partID string) (*PartDiff, error) {
 
 func (h *Hub) startReview(rs *roomState, part *Part, from, sha string, diff *PartDiff) {
 	plan := rs.room.Work
-	in := ReviewInput{Ref: ReviewRef{PartID: part.ID, Round: 1, BaseSHA: plan.BaseSHA, HeadSHA: sha}, Goal: plan.Goal, Brief: part.Brief, Scope: part.Scope, Diff: diff}
+	var authorRole, reviewerRole string
+	if author := rs.room.participant(part.Seat); author != nil {
+		authorRole = author.Role
+	}
+	if reviewer := rs.room.participant(part.Reviewer); reviewer != nil {
+		reviewerRole = reviewer.Role
+	}
+	in := ReviewInput{
+		Ref:          ReviewRef{PartID: part.ID, Round: 1, BaseSHA: plan.BaseSHA, HeadSHA: sha},
+		Goal:         plan.Goal,
+		Brief:        part.Brief,
+		Scope:        part.Scope,
+		AuthorRole:   authorRole,
+		ReviewerRole: reviewerRole,
+		Diff:         diff,
+	}
 	var step ReviewStep
 	var err error
 	review := part.Review

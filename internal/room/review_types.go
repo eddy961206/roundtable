@@ -46,11 +46,13 @@ type ReviewSummary struct {
 
 // ReviewInput is everything a reviewer may see (D10): no room history.
 type ReviewInput struct {
-	Ref   ReviewRef `json:"ref"`
-	Goal  string    `json:"goal"`
-	Brief string    `json:"brief"`
-	Scope []string  `json:"scope"`
-	Diff  *PartDiff `json:"diff"`
+	Ref          ReviewRef `json:"ref"`
+	Goal         string    `json:"goal"`
+	Brief        string    `json:"brief"`
+	Scope        []string  `json:"scope"`
+	AuthorRole   string    `json:"author_role,omitempty"`
+	ReviewerRole string    `json:"reviewer_role,omitempty"`
+	Diff         *PartDiff `json:"diff"`
 }
 
 // ReviewStep is the next turn the hub must run.
