@@ -11,11 +11,11 @@ type ReviewRef struct {
 }
 
 type Finding struct {
-	ID         string `json:"id"`         // server-issued: r1-1
-	Severity   string `json:"severity"`   // critical|high|medium|low
-	File       string `json:"file"`       // repository-relative
-	Side       string `json:"side"`       // base|head
-	Line       int    `json:"line"`       // 1-based line at that side's SHA
+	ID         string `json:"id"`       // server-issued: r1-1
+	Severity   string `json:"severity"` // critical|high|medium|low
+	File       string `json:"file"`     // repository-relative
+	Side       string `json:"side"`     // base|head
+	Line       int    `json:"line"`     // 1-based line at that side's SHA
 	Scenario   string `json:"scenario"`
 	Confidence string `json:"confidence"` // high|medium|low
 }
