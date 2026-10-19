@@ -58,7 +58,7 @@ type roomState struct {
 	stopGen  int  // prevents a stopped turn from scheduling follow-up work
 	resetGen int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
 
-	workBusy map[string]bool // plan creation or part submit checks running git outside h.mu
+	workBusy map[string]bool // plan creation, submit checks or cleanup running git outside h.mu
 }
 
 type running struct {
@@ -1051,6 +1051,10 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 // buildPartTurn runs every turn of a seat with a working/fixing part in the
 // part session and worktree (D9). The first part turn gets only plan context.
 func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.Provider, part *Part) *prepared {
+	if part.WorktreeRemoved {
+		h.workNote(rs, removedWorktreeError(part).Error())
+		return nil
+	}
 	t.Part = part.ID
 	seen, unseen := part.LastSeen, slices.Clone(part.Unseen)
 	bootstrap := part.SessionID == ""
@@ -1095,6 +1099,10 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 func (h *Hub) buildReviewTurn(rs *roomState, t *Turn, p *Participant, prov agent.Provider) *prepared {
 	part := rs.room.Work.part(t.Part)
 	if part.State != "reviewing" {
+		return nil
+	}
+	if part.WorktreeRemoved {
+		h.workNote(rs, removedWorktreeError(part).Error())
 		return nil
 	}
 	reviewer := p.ID == part.Reviewer

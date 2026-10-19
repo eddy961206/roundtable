@@ -4,17 +4,18 @@ package room
 
 // WorkPlan is the per-room work-division state stored in room.json ("work").
 type WorkPlan struct {
-	Goal           string       `json:"goal"`
-	BaseSHA        string       `json:"base_sha"`
-	Integration    string       `json:"integration_branch"` // rt/<roomID>/integration
-	IntegrationSHA string       `json:"integration_sha"`    // current tip
-	MergeMode      string       `json:"merge_mode"`         // auto | confirm
-	ReviewRounds   int          `json:"review_rounds"`
-	Verify         []VerifyCmd  `json:"verify"`
-	Parts          []*Part      `json:"parts"`
-	Queue          []string     `json:"queue"`             // part ids, FIFO; only the head is processed
-	Halted         *Block       `json:"halted,omitempty"`  // D5: why the merge queue stopped
-	Merging        *MergeIntent `json:"merging,omitempty"` // D13: written before the integration ref moves
+	IntegrationWorktreeRemoved bool         `json:"integration_worktree_removed,omitempty"`
+	Goal                       string       `json:"goal"`
+	BaseSHA                    string       `json:"base_sha"`
+	Integration                string       `json:"integration_branch"` // rt/<roomID>/integration
+	IntegrationSHA             string       `json:"integration_sha"`    // current tip
+	MergeMode                  string       `json:"merge_mode"`         // auto | confirm
+	ReviewRounds               int          `json:"review_rounds"`
+	Verify                     []VerifyCmd  `json:"verify"`
+	Parts                      []*Part      `json:"parts"`
+	Queue                      []string     `json:"queue"`             // part ids, FIFO; only the head is processed
+	Halted                     *Block       `json:"halted,omitempty"`  // D5: why the merge queue stopped
+	Merging                    *MergeIntent `json:"merging,omitempty"` // D13: written before the integration ref moves
 }
 
 type VerifyCmd struct {
@@ -24,24 +25,25 @@ type VerifyCmd struct {
 }
 
 type Part struct {
-	ID        string       `json:"id"`
-	Title     string       `json:"title"`
-	Brief     string       `json:"brief"` // completion criteria
-	Scope     []string     `json:"scope"` // repository-relative paths
-	Seat      string       `json:"seat"`
-	Reviewer  string       `json:"reviewer"` // seat of another provider (D3)
-	Branch    string       `json:"branch"`   // rt/<roomID>/<partID>
-	Worktree  string       `json:"worktree"`
-	SessionID string       `json:"session_id"`
-	LastSeen  int64        `json:"last_seen"` // delivery boundary independent of the seat's chat session
-	Unseen    []int64      `json:"unseen,omitempty"`
-	State     string       `json:"state"` // working|reviewing|fixing|queued|awaiting_approval|merging|merged|blocked|abandoned
-	SubmitSHA string       `json:"submit_sha"`
-	ReadyMode string       `json:"ready_mode"` // D6: merge_mode captured when the part became queued
-	Approval  *Approval    `json:"approval,omitempty"`
-	Block     *Block       `json:"block,omitempty"`
-	Review    *ReviewState `json:"review,omitempty"`
-	MergedSHA string       `json:"merged_sha,omitempty"`
+	ID              string       `json:"id"`
+	Title           string       `json:"title"`
+	Brief           string       `json:"brief"` // completion criteria
+	Scope           []string     `json:"scope"` // repository-relative paths
+	Seat            string       `json:"seat"`
+	Reviewer        string       `json:"reviewer"` // seat of another provider (D3)
+	Branch          string       `json:"branch"`   // rt/<roomID>/<partID>
+	Worktree        string       `json:"worktree"`
+	WorktreeRemoved bool         `json:"worktree_removed,omitempty"`
+	SessionID       string       `json:"session_id"`
+	LastSeen        int64        `json:"last_seen"` // delivery boundary independent of the seat's chat session
+	Unseen          []int64      `json:"unseen,omitempty"`
+	State           string       `json:"state"` // working|reviewing|fixing|queued|awaiting_approval|merging|merged|blocked|abandoned
+	SubmitSHA       string       `json:"submit_sha"`
+	ReadyMode       string       `json:"ready_mode"` // D6: merge_mode captured when the part became queued
+	Approval        *Approval    `json:"approval,omitempty"`
+	Block           *Block       `json:"block,omitempty"`
+	Review          *ReviewState `json:"review,omitempty"`
+	MergedSHA       string       `json:"merged_sha,omitempty"`
 }
 
 type Approval struct {

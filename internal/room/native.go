@@ -77,6 +77,18 @@ func (h *Hub) nativeSessionOptionsLocked(roomID, seatID, messageID string) (agen
 		// Pre-metadata releases persisted only the current seat session and room settings.
 		opts = agent.RunOptions{SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch}
 	}
+	if rs.room.Work != nil {
+		for _, part := range rs.room.Work.Parts {
+			if sameWorktreePath(opts.Workspace, part.Worktree) {
+				if part.WorktreeRemoved {
+					return nil, opts, removedWorktreeError(part)
+				}
+				if part.State == "merged" && rs.workBusy[busyCleanup] {
+					return nil, opts, fmt.Errorf("%w: 파트 %s worktree 정리 중", ErrWorkConflict, part.ID)
+				}
+			}
+		}
+	}
 	prov := h.reg.Get(provider)
 	if prov == nil {
 		return nil, opts, fmt.Errorf("알 수 없는 공급자: %s", provider)
