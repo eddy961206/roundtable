@@ -241,6 +241,7 @@ func (s *Store) cleanupAttachments(roomID string, messages []*Message) error {
 }
 
 func (h *Hub) addTurnImages(rs *roomState, p *Participant, history []*Message, opts *agent.RunOptions) {
+	added := 0
 	for _, m := range history {
 		for _, a := range m.Attachments {
 			path, _ := filepath.Abs(h.store.attachmentPath(rs.room.ID, a))
@@ -250,6 +251,10 @@ func (h *Hub) addTurnImages(rs *roomState, p *Participant, history []*Message, o
 				access = "경로: " + path
 			}
 			opts.Prompt += fmt.Sprintf("\n[메시지 %s / %s] [첨부 %s: %s %d×%d %q] %s", m.ID, speaker(m, rs.room), a.ID, a.Mime, a.Width, a.Height, a.Name, access)
+			added++
 		}
+	}
+	if added > 0 {
+		opts.Prompt += "\n(이미지 첨부 안내: 화면 캡처나 이미지를 바꿨거나 추가 시각 검토가 필요하면 [[ATTACH:캡처.png]]로 공유하거나, 이미지 판독·시각 검토에 강점이 있는 좌석에 [[REQUEST:@좌석ID]]로 시각 검토를 요청하세요.)"
 	}
 }

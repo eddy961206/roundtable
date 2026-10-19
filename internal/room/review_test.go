@@ -180,6 +180,8 @@ func TestReviewFindingErrorsAreAtomic(t *testing.T) {
 		"extra table":       findingHeader + findingHeader,
 		"no closing pipe":   findingHeader + strings.TrimSuffix(findingOne, "|\n"),
 		"no opening pipe":   findingHeader + strings.TrimPrefix(findingOne, "|"),
+		"fenced table":      "```\n" + findingHeader + "```",
+		"tilde fence table": "~~~\n" + findingHeader + "~~~",
 	}
 	for _, location := range []string{"src/example.go:42", "other:src/example.go:42", "head:../secret:1", "head:/root/file:1", "head:C:/file:1", `head:src\file:1`, "head:src/../file:1", "head:.:1", "head:src/file:0", "head:src/file:-1", "head:src/file:01", "head:src/file:999999999999999999999999"} {
 		cases[location] = findingHeader + strings.Replace(findingOne, "head:src/example.go:42", location, 1)
@@ -375,7 +377,7 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{in.Goal, in.Brief, "src/", "base-commit", "head-one", "src/last.go", "diff 잘림: true", "worktree에서 파일을 직접 읽을 수", findingHeader, "대화 이력은 제공하지 않는다", "표 밖 설명은 무시됨"} {
+	for _, text := range []string{in.Goal, in.Brief, "src/", "base-commit", "head-one", "src/last.go", "diff 잘림: true", "worktree에서 파일을 직접 읽을 수", findingHeader, "대화 이력은 제공하지 않는다", "당신의 역할:", "강점은 우선순위일 뿐 다른 관점의 지적을 막지 않는다", "표만 쓰고 코드펜스로 감싸지 않는다"} {
 		if !strings.Contains(step.Prompt, text) {
 			t.Errorf("missing prompt text %q", text)
 		}
@@ -387,7 +389,7 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	in.Diff.Files[0].Path = "changed"
 	step.Kind = "changed"
 	applyReview(t, rs, findingHeader+findingOne, "author_reply", "")
-	if strings.Contains(rs.Pending.Prompt, "changed") {
+	if strings.Contains(rs.Pending.Prompt, "changed") || !strings.Contains(rs.Pending.Prompt, "당신의 역할:") {
 		t.Fatal("caller mutated retained input or pending step")
 	}
 	applyReview(t, rs, authorHeader+"| r1-1 | REJECT | 호출자 검사 확인 |\n", "rebuttal", "")
@@ -409,10 +411,12 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 
 func TestReviewTablesWithoutLabelsAndWithProse(t *testing.T) {
 	for name, reply := range map[string]string{
-		"bare table":             findingHeader,
-		"observed CLI reply":     "참조 SHA와 두 파일을 읽어서 확인할게. 코드는 수정하거나 테스트를 실행하지 않을게.\n\n\n" + findingHeader,
-		"prose before and after": "파일을 확인했어.\n" + findingHeader + "추가 지적은 없어.",
-		"fenced table":           "```\n" + findingHeader + "```",
+		"bare table":                 findingHeader,
+		"observed CLI reply":         "참조 SHA와 두 파일을 읽어서 확인할게. 코드는 수정하거나 테스트를 실행하지 않을게.\n\n\n" + findingHeader,
+		"prose before and after":     "파일을 확인했어.\n" + findingHeader + "추가 지적은 없어.",
+		"code fence with pipes":      "예시 코드:\n```go\nif a || b {\n\t// | 이름 | 값 |\n\t// | --- | --- |\n}\n```\n" + findingHeader + "\n```markdown\n| 번호 | 심각도 | 파일:줄 | 재현 시나리오 | 확신도 |\n| --- | --- | --- | --- | --- |\n| 1 | critical | head:src/fake.go:1 | 코드펜스 안 가짜 표 | high |\n```",
+		"tilde fence with fake rows": "~~~text\n| 1 | high | head:src/fake.go:1 | 무시 | high |\n~~~\n" + findingHeader,
+		"prose with pipes":           "조건 a | b 분기와 `|` 구분자를 확인했어.\n| 시작만 파이프인 설명\n끝만 파이프인 설명 |\n| 첫 번째 인용 줄 |\n| 두 번째 인용 줄 |\n\n" + findingHeader + "| 참고: 표 바로 다음 단일 파이프 문장\n검토 완료: x | y 케이스도 정상.",
 	} {
 		t.Run(name, func(t *testing.T) {
 			applyReview(t, startedReview(t, 3), reply, "", "passed")

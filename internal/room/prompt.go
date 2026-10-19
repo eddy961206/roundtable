@@ -71,14 +71,22 @@ func speaker(m *Message, r *Room) string {
 	return "@" + m.Author
 }
 
+func oneLineRole(role string) string {
+	return strings.Join(strings.Fields(role), " ")
+}
+
 // standingBrief is the part of a prompt that only changes with room settings.
 // A resumed session that already holds the same brief gets a one-line reminder.
 func standingBrief(r *Room, me *Participant) string {
 	var b strings.Builder
 	others := make([]string, 0)
+	otherRoles := make([]string, 0)
 	for _, p := range r.enabled() {
 		if p.ID != me.ID {
 			others = append(others, "@"+p.ID+"("+p.Label+")")
+			if role := oneLineRole(p.Role); role != "" {
+				otherRoles = append(otherRoles, fmt.Sprintf("- @%s(%s): %s", p.ID, p.Label, role))
+			}
 		}
 	}
 	fmt.Fprintf(&b, "당신은 사용자와 여러 AI 코딩 에이전트가 함께 있는 단톡방 \"%s\"의 참가자 \"@%s\"(%s)입니다.\n", r.Title, me.ID, me.Label)
@@ -86,6 +94,12 @@ func standingBrief(r *Room, me *Participant) string {
 	fmt.Fprintf(&b, "참가자: 사용자(User), %s\n", strings.Join(append([]string{"@" + me.ID + "(" + me.Label + ", 당신)"}, others...), ", "))
 	if r.Note != "" {
 		fmt.Fprintf(&b, "\n방 공지(항상 유효):\n%s\n", strings.TrimSpace(r.Note))
+	}
+	if myRole := strings.TrimSpace(me.Role); myRole != "" {
+		fmt.Fprintf(&b, "\n당신의 역할:\n%s\n강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.\n", myRole)
+	}
+	if len(otherRoles) > 0 {
+		fmt.Fprintf(&b, "\n다른 참가자들의 역할:\n%s\n", strings.Join(otherRoles, "\n"))
 	}
 	b.WriteString("\n규칙:\n")
 	b.WriteString("- 아래 대화의 마지막 메시지에 이어 자연스럽게 답하세요. 출력 전체가 채팅 메시지 하나로 그대로 전송됩니다. \"[@" + me.ID + "]\" 같은 접두어나 서명을 붙이지 마세요.\n")
@@ -103,6 +117,7 @@ func standingBrief(r *Room, me *Participant) string {
 		fmt.Fprintf(&b, "- 작업 폴더 %s 의 파일을 읽고 검색할 수 있지만 수정하거나 상태를 바꾸는 명령은 실행하지 마세요.\n", r.Workspace)
 	case agent.ModeWrite:
 		fmt.Fprintf(&b, "- 작업 폴더 %s 의 파일을 읽고 수정할 수 있습니다. 요청 범위를 벗어난 변경은 하지 마세요. 무엇을 바꿨는지 답변에 적으세요.\n", r.Workspace)
+		b.WriteString("- UI·화면을 바꿨다면 직접 화면을 캡처해 [[ATTACH:캡처.png]]로 공유하거나, 이미지 판독·시각 검토에 강점이 있는 좌석에 [[REQUEST:@좌석ID]]로 시각 검토를 요청하세요.\n")
 	default:
 		b.WriteString("- 도구 실행이나 파일 수정 없이 대화로만 답하세요.\n")
 	}
@@ -122,6 +137,10 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 	var b strings.Builder
 	if tc.Briefed {
 		fmt.Fprintf(&b, "(단톡방 \"%s\"의 참가자·공지·규칙은 이 세션에서 받은 그대로입니다. 당신은 \"@%s\"(%s)입니다.)\n", r.Title, me.ID, me.Label)
+		if role := oneLineRole(me.Role); role != "" {
+			fmt.Fprintf(&b, "(당신의 역할: %s — 강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.)\n", role)
+		}
+		b.WriteString("(응답 끝 신호 블록: 요청 결과 [[REQUEST_DONE:요청ID]]/[[REQUEST_REJECT:요청ID]] 이유, 토론 [[DISCUSSION:...]], 파트 완료 WORK:DONE 중 이번 턴에 해당하는 신호만 응답 맨 끝에 빈 줄 없이 한 줄씩 모으세요.)\n")
 	} else {
 		b.WriteString(standingBrief(r, me))
 	}
@@ -130,6 +149,9 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 	}
 	if tc.Part != nil {
 		fmt.Fprintf(&b, "- 지금은 작업 계획의 파트 %s(%s)를 맡고 있습니다. branch %s 에만 커밋하세요. 파트를 끝냈으면 모든 변경을 커밋한 뒤 응답 끝 신호 블록에 %s 한 줄을 쓰세요.\n", tc.Part.ID, tc.Part.Title, tc.Part.Branch, workDoneSignal)
+		if role := oneLineRole(me.Role); role != "" {
+			fmt.Fprintf(&b, "- 당신의 역할: %s (강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.)\n", role)
+		}
 	}
 	if tc.Parallel {
 		b.WriteString("- 같은 메시지를 다른 참가자들도 동시에 받았습니다. 다른 답변을 기다리지 말고 독립적으로 답하세요.\n")
@@ -154,9 +176,14 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 }
 
 // BuildPartPrompt starts a part session from the plan alone; room history is never included (D9).
-func BuildPartPrompt(plan *WorkPlan, part *Part) string {
+func BuildPartPrompt(plan *WorkPlan, part *Part, role ...string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "작업 계획의 파트 %s \"%s\"를 맡았습니다.\n\n", part.ID, part.Title)
+	if r := oneLineRole(strings.Join(role, " ")); r != "" {
+		fmt.Fprintf(&b, "당신의 역할: %s (강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.)\n\n", r)
+	} else {
+		b.WriteString("당신의 역할: 맡은 파트의 완료 조건과 범위를 구현·검증합니다. 배정된 강점 관점을 먼저 깊게 보되, 강점은 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.\n\n")
+	}
 	fmt.Fprintf(&b, "전체 목표:\n%s\n\n", plan.Goal)
 	fmt.Fprintf(&b, "완료 조건:\n%s\n\n", part.Brief)
 	fmt.Fprintf(&b, "범위: %s\n", strings.Join(part.Scope, ", "))
@@ -166,6 +193,7 @@ func BuildPartPrompt(plan *WorkPlan, part *Part) string {
 	fmt.Fprintf(&b, "- 변경은 branch %s 에 커밋하세요. 커밋하지 않은 변경이나 추적하지 않는 파일이 남아 있으면 제출이 거부됩니다.\n", part.Branch)
 	fmt.Fprintf(&b, "- 파트를 끝냈으면 응답 끝 신호 블록에 %s 한 줄을 쓰세요. 그러면 다른 공급사 참가자가 diff를 리뷰합니다.\n", workDoneSignal)
 	b.WriteString("- 무엇을 바꿨는지 답변에 적으세요.\n")
+	b.WriteString("- UI·화면을 바꾸는 작업이라면 직접 화면을 캡처해 [[ATTACH:캡처.png]]로 올리거나, 이미지 판독·시각 검토에 강점이 있는 좌석에 [[REQUEST:@좌석ID]]로 시각 검토를 요청하세요.\n")
 	b.WriteString(markerBrief(agent.ModeWrite))
 	return b.String()
 }
