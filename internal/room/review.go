@@ -25,6 +25,21 @@ func (rs *ReviewState) AllowExtraRound() error {
 	return nil
 }
 
+// ReopenAfterVerify requires a new SHA and review after a failed merge check.
+// A human retry grants one additional round only when the current cap is used.
+func (rs *ReviewState) ReopenAfterVerify() (bool, error) {
+	if len(rs.Rounds) == 0 || (rs.Phase != "passed" && rs.Resolution == nil) {
+		return false, fmt.Errorf("review: verify retry requires a passed or human-resolved review")
+	}
+	extra := len(rs.Rounds) >= rs.MaxRounds
+	if extra {
+		rs.MaxRounds++
+	}
+	rs.Phase, rs.Pending, rs.Resolution = "fix", nil, nil
+	rs.updateSummary()
+	return extra, nil
+}
+
 // RetryFormat retains the complete step prompt, including its expected tables.
 // The caller must persist the returned step before dispatching it.
 func (rs *ReviewState) RetryFormat(parseErr error) *ReviewStep {

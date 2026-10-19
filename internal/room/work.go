@@ -525,7 +525,7 @@ func (h *Hub) ApprovePart(roomID, partID, submitSHA, integrationSHA string) (*Wo
 	return cloneWork(plan), nil
 }
 
-// RetryPart clears a block; terminal reviews receive one extra round to fix.
+// RetryPart reopens failed verification for author fixes and a new review round.
 func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -540,12 +540,30 @@ func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 		return nil, fmt.Errorf("%w: 파트 %s는 정지 상태가 아님", ErrWorkConflict, partID)
 	}
 	from := part.Block.From
+	verifyRetry := part.Block.Kind == "verify"
 	extraRound := part.Block.Kind == "review" && part.Review != nil && (part.Review.Phase == "disputed" || part.Review.Phase == "limit")
-	if extraRound {
+	var fixPrompt string
+	if verifyRetry {
+		if part.Review == nil {
+			return nil, fmt.Errorf("%w: 파트 %s의 검증 재시도에 필요한 리뷰 기록이 없음", ErrWorkConflict, partID)
+		}
+		extraRound, err = part.Review.ReopenAfterVerify()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrWorkConflict, err)
+		}
+		from = "fixing"
+		fixPrompt = BuildVerifyFixPrompt(part, part.Block)
+		part.Approval, part.ReadyMode = nil, ""
+		rs.room.Work.Queue = slices.DeleteFunc(rs.room.Work.Queue, func(id string) bool { return id == partID })
+	}
+	if extraRound && !verifyRetry {
 		if err := part.Review.AllowExtraRound(); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrWorkConflict, err)
 		}
 		from = "fixing"
+		fixPrompt = BuildFixPrompt(part)
+	}
+	if extraRound {
 		h.workNote(rs, fmt.Sprintf("파트 %s 사람이 리뷰 라운드 1회 추가 허용 · 상한 %d", partID, part.Review.MaxRounds))
 	}
 	var pending *ReviewStep
@@ -561,8 +579,8 @@ func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 	if pending != nil {
 		h.runReviewStep(rs, part, *pending)
 	}
-	if extraRound {
-		rs.enqueue(&Turn{ID: newID(), Agent: part.Seat, Reason: "part", Part: part.ID, Cap: rs.room.Seq, Created: nowMs(), Status: "queued", prompt: BuildFixPrompt(part)})
+	if fixPrompt != "" {
+		rs.enqueue(&Turn{ID: newID(), Agent: part.Seat, Reason: "part", Part: part.ID, Cap: rs.room.Seq, Created: nowMs(), Status: "queued", prompt: fixPrompt})
 	}
 	h.advanceQueue(rs)
 	saveErr := h.saveWork(rs)

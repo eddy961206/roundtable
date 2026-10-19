@@ -212,6 +212,17 @@ func BuildFixPrompt(part *Part) string {
 	return b.String()
 }
 
+// BuildVerifyFixPrompt carries the failed check's bounded output to the author.
+func BuildVerifyFixPrompt(part *Part, block *Block) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "파트 %s 병합 전 검증이 실패했습니다. 파트 worktree에서 원인을 고치세요.\n실패: %s\n", part.ID, block.Message)
+	if result := block.Result; result != nil {
+		fmt.Fprintf(&b, "검증: %s\n명령 argv: %q\n종료 코드: %d\n시간 초과: %t\n[검증 출력 끝부분]\n%s\n[검증 출력 끝]\n", result.Name, result.Argv, result.ExitCode, result.TimedOut, result.Output)
+	}
+	b.WriteString(BuildFixPrompt(part))
+	return b.String()
+}
+
 // ParseWorkDone strips WORK:DONE lines from the terminal signal block.
 func ParseWorkDone(text string) (string, bool) {
 	lines, start := trailingSignals(text)
