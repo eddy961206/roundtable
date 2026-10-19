@@ -176,13 +176,11 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 }
 
 // BuildPartPrompt starts a part session from the plan alone; room history is never included (D9).
-func BuildPartPrompt(plan *WorkPlan, part *Part, role ...string) string {
+func BuildPartPrompt(plan *WorkPlan, part *Part, role string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "작업 계획의 파트 %s \"%s\"를 맡았습니다.\n\n", part.ID, part.Title)
-	if r := oneLineRole(strings.Join(role, " ")); r != "" {
+	if r := oneLineRole(role); r != "" {
 		fmt.Fprintf(&b, "당신의 역할: %s (강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.)\n\n", r)
-	} else {
-		b.WriteString("당신의 역할: 맡은 파트의 완료 조건과 범위를 구현·검증합니다. 배정된 강점 관점을 먼저 깊게 보되, 강점은 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.\n\n")
 	}
 	fmt.Fprintf(&b, "전체 목표:\n%s\n\n", plan.Goal)
 	fmt.Fprintf(&b, "완료 조건:\n%s\n\n", part.Brief)

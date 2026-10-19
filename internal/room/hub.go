@@ -1133,7 +1133,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 	var hist []*Message
 	switch {
 	case part.SessionID == "":
-		prompt = BuildPartPrompt(rs.room.Work, part)
+		prompt = BuildPartPrompt(rs.room.Work, part, p.Role)
 		if t.prompt != "" {
 			prompt += "\n\n" + t.prompt
 		}

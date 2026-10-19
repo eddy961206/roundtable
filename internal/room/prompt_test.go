@@ -95,22 +95,47 @@ func TestBuildPartPromptRoleAndVisualReview(t *testing.T) {
 	plan := &WorkPlan{Goal: "화면 개선", BaseSHA: "abc1234"}
 	part := &Part{ID: "p1", Title: "UI 카드", Brief: "역할 카드 추가", Scope: []string{"web/js/"}, Worktree: "/tmp/wt", Branch: "rt/room/p1"}
 
-	defaultPrompt := BuildPartPrompt(plan, part)
+	noRolePrompt := BuildPartPrompt(plan, part, "")
+	if strings.Contains(noRolePrompt, "당신의 역할:") {
+		t.Errorf("part prompt without role must omit role line:\n%s", noRolePrompt)
+	}
 	for _, want := range []string{
-		"당신의 역할:",
-		"강점은 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.",
 		"[[ATTACH:캡처.png]]",
 		"[[REQUEST:@좌석ID]]",
 		"시각 검토",
 	} {
-		if !strings.Contains(defaultPrompt, want) {
-			t.Errorf("default part prompt missing %q:\n%s", want, defaultPrompt)
+		if !strings.Contains(noRolePrompt, want) {
+			t.Errorf("part prompt missing %q:\n%s", want, noRolePrompt)
 		}
 	}
 
 	customPrompt := BuildPartPrompt(plan, part, "큰 그림·UX를 먼저 깊게 본다.")
-	if !strings.Contains(customPrompt, "당신의 역할: 큰 그림·UX를 먼저 깊게 본다.") {
-		t.Errorf("custom role missing from part prompt:\n%s", customPrompt)
+	for _, want := range []string{
+		"당신의 역할: 큰 그림·UX를 먼저 깊게 본다.",
+		"강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.",
+	} {
+		if !strings.Contains(customPrompt, want) {
+			t.Errorf("custom role missing %q from part prompt:\n%s", want, customPrompt)
+		}
+	}
+
+	h, r := newTestHub(t, &fakeProvider{id: "codex"}, &fakeProvider{id: "claude"})
+	rs := h.rooms[r.ID]
+	author := r.Participants[0]
+	reviewer := r.Participants[1]
+	author.Role = "문구·소통과 시각 검토를 먼저 깊게 본다."
+	reviewer.Role = "논리와 경계 조건을 먼저 깊게 본다."
+	partInRoom := &Part{ID: "p1", Title: "UI 카드", Brief: "역할 카드 추가", Scope: []string{"web/js/"}, Seat: author.ID, Reviewer: reviewer.ID, Worktree: r.Workspace, Branch: "rt/room/p1", State: "working"}
+	rs.room.Work = &WorkPlan{Goal: "화면 개선", BaseSHA: "abc1234", ReviewRounds: 3, Parts: []*Part{partInRoom}}
+	turn := &Turn{ID: "t1", Agent: author.ID, Reason: "part", Part: "p1", Status: "queued"}
+	pr := h.buildPartTurn(rs, turn, author, &fakeProvider{id: "codex"}, partInRoom)
+	if pr == nil || !strings.Contains(pr.opts.Prompt, "당신의 역할: 문구·소통과 시각 검토를 먼저 깊게 본다.") {
+		t.Fatalf("buildPartTurn did not pass Participant.Role to BuildPartPrompt: %+v", pr)
+	}
+	diff := &PartDiff{PartID: "p1", BaseSHA: "abc1234", HeadSHA: "def5678", Added: 1, Files: []DiffFile{{Path: "web/js/a.js", Status: "M", Added: 1, Patch: "+ok"}}}
+	h.startReview(rs, partInRoom, "working", "def5678", diff)
+	if partInRoom.Review == nil || partInRoom.Review.Pending == nil || !strings.Contains(partInRoom.Review.Pending.Prompt, "당신의 역할: 논리와 경계 조건을 먼저 깊게 본다.") {
+		t.Fatalf("startReview did not inject reviewer role into review prompt: %+v", partInRoom.Review)
 	}
 }
 

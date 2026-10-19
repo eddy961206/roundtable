@@ -370,6 +370,8 @@ func TestReviewRecheckLateErrorAndCarriedItems(t *testing.T) {
 
 func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	in := protocolInput("head-one")
+	in.AuthorRole = "구현과 경계 조건을 먼저 깊게 본다."
+	in.ReviewerRole = "시각 검토와 논리를 먼저 깊게 본다."
 	in.Diff.Files[0].Patch = strings.Repeat("가", reviewPatchRunes+10)
 	in.Diff.Files = append(in.Diff.Files, DiffFile{Path: "src/last.go", Status: "A", Patch: "+last"})
 	rs := NewReviewState(3)
@@ -377,7 +379,7 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{in.Goal, in.Brief, "src/", "base-commit", "head-one", "src/last.go", "diff 잘림: true", "worktree에서 파일을 직접 읽을 수", findingHeader, "대화 이력은 제공하지 않는다", "당신의 역할:", "강점은 우선순위일 뿐 다른 관점의 지적을 막지 않는다", "표만 쓰고 코드펜스로 감싸지 않는다"} {
+	for _, text := range []string{in.Goal, in.Brief, "src/", "base-commit", "head-one", "src/last.go", "diff 잘림: true", "worktree에서 파일을 직접 읽을 수", findingHeader, "대화 이력은 제공하지 않는다", "당신의 역할: 시각 검토와 논리를 먼저 깊게 본다.", "강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않는다", "표만 쓰고 코드펜스로 감싸지 않는다"} {
 		if !strings.Contains(step.Prompt, text) {
 			t.Errorf("missing prompt text %q", text)
 		}
@@ -389,11 +391,11 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 	in.Diff.Files[0].Path = "changed"
 	step.Kind = "changed"
 	applyReview(t, rs, findingHeader+findingOne, "author_reply", "")
-	if strings.Contains(rs.Pending.Prompt, "changed") || !strings.Contains(rs.Pending.Prompt, "당신의 역할:") {
+	if strings.Contains(rs.Pending.Prompt, "changed") || !strings.Contains(rs.Pending.Prompt, "당신의 역할: 구현과 경계 조건을 먼저 깊게 본다.") {
 		t.Fatal("caller mutated retained input or pending step")
 	}
 	applyReview(t, rs, authorHeader+"| r1-1 | REJECT | 호출자 검사 확인 |\n", "rebuttal", "")
-	for _, text := range []string{rebuttalHeader, "MAINTAIN", "WITHDRAW", "r1-1", "호출자 검사 확인", in.Goal, "head-one"} {
+	for _, text := range []string{rebuttalHeader, "MAINTAIN", "WITHDRAW", "r1-1", "호출자 검사 확인", in.Goal, "head-one", "당신의 역할: 시각 검토와 논리를 먼저 깊게 본다."} {
 		if !strings.Contains(rs.Pending.Prompt, text) {
 			t.Errorf("missing rebuttal context %q", text)
 		}
@@ -407,6 +409,11 @@ func TestReviewPromptsAndInputOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	applyReview(t, &restored, rebuttalHeader+"| r1-1 | WITHDRAW | 확인 |\n", "", "passed")
+
+	noRoleRS := startedReview(t, 3)
+	if strings.Contains(noRoleRS.Pending.Prompt, "당신의 역할:") {
+		t.Fatalf("empty ReviewerRole must omit role line:\n%s", noRoleRS.Pending.Prompt)
+	}
 }
 
 func TestReviewTablesWithoutLabelsAndWithProse(t *testing.T) {
@@ -423,9 +430,12 @@ func TestReviewTablesWithoutLabelsAndWithProse(t *testing.T) {
 		})
 	}
 	rs := startedReview(t, 3)
-	applyReview(t, rs, "지적할 항목이 있어.\n"+findingHeader+findingOne+"코드 확인을 마쳤어.", "author_reply", "")
-	applyReview(t, rs, "호출 경로를 확인했어.\n"+authorHeader+"| r1-1 | REJECT | 기존 검증 있음 |\n"+"근거를 표에 적었어.", "rebuttal", "")
-	applyReview(t, rs, "반박을 확인했어.\n"+rebuttalHeader+"| r1-1 | WITHDRAW | 기존 검증 확인 |\n"+"지적을 철회해.", "", "passed")
+	applyReview(t, rs, "지적할 항목이 있어.\n"+findingHeader+"\n"+findingOne+"\n"+findingTwo+"코드 확인을 마쳤어.", "author_reply", "")
+	if len(rs.Rounds[0].Items) != 2 {
+		t.Fatalf("blank lines inside findings table dropped items: %+v", rs.Rounds[0].Items)
+	}
+	applyReview(t, rs, "호출 경로를 확인했어.\n"+authorHeader+"\n| r1-1 | REJECT | 기존 검증 있음 |\n\n| r1-2 | REJECT | 삭제된 검증 불필요 |\n"+"근거를 표에 적었어.", "rebuttal", "")
+	applyReview(t, rs, "반박을 확인했어.\n"+rebuttalHeader+"\n| r1-1 | WITHDRAW | 기존 검증 확인 |\n| r1-2 | WITHDRAW | 삭제 확인 |\n"+"지적을 철회해.", "", "passed")
 }
 
 func TestReviewRecheckTableOrderAndPresence(t *testing.T) {
