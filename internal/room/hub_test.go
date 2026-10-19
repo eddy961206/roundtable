@@ -160,7 +160,7 @@ func TestBroadcastAndDelta(t *testing.T) {
 	waitIdle(t, hub, r.ID)
 	second := a.prompts[1]
 	_, hist, ok := strings.Cut(second, "새로 올라온 메시지 ===")
-	if !ok || strings.Contains(hist, "[User] 첫 질문") || strings.Count(hist, "[@codex] 답변 codex") != 1 || strings.Contains(hist, "[@claude]") || !strings.Contains(hist, "[User] 둘째 질문") {
+	if !ok || strings.Contains(hist, "[User] 첫 질문") || strings.Count(hist, "[@codex (CODEX 1)] 답변 codex") != 1 || strings.Contains(hist, "[@claude (CLAUDE 1)]") || !strings.Contains(hist, "[User] 둘째 질문") {
 		t.Fatalf("delta prompt wrong:\n%s", second)
 	}
 }
@@ -250,7 +250,7 @@ func TestDiscussionEndsOnAgreement(t *testing.T) {
 		t.Fatal("end-of-discussion notice missing")
 	}
 	// discussion turns are sequential: codex's round-1 prompt must contain claude's round-1 reply
-	if !strings.Contains(b.prompts[0], "[@claude] 의견 A") {
+	if !strings.Contains(b.prompts[0], "[@claude (CLAUDE 1)] 의견 A") {
 		t.Fatalf("sequential delivery broken:\n%s", b.prompts[0])
 	}
 }

@@ -20,7 +20,7 @@ func TestMentionOfDisabledParticipantDoesNotBroadcast(t *testing.T) {
 	}
 	snap, _ := hub.Snapshot(r.ID)
 	last := snap.Messages[len(snap.Messages)-1]
-	if last.Kind != "system" || !strings.Contains(last.Text, "꺼져") {
+	if last.Kind != "system" || !strings.Contains(last.Text, "@codex 는 비활성 또는 삭제 상태라 아무도 답하지 않아") {
 		t.Fatalf("expected a notice, got %+v", last)
 	}
 }

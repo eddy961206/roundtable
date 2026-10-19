@@ -136,7 +136,7 @@ func TestTargetRunsWhileOtherParticipantIsBusy(t *testing.T) {
 	// once on the next turn, while the already delivered target stays excluded.
 	postQueueMessage(t, hub, r.ID, "read the late reply", "codex")
 	later := nextCall(t, ps[1])
-	if strings.Count(later.opts.Prompt, "[@claude] slow reply after target") != 1 ||
+	if strings.Count(later.opts.Prompt, "[@claude (CLAUDE 1)] slow reply after target") != 1 ||
 		strings.Contains(later.opts.Prompt, "[User] codex target while claude runs") {
 		t.Fatalf("out-of-order delta is wrong: %s", later.opts.Prompt)
 	}
@@ -243,11 +243,17 @@ func TestStopSkipsPreparedTurn(t *testing.T) {
 	turn := &Turn{ID: newID(), Agent: "codex", Reason: "mention", Cap: rs.room.Seq, Status: "queued"}
 	pr := hub.buildTurn(rs, turn)
 	hub.prepareTurn(rs, pr)
+	hub.turnWG.Add(1) // Match pump: register the reserved turn before launching it.
 	hub.mu.Unlock()
 	if err := hub.Stop(r.ID); err != nil {
 		t.Fatal(err)
 	}
-	hub.runTurn(rs, pr)
+	go hub.runTurn(rs, pr)
+	hub.turnWG.Wait()
+	s := queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 0 })
+	if got := agentTexts(s, "codex"); len(got) != 1 || got[0] != "cancelled:" {
+		t.Fatalf("prepared turn did not finish as cancelled: %v", got)
+	}
 	select {
 	case <-ps[0].callsCh:
 		t.Fatal("provider called for a turn stopped before Run")
@@ -358,7 +364,7 @@ func TestUnfinishedReplyGapPersistsAcrossReload(t *testing.T) {
 	})
 	postQueueMessage(t, restored, r.ID, "after reload", "codex")
 	next := nextCall(t, ps[1])
-	if !strings.Contains(next.opts.Prompt, "[@claude] late reply persisted") ||
+	if !strings.Contains(next.opts.Prompt, "[@claude (CLAUDE 1)] late reply persisted") ||
 		strings.Contains(next.opts.Prompt, "[User] past gap") {
 		t.Fatalf("persisted out-of-order delivery wrong: %s", next.opts.Prompt)
 	}

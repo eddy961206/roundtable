@@ -15,13 +15,17 @@ func TestQueueReviewComparisonReadsCompletedReply(t *testing.T) {
 			hub, r, ps := controlledHub(t, "claude", "codex")
 			postQueueMessage(t, hub, r.ID, "first question", "")
 			first := []*controlledCall{nextCall(t, ps[0]), nextCall(t, ps[1])}
+			for _, call := range first {
+				call.emit(agent.Event{Kind: agent.KindTextDelta, Text: "unfinished first answer"})
+			}
 			postQueueMessage(t, hub, r.ID, "compare first answers", "")
 			later := 1 - earlier
 			finishCall(first[earlier], "completed first answer")
 			secondEarly := nextCall(t, ps[earlier])
 			finishCall(first[later], "other first answer")
 			secondLate := nextCall(t, ps[later])
-			if !strings.Contains(secondLate.opts.Prompt, "[@"+ps[earlier].id+"] completed first answer") {
+			if strings.Contains(secondLate.opts.Prompt, "unfinished first answer") ||
+				!strings.Contains(secondLate.opts.Prompt, "[@"+ps[earlier].id+" ("+r.participant(ps[earlier].id).Label+")] completed first answer") {
 				t.Fatalf("completed answer was frozen as streaming: %s", secondLate.opts.Prompt)
 			}
 			s := queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return s.Room.participant(ps[later].id).Turns == 1 })
@@ -234,15 +238,34 @@ func TestQueueReviewCancelRetainsQueuedStatus(t *testing.T) {
 }
 
 func TestQueueReviewDisabledTargetReturnsToIdle(t *testing.T) {
-	hub, r, _ := controlledHub(t, "codex")
+	hub, r, ps := controlledHub(t, "codex")
+	seatID := r.Participants[0].ID
+	postQueueMessage(t, hub, r.ID, "running target", seatID)
+	first := nextCall(t, ps[0])
+	postQueueMessage(t, hub, r.ID, "waiting target", seatID)
+	queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 2 })
 	off := false
-	if _, err := hub.UpdateRoom(r.ID, RoomPatch{Participants: []ParticipantPatch{{ID: "codex", Enabled: &off}}}); err != nil {
+	if _, err := hub.UpdateRoom(r.ID, RoomPatch{Participants: []ParticipantPatch{{ID: seatID, Enabled: &off}}}); err != nil {
 		t.Fatal(err)
 	}
-	postQueueMessage(t, hub, r.ID, "disabled target", "codex")
+	before := queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 1 })
+	// Explicit targets require an enabled seat. Rejection must not add a message or turn.
+	if m, err := hub.PostUser(r.ID, "disabled target", seatID); err == nil || err.Error() != "활성 대상 없음: "+seatID || m != nil {
+		t.Fatalf("disabled target was not rejected: message=%+v err=%v", m, err)
+	}
+	after := queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 1 })
+	if after.Room.Seq != before.Room.Seq || len(after.Messages) != len(before.Messages) {
+		t.Fatal("rejected target changed the transcript")
+	}
+	finishCall(first, "running target completed")
 	s := queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 0 })
-	if s.Room.participant("codex").Status != "idle" {
-		t.Fatalf("disabled participant stuck at %s", s.Room.participant("codex").Status)
+	if s.Room.participant(seatID).Status != "idle" {
+		t.Fatalf("disabled participant stuck at %s", s.Room.participant(seatID).Status)
+	}
+	select {
+	case <-ps[0].callsCh:
+		t.Fatal("disabled participant started its waiting target")
+	default:
 	}
 }
 
@@ -251,6 +274,8 @@ func TestQueueReviewResetDoesNotRefreezeWaitingTurn(t *testing.T) {
 	hub, r, ps := controlledHub(t, "claude", "codex")
 	postQueueMessage(t, hub, r.ID, "first", "")
 	firstClaude, firstCodex := nextCall(t, ps[0]), nextCall(t, ps[1])
+	firstClaude.emit(agent.Event{Kind: agent.KindTextDelta, Text: "unfinished before reset"})
+	firstCodex.emit(agent.Event{Kind: agent.KindTextDelta, Text: "unfinished before reset"})
 	postQueueMessage(t, hub, r.ID, "codex waiting question", "codex")
 	if err := hub.ResetSessions(r.ID); err != nil {
 		t.Fatal(err)
@@ -259,7 +284,8 @@ func TestQueueReviewResetDoesNotRefreezeWaitingTurn(t *testing.T) {
 	queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return s.Room.participant("claude").Status == "idle" })
 	finishCall(firstCodex, "old codex result")
 	next := nextCall(t, ps[1])
-	if next.opts.SessionID != "" || !strings.Contains(next.opts.Prompt, "[@claude] claude before codex finishes") {
+	if next.opts.SessionID != "" || strings.Contains(next.opts.Prompt, "unfinished before reset") ||
+		!strings.Contains(next.opts.Prompt, "[@claude (CLAUDE 1)] claude before codex finishes") {
 		t.Fatalf("queued reset session did not read current completed content: %+v", next.opts)
 	}
 	finishCall(next, "fresh result")
@@ -378,17 +404,27 @@ func TestQueueReviewRunningTextResetsForNextTurn(t *testing.T) {
 }
 
 func TestQueueReviewStatusAndLastQueueEventMatchSnapshot(t *testing.T) {
-	hub, r, _ := controlledHub(t, "codex")
-	off := false
-	if _, err := hub.UpdateRoom(r.ID, RoomPatch{Participants: []ParticipantPatch{{ID: "codex", Enabled: &off}}}); err != nil {
-		t.Fatal(err)
-	}
+	hub, r, ps := controlledHub(t, "codex")
+	seatID := r.Participants[0].ID
+	postQueueMessage(t, hub, r.ID, "running target", seatID)
+	first := nextCall(t, ps[0])
+	postQueueMessage(t, hub, r.ID, "waiting target", seatID)
+	queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 2 })
 	ch, unsub, err := hub.Subscribe(r.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unsub()
-	postQueueMessage(t, hub, r.ID, "disabled target", "codex")
+	// Disable after enqueueing: new explicit targets are rejected before reaching pump.
+	off := false
+	if _, err := hub.UpdateRoom(r.ID, RoomPatch{Participants: []ParticipantPatch{{ID: seatID, Enabled: &off}}}); err != nil {
+		t.Fatal(err)
+	}
+	finishCall(first, "running target completed")
+	s := queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 0 })
+	if s.Room.participant(seatID).Status != "idle" {
+		t.Fatalf("disabled participant stuck at %s", s.Room.participant(seatID).Status)
+	}
 	var lastQueue []*Turn
 	sawQueue := false
 	for {
@@ -408,7 +444,7 @@ func TestQueueReviewStatusAndLastQueueEventMatchSnapshot(t *testing.T) {
 				}
 			}
 		default:
-			if !sawQueue || len(lastQueue) != 0 {
+			if !sawQueue || len(lastQueue) != len(s.Queue) {
 				t.Fatalf("final queue event disagrees with empty snapshot: %+v", lastQueue)
 			}
 			return
