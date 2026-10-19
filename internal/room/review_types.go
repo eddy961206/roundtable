@@ -67,4 +67,8 @@ type ReviewState struct {
 	Phase     string        `json:"phase"` // findings|author_reply|rebuttal|fix|recheck|passed|disputed|limit
 	Pending   *ReviewStep   `json:"pending,omitempty"`
 	Summary   ReviewSummary `json:"summary"`
+
+	// Turn context, like Pending.Prompt, is transient. An interrupted turn
+	// requires hub recovery; Resubmit supplies fresh input for a new round.
+	input ReviewInput
 }
