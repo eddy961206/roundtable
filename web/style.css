@@ -787,17 +787,26 @@ kbd {
 
 .msg {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 34px minmax(0, 1fr) auto;
   gap: 10px;
   max-width: 980px;
   width: 100%;
 }
 .msg.user {
   margin-left: auto;
-  grid-template-columns: minmax(0, 1fr) 34px;
+  grid-template-columns: auto minmax(0, 1fr) 34px;
   max-width: 780px;
 }
 .msg.user .avatar { order: 2; }
+/* 카카오톡처럼 말풍선 바깥 아래 모서리에 시각을 붙인다(에이전트는 오른쪽, 내 메시지는 왼쪽). */
+.msg-time {
+  align-self: end;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  padding-bottom: 2px;
+}
+.msg.user .msg-time { order: -1; }
 .msg.system {
   grid-template-columns: minmax(0, 1fr);
   justify-items: center;
@@ -1049,6 +1058,15 @@ pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
   font-weight: 600;
 }
 .trace .sub .line { margin: 4px 0; }
+.trace .sub-model {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
 .trace .k {
   display: inline-block;
   min-width: 64px;

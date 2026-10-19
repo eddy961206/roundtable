@@ -15,6 +15,7 @@ const (
 	KindSubagentStart = "subagent_start" // Parent = subagent id, Name = type/role, Input = task prompt
 	KindSubagentMsg   = "subagent_msg"   // Parent = subagent id, Role = assistant|user|tool_call|tool_result|system
 	KindSubagentEnd   = "subagent_end"   // Parent = subagent id, Output = final report
+	KindSubagentMeta  = "subagent_meta"  // Parent = subagent id, Meta = model (always) and effort (if the CLI reports it)
 	KindStatus        = "status"         // Text = free-form status line
 	KindError         = "error"          // Text = error message
 	KindUsage         = "usage"          // Meta = tokens/cost/context_tokens/context_window

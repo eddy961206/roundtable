@@ -366,7 +366,9 @@
         reqText !== "" &&
         reqs.some((r) => {
           if (!r || typeof r.text !== "string") return false;
-          if (r.to && r.to !== targetSeat) return false;
+          // 서버는 [[REQUEST:@x]]의 x를 좌석 ID 또는 고유한 표시 이름으로 받는다.
+          const seat = state.room.participants.find((p) => p.id === r.to);
+          if (r.to !== targetSeat && !(seat && seat.label.toLowerCase() === targetSeat.toLowerCase())) return false;
           return r.text.trim() === reqText;
         });
       return { action: matched ? "hide" : "chip", raw: trimmed };
@@ -2126,7 +2128,6 @@
             "</span>"
         );
       }
-      meta.push('<span class="muted">' + fmtTime(m.ts) + "</span>");
 
       if (m.status === "streaming") {
         const act = activeTraceActivity(m.id, m.author);
@@ -2206,9 +2207,11 @@
           '<div class="trace" id="t-' +
           esc(id) +
           '" hidden></div>' +
-          "</div>";
+          "</div>" +
+          '<div class="msg-time"></div>';
         bubble = node.querySelector(".bubble");
       }
+      node.querySelector(".msg-time").textContent = fmtTime(m.ts);
 
       bubble.querySelector(".meta").innerHTML = meta.join("");
       const bodyEl = bubble.querySelector(".body");
@@ -2572,7 +2575,13 @@
   }
 
   function cacheTrace(id, events, total) {
-    const bounded = events.slice(-TRACE_EVENT_LIMIT).map(boundedTraceEvent);
+    // A subagent whose lines are still in the window keeps its start and model
+    // events even when they fell out of it, so its header stays complete.
+    const cut = Math.max(0, events.length - TRACE_EVENT_LIMIT);
+    const windowed = events.slice(cut);
+    const parents = new Set(windowed.map((e) => e.parent).filter(Boolean));
+    const heads = events.slice(0, cut).filter((e) => (e.kind === "subagent_start" || e.kind === "subagent_meta") && parents.has(e.parent));
+    const bounded = [...heads, ...windowed].map(boundedTraceEvent);
     const clipped = total > TRACE_EVENT_LIMIT || events.length > TRACE_EVENT_LIMIT || bounded.some((event) => event._displayTruncated);
     const previous = state.traceMeta.get(id);
     state.traces.delete(id);
@@ -2602,7 +2611,7 @@
         const pending = state.tracePending.get(id);
         const later = [...pending.entries()].filter(([index]) => index > events.length).sort(([a], [b]) => a - b);
         const total = later.length ? later[later.length - 1][0] : events.length;
-        cacheTrace(id, [...events.slice(-TRACE_EVENT_LIMIT), ...later.map(([, event]) => event)], total);
+        cacheTrace(id, [...events, ...later.map(([, event]) => event)], total);
         state.messages.get(id).trace = Math.max(state.messages.get(id).trace || 0, total);
         state.traceErrors.delete(id);
         renderTrace(id);
@@ -2729,9 +2738,12 @@
           } else {
             s.start = e;
           }
+          // The model the caller asked for; subagent_meta reports the one that ran.
+          if (e.meta && e.meta.model) s.requested = e.meta.model;
           break;
         }
-        case "subagent_msg": {
+        case "subagent_msg":
+        case "subagent_meta": {
           let s = subs.get(e.parent);
           if (!s) {
             s = {
@@ -2743,7 +2755,12 @@
             items.push(s);
             if (e.parent) subs.set(e.parent, s);
           }
-          s.lines.push(e);
+          if (e.kind === "subagent_meta") {
+            s.model = e.meta.model;
+            s.effort = e.meta.effort;
+          } else {
+            s.lines.push(e);
+          }
           break;
         }
         case "subagent_end": {
@@ -2813,16 +2830,11 @@
       const det = el("details", "item sub");
       det.open = true;
       const sum = el("summary");
-      sum.innerHTML = buildSubSummaryHtml(it);
+      fillSubSummary(sum, it);
       det.appendChild(sum);
-      const s = it.start || {};
-      if (s.input) {
-        const taskDiv = el("div", "line sub-task");
-        taskDiv.innerHTML = '<span class="k">과제</span>' + pre(s.input);
-        det.appendChild(taskDiv);
-      }
       const linesBox = el("div", "lines");
       det.appendChild(linesBox);
+      syncSubTask(det, it);
       syncSubLines(linesBox, it.lines);
       const repBox = el("div", "sub-report");
       if (it.end && it.end.output) {
@@ -2848,12 +2860,10 @@
     }
     if (it.type === "sub") {
       const sum = node.querySelector(":scope > summary");
-      const newSumHtml = buildSubSummaryHtml(it);
-      if (sum && sum.innerHTML !== newSumHtml) {
-        sum.innerHTML = newSumHtml;
-      }
+      if (sum) fillSubSummary(sum, it);
       const linesBox = node.querySelector(":scope > .lines");
       if (linesBox) {
+        syncSubTask(node, it);
         syncSubLines(linesBox, it.lines);
       }
       const repBox = node.querySelector(":scope > .sub-report");
@@ -2882,16 +2892,30 @@
     );
   }
 
-  function buildSubSummaryHtml(it) {
-    const s = it.start || {},
-      e = it.end;
-    return (
-      "🧩 서브에이전트 <b>" +
-      esc(s.name || s.parent || "subagent") +
-      "</b> " +
-      (e ? "✓ 종료" : "⏳ 진행 중") +
-      (s.meta && s.meta.description ? ' <span class="muted">' + esc(s.meta.description) + "</span>" : "")
-    );
+  // Model and effort come from the CLI and are shown only as far as it reported
+  // them: Claude never reports a subagent's effort, Antigravity neither value.
+  function fillSubSummary(sum, it) {
+    const s = it.start || {};
+    const name = s.name || s.parent || "subagent";
+    const model = [it.model || it.requested, it.effort].filter(Boolean).join(" · ");
+    const desc = (s.meta && s.meta.description) || "";
+    const sig = JSON.stringify([name, model, !!it.end, desc]);
+    if (sum.dataset.sig === sig) return;
+    sum.dataset.sig = sig;
+    const parts = ["🧩 서브에이전트 ", el("b", "", name)];
+    if (model) parts.push(" ", el("span", "sub-model", model));
+    parts.push(it.end ? " ✓ 종료" : " ⏳ 진행 중");
+    if (desc) parts.push(" ", el("span", "muted", desc));
+    sum.replaceChildren(...parts);
+  }
+
+  // A subagent first seen through its lines gets its task once subagent_start arrives.
+  function syncSubTask(det, it) {
+    const input = it.start && it.start.input;
+    if (!input || det.querySelector(":scope > .sub-task")) return;
+    const taskDiv = el("div", "line sub-task");
+    taskDiv.innerHTML = '<span class="k">과제</span>' + pre(input);
+    det.insertBefore(taskDiv, det.querySelector(":scope > .lines"));
   }
 
   // Append only new subagent lines so open <details class="line"> inside subagents stay open
@@ -4138,6 +4162,9 @@
         br.title = "파트 branch: " + part.branch + (part.worktree ? " (" + part.worktree + ")" : "");
         titleGroup.appendChild(br);
       }
+      if (part.worktree_removed) {
+        titleGroup.appendChild(el("span", "badge", "작업 폴더 정리됨"));
+      }
       if (part.submit_sha) {
         const subSha = el("span", "badge mono", "제출 SHA: " + shortSHA(part.submit_sha));
         subSha.title = "SubmitSHA: " + part.submit_sha;
@@ -4211,7 +4238,8 @@
 
       const btnDiff = el("button", "ghost", "Diff 보기");
       btnDiff.type = "button";
-      btnDiff.title = "이 파트의 변경 파일 목록과 패치를 서랍에서 봅니다";
+      btnDiff.disabled = !!part.worktree_removed;
+      btnDiff.title = part.worktree_removed ? "작업 폴더가 정리되어 Diff를 조회할 수 없습니다" : "이 파트의 변경 파일 목록과 패치를 서랍에서 봅니다";
       btnDiff.onclick = () => openDiffDrawer(part.id);
       actions.appendChild(btnDiff);
 
