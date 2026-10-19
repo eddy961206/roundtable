@@ -55,17 +55,26 @@ type ReviewInput struct {
 
 // ReviewStep is the next turn the hub must run.
 type ReviewStep struct {
-	Who    string `json:"who"`  // reviewer (fresh session) | author (part session)
-	Kind   string `json:"kind"` // findings|author_reply|rebuttal|recheck
-	Prompt string `json:"prompt"`
+	Who           string `json:"who"`  // reviewer (fresh session) | author (part session)
+	Kind          string `json:"kind"` // findings|author_reply|rebuttal|recheck
+	Prompt        string `json:"prompt"`
+	FormatRetries int    `json:"format_retries"` // one automatic correction per step, persisted before dispatch
+}
+
+// HumanResolution records an explicit waiver without changing review findings.
+type HumanResolution struct {
+	By      string   `json:"by"`
+	At      int64    `json:"at"` // Unix milliseconds
+	ItemIDs []string `json:"item_ids"`
 }
 
 // ReviewState is stored on Part.Review and drives the review loop.
 type ReviewState struct {
-	MaxRounds int           `json:"max_rounds"`
-	Rounds    []ReviewRound `json:"rounds"`
-	Phase     string        `json:"phase"` // findings|author_reply|rebuttal|fix|recheck|passed|disputed|limit
-	Pending   *ReviewStep   `json:"pending,omitempty"`
-	Summary   ReviewSummary `json:"summary"`
-	Input     ReviewInput   `json:"input"` // retained to build subsequent steps after restart
+	MaxRounds  int              `json:"max_rounds"`
+	Rounds     []ReviewRound    `json:"rounds"`
+	Phase      string           `json:"phase"` // findings|author_reply|rebuttal|fix|recheck|passed|disputed|limit
+	Pending    *ReviewStep      `json:"pending,omitempty"`
+	Summary    ReviewSummary    `json:"summary"`
+	Input      ReviewInput      `json:"input"` // retained to build subsequent steps after restart
+	Resolution *HumanResolution `json:"resolution,omitempty"`
 }

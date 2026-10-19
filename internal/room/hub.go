@@ -1242,7 +1242,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			}
 		}
 	}
-	// D11: a malformed review table fails the turn; ReviewState keeps nothing from it.
+	// D11: malformed output is not applied; allow one persisted correction per step.
 	var nextStep *ReviewStep
 	var outcome string
 	if t.Reason == "review" && msg.Status == "done" && pr.part.State == "reviewing" {
@@ -1250,6 +1250,10 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		nextStep, outcome, applyErr = pr.part.Review.Apply(text)
 		if applyErr != nil {
 			msg.Status, msg.Error = "error", "리뷰 표 형식 오류: "+applyErr.Error()
+			nextStep = pr.part.Review.RetryFormat(applyErr)
+			if nextStep != nil {
+				outcome = "format_retry"
+			}
 		}
 	}
 	p.Turns++

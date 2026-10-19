@@ -34,6 +34,38 @@ func startedReview(t *testing.T, max int) *ReviewState {
 	return rs
 }
 
+func TestReviewCorrectionAllowancePerStepAndRound(t *testing.T) {
+	rs := startedReview(t, 1)
+	correct := func(reply, kind, outcome string) {
+		t.Helper()
+		_, _, err := rs.Apply("bad table")
+		if err == nil || rs.RetryFormat(err) == nil || rs.Pending.FormatRetries != 1 || rs.RetryFormat(err) != nil {
+			t.Fatal("expected exactly one correction for this step")
+		}
+		applyReview(t, rs, reply, kind, outcome)
+	}
+	correct(findingHeader+findingOne+findingTwo, "author_reply", "")
+	correct(authorHeader+"| r1-1 | ACCEPT | fix |\n| r1-2 | REJECT | disagree |\n", "rebuttal", "")
+	correct(rebuttalHeader+"| r1-2 | MAINTAIN | still broken |\n", "", "disputed")
+	if err := rs.AllowExtraRound(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rs.Resubmit(protocolInput("head-two")); err != nil {
+		t.Fatal(err)
+	}
+	correct(recheckHeader+"| r1-1 | FIXED | verified |\n| r1-2 | UNFIXED | still broken |\n"+findingHeader, "", "disputed")
+	if rs.Rounds[0].Items[1].Status != "disputed" || rs.Summary.Unresolved != 1 || rs.Summary.Passed {
+		t.Fatal("UNFIXED silently waived the disputed finding")
+	}
+	if err := rs.AllowExtraRound(); err != nil || rs.MaxRounds != 3 {
+		t.Fatalf("second human retry must add exactly one round: %v", err)
+	}
+	if _, err := rs.Resubmit(protocolInput("head-three")); err != nil {
+		t.Fatal(err)
+	}
+	correct(recheckHeader+"| r1-2 | FIXED | verified |\n"+findingHeader, "", "passed")
+}
+
 func applyReview(t *testing.T, rs *ReviewState, reply, kind, outcome string) {
 	t.Helper()
 	next, got, err := rs.Apply(reply)

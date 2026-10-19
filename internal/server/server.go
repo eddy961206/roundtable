@@ -94,6 +94,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/submit", s.submitPart)
 	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/approve", s.approvePart)
 	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/retry", s.retryPart)
+	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/resolve", s.resolvePart)
 	s.mux.HandleFunc("POST /api/rooms/{id}/work/parts/{pid}/abandon", s.abandonPart)
 	s.mux.HandleFunc("GET /api/rooms/{id}/work/parts/{pid}/diff", s.partDiff)
 }
@@ -359,6 +360,11 @@ func (s *Server) approvePart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) retryPart(w http.ResponseWriter, r *http.Request) {
 	plan, err := s.hub.RetryPart(r.PathValue("id"), r.PathValue("pid"))
+	writeWork(w, 200, plan, err)
+}
+
+func (s *Server) resolvePart(w http.ResponseWriter, r *http.Request) {
+	plan, err := s.hub.ResolvePart(r.PathValue("id"), r.PathValue("pid"))
 	writeWork(w, 200, plan, err)
 }
 

@@ -521,7 +521,7 @@ func (h *Hub) ApprovePart(roomID, partID, submitSHA, integrationSHA string) (*Wo
 	return cloneWork(plan), nil
 }
 
-// RetryPart clears a block and returns the part to Block.From.
+// RetryPart clears a block; terminal reviews receive one extra round to fix.
 func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -533,6 +533,14 @@ func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 		return nil, fmt.Errorf("%w: 파트 %s는 정지 상태가 아님", ErrWorkConflict, partID)
 	}
 	from := part.Block.From
+	extraRound := part.Block.Kind == "review" && part.Review != nil && (part.Review.Phase == "disputed" || part.Review.Phase == "limit")
+	if extraRound {
+		if err := part.Review.AllowExtraRound(); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrWorkConflict, err)
+		}
+		from = "fixing"
+		h.workNote(rs, fmt.Sprintf("파트 %s 사람이 리뷰 라운드 1회 추가 허용 · 상한 %d", partID, part.Review.MaxRounds))
+	}
 	var pending *ReviewStep
 	if from == "reviewing" {
 		pending = part.Review.Pending
@@ -546,11 +554,40 @@ func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 	if pending != nil {
 		h.runReviewStep(rs, part, *pending)
 	}
+	if extraRound {
+		rs.enqueue(&Turn{ID: newID(), Agent: part.Seat, Reason: "part", Part: part.ID, Cap: rs.room.Seq, Created: nowMs(), Status: "queued", prompt: BuildFixPrompt(part)})
+	}
 	h.advanceQueue(rs)
 	saveErr := h.saveWork(rs)
 	h.pump(rs)
 	if saveErr != nil {
 		return nil, saveErr
+	}
+	return cloneWork(rs.room.Work), nil
+}
+
+// ResolvePart records the user's decision to waive unresolved review items.
+func (h *Hub) ResolvePart(roomID, partID string) (*WorkPlan, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	rs, part, err := h.workPart(roomID, partID)
+	if err != nil {
+		return nil, err
+	}
+	if part.State != "blocked" || part.Block.Kind != "review" || part.Review == nil || part.SubmitSHA == "" {
+		return nil, fmt.Errorf("%w: 파트 %s는 제출된 리뷰 정지 상태가 아님", ErrWorkConflict, partID)
+	}
+	part.Review.Resolve(nowMs())
+	h.workNote(rs, fmt.Sprintf("파트 %s 사람이 미해결 리뷰 항목을 넘기기로 판정 · user · 시각 %d · 항목 %v", partID, part.Review.Resolution.At, part.Review.Resolution.ItemIDs))
+	// Persist the audit before queuePart can start an automatic merge.
+	if err := h.saveWork(rs); err != nil {
+		return nil, err
+	}
+	part.State, part.Block = "queued", nil
+	rs.room.Work.refreshHalted()
+	h.queuePart(rs, part)
+	if err := h.saveWork(rs); err != nil {
+		return nil, err
 	}
 	return cloneWork(rs.room.Work), nil
 }
@@ -645,6 +682,15 @@ func (h *Hub) finishReview(rs *roomState, part *Part, msg *Message, next *Review
 		return // abandoned while the turn ran
 	}
 	defer rs.broadcast("work", rs.room.Work)
+	if next != nil && outcome == "format_retry" {
+		h.workNote(rs, "리뷰 표 형식 오류로 1회 다시 요청: "+strings.TrimPrefix(msg.Error, "리뷰 표 형식 오류: "))
+		if err := h.saveWork(rs); err != nil {
+			h.blockPart(rs, part, "review", "reviewing", "리뷰 재요청 횟수 저장 실패: "+err.Error(), nil)
+			return
+		}
+		h.runReviewStep(rs, part, *next)
+		return
+	}
 	if msg.Status != "done" {
 		h.blockPart(rs, part, "review", "reviewing", "리뷰 턴 실패: "+msg.Error, nil)
 		return
@@ -685,14 +731,18 @@ func (h *Hub) reviewTurnLost(rs *roomState, t *Turn, why string) {
 
 func (h *Hub) queuePart(rs *roomState, part *Part) {
 	plan := rs.room.Work
-	if s := part.Review.Summary; !s.Passed || s.Unresolved != 0 {
-		// D4: any unresolved item keeps the part out of the queue.
+	if s := part.Review.Summary; part.Review.Resolution == nil && (!s.Passed || s.Unresolved != 0) {
+		// D4: unresolved items require an explicit human resolution.
 		h.blockPart(rs, part, "review", "fixing", fmt.Sprintf("리뷰 통과 신호와 요약이 맞지 않음(미해결 %d건)", s.Unresolved), nil)
 		return
 	}
 	part.State, part.ReadyMode, part.Approval = "queued", plan.MergeMode, nil
 	plan.Queue = append(plan.Queue, part.ID)
-	h.workNote(rs, fmt.Sprintf("파트 %s 리뷰 통과 · 병합 대기열 %d번째 · %s", part.ID, len(plan.Queue), part.ReadyMode))
+	reason := "리뷰 통과"
+	if part.Review.Resolution != nil {
+		reason = "사람 판정"
+	}
+	h.workNote(rs, fmt.Sprintf("파트 %s %s · 병합 대기열 %d번째 · %s", part.ID, reason, len(plan.Queue), part.ReadyMode))
 	h.advanceQueue(rs)
 }
 
