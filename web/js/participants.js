@@ -72,8 +72,12 @@ export function buildRoleField(container, { initial = "", getModel = () => "", o
   wrap.appendChild(note);
   container.appendChild(wrap);
 
-  // Text the field set by itself (preset chip or suggestion); typing clears it.
-  let autoText = "";
+  // The suggestion only fills the field while the user has not touched it: typing,
+  // clearing or picking a chip is a choice that stays, and it is applied at most once
+  // per model so a re-render never overwrites what is there.
+  let userEdited = false;
+  let suggestedForModel = null;
+  let suggestedText = "";
   const field = {
     root: wrap,
     textarea,
@@ -115,21 +119,24 @@ export function buildRoleField(container, { initial = "", getModel = () => "", o
       }
       chip.onclick = () => {
         textarea.value = directive;
-        autoText = directive;
+        userEdited = true;
         render();
         if (onInput) onInput();
       };
       chips.appendChild(chip);
     }
-    // Suggest the model's preset while the text is still the field's own.
-    if (autoSuggest && suggested && (current === "" || current === autoText) && current !== (suggested.directive || "").trim()) {
-      textarea.value = (suggested.directive || "").trim();
-      autoText = textarea.value;
-      render();
-      if (onInput) onInput();
+    // First sight of this model and the text is empty or the previous model's suggestion.
+    if (autoSuggest && !userEdited && suggested && model !== suggestedForModel && (current === "" || current === suggestedText)) {
+      suggestedForModel = model;
+      suggestedText = (suggested.directive || "").trim();
+      if (current !== suggestedText) {
+        textarea.value = suggestedText;
+        render();
+        if (onInput) onInput();
+      }
     }
   }
-  textarea.addEventListener("input", () => { autoText = ""; render(); if (onInput) onInput(); });
+  textarea.addEventListener("input", () => { userEdited = true; render(); if (onInput) onInput(); });
   const ready = loadRolePresets();
   render();
   ready.then(() => { if (wrap.isConnected) render(); });

@@ -87,6 +87,7 @@ export function exportRoom(id) {
 let menuOpenFor = "";
 let renamingId = "";
 let renameDraft = "";
+let rebuildingList = false;
 
 function closeRoomMenu(restoreFocus = true) {
   if (!menuOpenFor) return;
@@ -180,14 +181,37 @@ function buildRenameRow(r) {
   };
   form.onsubmit = (e) => { e.preventDefault(); save(); };
   // Leaving the field keeps what was typed, like the header editor.
-  input.onblur = () => { if (!busy && renamingId === r.id) save(); };
+  // A blur caused by the list being rebuilt is not the user leaving the field.
+  input.onblur = () => { if (!busy && !rebuildingList && renamingId === r.id) save(); };
   return form;
 }
 
 export function renderRoomList() {
   const ul = $("#room-list");
   if (!ul) return;
-  ul.innerHTML = "";
+  // A feed-driven re-render must not break an inline rename in progress: remember the
+  // input's focus and caret, then put them back on the rebuilt input.
+  const prevInput = renamingId ? $(".room-rename-input", ul) : null;
+  const caret = prevInput && document.activeElement === prevInput
+    ? { start: prevInput.selectionStart, end: prevInput.selectionEnd, dir: prevInput.selectionDirection }
+    : null;
+  rebuildingList = true;
+  try {
+    ul.innerHTML = "";
+    buildRoomListItems(ul);
+  } finally {
+    rebuildingList = false;
+  }
+  if (caret && renamingId) {
+    const input = $(".room-rename-input", ul);
+    if (input) {
+      input.focus();
+      input.setSelectionRange(caret.start, caret.end, caret.dir || "none");
+    }
+  }
+}
+
+function buildRoomListItems(ul) {
   const q = state.roomSearch.trim().toLowerCase();
   const filtered = state.rooms.filter(
     (r) => !q || (r.title || "").toLowerCase().includes(q) || (r.mode || "").toLowerCase().includes(q)
