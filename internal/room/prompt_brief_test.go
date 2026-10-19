@@ -3,6 +3,8 @@ package room
 import (
 	"strings"
 	"testing"
+
+	"roundtable/internal/agent"
 )
 
 func TestBriefedPromptOmitsStandingBrief(t *testing.T) {
@@ -46,4 +48,33 @@ func TestBriefKeyFollowsRoomSettings(t *testing.T) {
 	if afterNote == before || afterRoster == afterNote {
 		t.Fatal("note and roster changes must change the key")
 	}
+}
+
+func TestCompactionDuringTurnResendsBriefNextTurn(t *testing.T) {
+	h, r, ps := controlledHub(t, "claude")
+	usage := func(call *controlledCall, context float64) {
+		call.emit(agent.Event{Kind: agent.KindUsage, Meta: map[string]any{"context_tokens": context}})
+	}
+	postQueueMessage(t, h, r.ID, "one", "claude")
+	first := nextCall(t, ps[0])
+	usage(first, 5000)
+	finishCall(first, "a")
+	waitIdle(t, h, r.ID)
+
+	postQueueMessage(t, h, r.ID, "two", "claude")
+	second := nextCall(t, ps[0])
+	if !strings.Contains(second.opts.Prompt, "받은 그대로") {
+		t.Fatalf("a resumed turn sends the one-line reminder:\n%s", second.opts.Prompt)
+	}
+	usage(second, 1200) // the CLI compacted the session during this turn
+	finishCall(second, "b")
+	waitIdle(t, h, r.ID)
+
+	postQueueMessage(t, h, r.ID, "three", "claude")
+	third := nextCall(t, ps[0])
+	if strings.Contains(third.opts.Prompt, "받은 그대로") || !strings.Contains(third.opts.Prompt, "규칙:") {
+		t.Fatalf("after compaction the standing brief must be sent again:\n%s", third.opts.Prompt)
+	}
+	finishCall(third, "c")
+	waitIdle(t, h, r.ID)
 }

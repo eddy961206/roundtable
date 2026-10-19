@@ -186,8 +186,9 @@ type agyParser struct {
 	text      strings.Builder
 	response  string
 	errText   string
-	usage     map[string]any
-	context   int
+	steps     map[string]map[string]any // step index -> usage of that model call
+	lastStep  string
+	duration  any
 	completed bool
 	toolSeen  map[string]bool
 	subs      map[string]*agySub // conversation_id -> state
@@ -200,7 +201,7 @@ type agySub struct {
 }
 
 func newAgyParser() *agyParser {
-	return &agyParser{toolSeen: map[string]bool{}, subs: map[string]*agySub{}}
+	return &agyParser{toolSeen: map[string]bool{}, subs: map[string]*agySub{}, steps: map[string]map[string]any{}}
 }
 
 func (p *agyParser) Line(line string, emit func(Event)) {
@@ -224,10 +225,9 @@ func (p *agyParser) Line(line string, emit func(Event)) {
 		if str(r, "status") != "SUCCESS" {
 			p.errText = firstNonEmpty(str(r, "error"), str(r, "status"))
 		}
-		p.usage = obj(r, "usage")
-		if p.usage != nil {
-			p.usage["duration_seconds"] = r["duration_seconds"]
-		}
+		// result.usage sums every call of the whole conversation (resumed turns
+		// included), so this turn's usage is summed from its own steps in Finish.
+		p.duration = r["duration_seconds"]
 	}
 }
 
@@ -237,9 +237,7 @@ func (p *agyParser) step(s map[string]any, emit func(Event)) {
 	switch str(s, "step_type") {
 	case "agent_response":
 		if u := obj(s, "usage"); u != nil {
-			if in, ok := u["input_tokens"].(float64); ok && int(in) > 0 {
-				p.context = int(in)
-			}
+			p.steps[idx], p.lastStep = u, idx
 		}
 		if d := str(s, "text_delta"); d != "" {
 			p.text.WriteString(d)
@@ -406,13 +404,38 @@ func (p *agyParser) Finish(emit func(Event)) Final {
 	if text == "" {
 		text = strings.TrimSpace(p.text.String())
 	}
-	if p.usage != nil {
-		if p.context > 0 {
-			p.usage["context_tokens"] = p.context
-		}
+	usage := p.turnUsage()
+	if usage != nil {
 		x := ev(KindUsage)
-		x.Meta = p.usage
+		x.Meta = usage
 		emit(x)
 	}
-	return Final{Text: text, SessionID: p.conv, Err: p.errText, Usage: p.usage, Complete: p.completed}
+	return Final{Text: text, SessionID: p.conv, Err: p.errText, Usage: usage, Complete: p.completed}
+}
+
+// turnUsage sums this invocation's model calls. A step's input_tokens excludes
+// cache_read_tokens, so the context the last call carried is their sum.
+func (p *agyParser) turnUsage() map[string]any {
+	if len(p.steps) == 0 {
+		return nil
+	}
+	sum := map[string]float64{}
+	for _, u := range p.steps {
+		for _, k := range []string{"input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens", "total_tokens"} {
+			n, _ := u[k].(float64)
+			sum[k] += n
+		}
+	}
+	usage := map[string]any{}
+	for k, n := range sum {
+		usage[k] = n
+	}
+	last := p.steps[p.lastStep]
+	in, _ := last["input_tokens"].(float64)
+	cached, _ := last["cache_read_tokens"].(float64)
+	usage["context_tokens"] = in + cached
+	if p.completed {
+		usage["duration_seconds"] = p.duration
+	}
+	return usage
 }

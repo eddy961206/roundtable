@@ -1,0 +1,5 @@
+{"event":"init","conversation_id":"conv-1","init":{"model":"gemini-4-argon"}}
+{"event":"step_update","step_update":{"step_index":1,"step_type":"agent_response","state":"ACTIVE","text_delta":"보고"}}
+{"event":"step_update","step_update":{"step_index":1,"step_type":"agent_response","state":"DONE","usage":{"input_tokens":2400,"output_tokens":30,"thinking_tokens":0,"cache_read_tokens":20000,"total_tokens":22430}}}
+{"event":"step_update","step_update":{"step_index":2,"step_type":"agent_response","state":"DONE","text_delta":"서","usage":{"input_tokens":500,"output_tokens":20,"thinking_tokens":5,"cache_read_tokens":22400,"total_tokens":22925}}}
+{"event":"result","result":{"conversation_id":"conv-1","status":"SUCCESS","response":"보고서","duration_seconds":3.5,"num_turns":4,"usage":{"input_tokens":90000,"output_tokens":900,"thinking_tokens":40,"cache_read_tokens":150000,"total_tokens":240940}}}

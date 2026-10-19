@@ -1322,6 +1322,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	var textBuf strings.Builder
 	var emitMu sync.Mutex
 	var tracePersistenceError error
+	compacted := false // a usage report showed the session's context shrink
 	emit := func(e agent.Event) {
 		emitMu.Lock()
 		defer emitMu.Unlock()
@@ -1386,7 +1387,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 				}
 			}
 		case agent.KindUsage:
-			applyUsage(p, prov, e.Meta)
+			compacted = applyUsage(p, prov, e.Meta) || compacted
 		}
 		rs.broadcast("trace", map[string]any{"msg_id": msg.ID, "index": msg.Trace, "event": e})
 		rs.broadcast("participant", p)
@@ -1459,6 +1460,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			pr.part.LastSeen, pr.part.Unseen = pr.seen, pr.unseen
 		} else if pr.resetGen == rs.resetGen {
 			p.LastSeen, p.Unseen, p.Brief = pr.seen, pr.unseen, pr.brief
+			if compacted { // the summary may have dropped the brief; send it again next turn
+				p.Brief = ""
+			}
 		}
 		if pr.bootstrap && t.Reason != "part" && pr.part.SessionID != "" && pr.stopGen == rs.stopGen {
 			replay := *t
@@ -1539,9 +1543,11 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	}
 }
 
-func applyUsage(p *Participant, prov agent.Provider, u map[string]any) {
+// applyUsage records one usage report and tells whether the session's context
+// shrank, which means the CLI compacted it.
+func applyUsage(p *Participant, prov agent.Provider, u map[string]any) bool {
 	if u == nil {
-		return
+		return false
 	}
 	p.Usage = u
 	num := func(k string) float64 {
@@ -1558,10 +1564,9 @@ func applyUsage(p *Participant, prov agent.Provider, u map[string]any) {
 	p.Totals.Output += num("output_tokens")
 	p.Totals.Cached += num("cache_read_input_tokens") + num("cached_input_tokens") + num("cache_read_tokens")
 	p.Totals.Cost += num("total_cost_usd")
+	compacted := false
 	if c := num("context_tokens"); c > 0 {
-		if int(c) < p.ContextTokens { // the CLI compacted this session; the brief may be gone
-			p.Brief = ""
-		}
+		compacted = int(c) < p.ContextTokens
 		p.ContextTokens = int(c)
 	}
 	if w := num("context_window"); w > 0 {
@@ -1569,6 +1574,7 @@ func applyUsage(p *Participant, prov agent.Provider, u map[string]any) {
 	} else if p.ContextWindow == 0 {
 		p.ContextWindow = prov.ContextWindow(p.Model)
 	}
+	return compacted
 }
 
 // deltaFor reads current message contents up to cap. Unfinished peer replies

@@ -392,3 +392,15 @@ func TestResolveCommandPrefersNpmVendoredExe(t *testing.T) {
 		t.Fatal("missing command must error")
 	}
 }
+
+// agy's result.usage sums the whole conversation; a resumed turn must report
+// only its own calls, and the context is the last call's input plus cache.
+func TestAgyResumedTurnUsageIsPerTurn(t *testing.T) {
+	_, fin := feed(t, newAgyParser(), "agy_resumed.jsonl")
+	want := map[string]float64{"input_tokens": 2900, "output_tokens": 50, "thinking_tokens": 5, "cache_read_tokens": 42400, "total_tokens": 45355, "context_tokens": 22900, "duration_seconds": 3.5}
+	for k, v := range want {
+		if fin.Usage[k] != v {
+			t.Errorf("%s = %v, want %v", k, fin.Usage[k], v)
+		}
+	}
+}

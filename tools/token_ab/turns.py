@@ -1,10 +1,10 @@
 """Run the same scripted conversation against one roundtable server and record per-turn usage.
 
-usage: python turns.py <base_url> <label> <out.json> [short]
+usage: python turns.py <base_url> <label> <out.json> [short] [argon]
 
 Two seats (Opus, Argon), the same room note, 8 broadcast questions, both efforts
 changed low -> medium before question 7. Without `short`, a long message targeted
-at Argon follows. Run against two servers (old and new binary, separate -data) at once.
+at Argon follows. `argon` leaves the Opus seat out. Run against two servers (old and new binary, separate -data) at once.
 """
 import json
 import sys
@@ -12,6 +12,11 @@ import time
 import urllib.request
 
 BASE, LABEL, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
+FLAGS = set(sys.argv[4:])
+SEATS = [{'provider': 'claude', 'model': 'claude-opus-5-5', 'effort': 'low', 'label': 'Opus', 'count': 1},
+         {'provider': 'agy', 'model': 'gemini-4-argon', 'effort': 'low', 'label': 'Argon', 'count': 1}]
+if 'argon' in FLAGS:
+    SEATS = SEATS[1:]
 
 
 def api(m, p, b=None):
@@ -68,22 +73,20 @@ def long_text():
 def main():
     r = api('POST', '/api/rooms', {'title': f'A/B 토큰 측정 ({LABEL})', 'workspace': '', 'mode': 'chat', 'note': NOTE,
                                    'max_chain': 4, 'discussion_rounds': 3, 'persona': False,
-                                   'participant_specs': [
-                                       {'provider': 'claude', 'model': 'claude-opus-5-5', 'effort': 'low', 'label': 'Opus', 'count': 1},
-                                       {'provider': 'agy', 'model': 'gemini-4-argon', 'effort': 'low', 'label': 'Argon', 'count': 1}]})
+                                   'participant_specs': SEATS})
     rid = r['id']
     seats = {p['label']: p['id'] for p in r['participants']}
     marks = []
     for i, q in enumerate(QUESTIONS):
         if i == 6:
-            api('PATCH', f'/api/rooms/{rid}', {'participants': [{'id': seats['Opus'], 'effort': 'medium'}, {'id': seats['Argon'], 'effort': 'medium'}]})
+            api('PATCH', f'/api/rooms/{rid}', {'participants': [{'id': seat, 'effort': 'medium'} for seat in seats.values()]})
             marks.append(('effort_changed_before_turn', 7))
         api('POST', f'/api/rooms/{rid}/messages', {'text': f'질문 {i + 1}: {q}'})
         wait(rid)
         print(LABEL, 'turn', i + 1, 'done', flush=True)
     long = long_text()
     s = snap(rid)
-    if len(sys.argv) < 5:
+    if 'short' not in FLAGS:
         api('POST', f'/api/rooms/{rid}/messages', {'text': long, 'target': seats['Argon']})
         s = wait(rid, limit=1200)
         print(LABEL, 'long done', flush=True)
