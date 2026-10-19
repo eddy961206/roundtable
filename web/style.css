@@ -1957,7 +1957,7 @@ dialog.dlg-wide {
   display: grid;
   grid-template-columns: 120px minmax(0, 1fr) 110px auto;
   gap: 8px;
-  align-items: end;
+  align-items: start;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
