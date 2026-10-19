@@ -2894,7 +2894,7 @@
       announce(part.id + " 파트 " + action + " 요청 완료");
     } catch (err) {
       if (state.roomId !== roomId || openSeq !== sequence) return;
-      if (action === "approve" && err.status === 409) {
+      if ((action === "approve" || action === "resolve") && err.status === 409) {
         state.partNotices.set(part.id, "변경됨, 다시 확인");
         announce("변경됨, 다시 확인");
         delete $("#work-board").dataset.sig;
@@ -2918,10 +2918,23 @@
     };
 
     const totalItems = rev.rounds.reduce((acc, r) => acc + (r.items ? r.items.length : 0), 0);
+    const ovSuffix = rev.override
+      ? " · 사람 판정으로 통과 · " + (Array.isArray(rev.override.items) ? rev.override.items.length : 0) + "건"
+      : "";
     const sum = el(
       "summary",
       "",
-      "교차 리뷰 상세 (" + rev.rounds.length + " / " + rev.max_rounds + " 라운드 · 총 지적 " + totalItems + "건 · 미해결 " + rev.summary.unresolved + "건)"
+      "교차 리뷰 상세 (" +
+        rev.rounds.length +
+        " / " +
+        rev.max_rounds +
+        " 라운드 · 총 지적 " +
+        totalItems +
+        "건 · 미해결 " +
+        rev.summary.unresolved +
+        "건" +
+        ovSuffix +
+        ")"
     );
     det.appendChild(sum);
 
@@ -3088,6 +3101,15 @@
       }
       top.appendChild(titleGroup);
 
+      const rev = part.review;
+      const unresolved = rev && rev.summary ? rev.summary.unresolved : 0;
+      const isReviewEscalated =
+        part.state === "blocked" &&
+        !!part.block &&
+        part.block.kind === "review" &&
+        !!rev &&
+        (rev.phase === "disputed" || rev.phase === "limit");
+
       const actions = el("div", "part-actions");
       const btnSubmit = el("button", "", part.state === "fixing" ? "재제출" : "제출");
       btnSubmit.type = "button";
@@ -3108,12 +3130,25 @@
       btnApprove.onclick = () => partAction(part, "approve", btnApprove);
       actions.appendChild(btnApprove);
 
-      const btnRetry = el("button", "", "재시도");
+      const btnRetry = el("button", "", isReviewEscalated ? "라운드 1회 추가 후 수정" : "재시도");
       btnRetry.type = "button";
       btnRetry.disabled = part.state !== "blocked";
-      btnRetry.title = "차단(blocked)을 해제하고 이전 상태에서 다시 시도합니다";
+      btnRetry.title = isReviewEscalated
+        ? "작성자가 고쳐 다시 제출하면 재리뷰합니다"
+        : "차단(blocked)을 해제하고 이전 상태에서 다시 시도합니다";
       btnRetry.onclick = () => partAction(part, "retry", btnRetry);
       actions.appendChild(btnRetry);
+
+      if (isReviewEscalated) {
+        const btnResolve = el("button", "primary", "사람 판정");
+        btnResolve.type = "button";
+        btnResolve.title = "미해결 " + unresolved + "건을 넘기고 병합 대기열로 보냅니다";
+        btnResolve.onclick = () => {
+          if (!confirm("미해결 " + unresolved + "건을 넘기고 병합 대기열로 보냅니다")) return;
+          partAction(part, "resolve", btnResolve);
+        };
+        actions.appendChild(btnResolve);
+      }
 
       const btnAbandon = el("button", "danger ghost", "포기");
       btnAbandon.type = "button";
@@ -3146,16 +3181,23 @@
       );
       meta.appendChild(reviewerChip);
 
-      const rev = part.review;
       const curRound = rev && rev.rounds && rev.rounds.length ? rev.rounds[rev.rounds.length - 1].ref.round : 0;
       const maxRounds = rev && rev.max_rounds ? rev.max_rounds : w.review_rounds;
-      const unresolved = rev && rev.summary ? rev.summary.unresolved : 0;
       const revBadgeCls =
         "badge review-summary-badge" +
-        (unresolved > 0 ? " warn" : rev && rev.summary && rev.summary.passed ? " ok" : "");
-      meta.appendChild(
-        el("span", revBadgeCls, "리뷰 " + curRound + "/" + maxRounds + "R · 미해결 " + unresolved + "건")
-      );
+        (unresolved > 0 && !(rev && rev.override) ? " warn" : rev && ((rev.summary && rev.summary.passed) || rev.override) ? " ok" : "");
+      const revSummaryTxt =
+        "리뷰 " +
+        curRound +
+        "/" +
+        maxRounds +
+        "R · 미해결 " +
+        unresolved +
+        "건" +
+        (rev && rev.override
+          ? " · 사람 판정으로 통과 · " + (Array.isArray(rev.override.items) ? rev.override.items.length : 0) + "건"
+          : "");
+      meta.appendChild(el("span", revBadgeCls, revSummaryTxt));
       if (rev && rev.phase) {
         meta.appendChild(el("span", "badge", "단계: " + rev.phase));
       }
