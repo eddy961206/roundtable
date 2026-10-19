@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -111,7 +112,9 @@ func TestClaudePartialDeltasMatchFinal(t *testing.T) {
 }
 
 func TestCodexToolStream(t *testing.T) {
-	events, fin := feed(t, newCodexParser(), "codex_tool.jsonl")
+	first := newCodexParser()
+	first.before = map[string]any{} // rollout read: a new thread has no earlier totals
+	events, fin := feed(t, first, "codex_tool.jsonl")
 	if fin.SessionID != "01a143d0-5491-7f11-8241-62db0dcc8673" {
 		t.Fatalf("thread id %q", fin.SessionID)
 	}
@@ -249,6 +252,33 @@ func TestCodexLimitsFromRollout(t *testing.T) {
 	l := lim[0].Meta["limits"].(Limits)
 	if len(l.Windows) != 2 || l.Windows[0].Label != "7일" || l.Windows[1].Label != "5시간" || l.Plan != "pro" || l.Credits != "62500" {
 		t.Fatalf("limits wrong: %+v", l)
+	}
+}
+
+// turn.completed carries the thread's totals; a resumed turn reports only the
+// difference from the totals recorded before its turn_context.
+func TestCodexResumedTurnUsageIsPerTurn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	tc := func(total int) string {
+		return fmt.Sprintf(`{"timestamp":"x","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":%d,"cached_input_tokens":%d,"output_tokens":%d},"last_token_usage":{"input_tokens":%d}}}}`+"\n", total, total/2, total/100, total/3)
+	}
+	rollout := `{"timestamp":"x","type":"turn_context","payload":{}}` + "\n" + tc(30000) +
+		`{"timestamp":"x","type":"turn_context","payload":{}}` + "\n" + tc(50000) + tc(64000)
+	if err := os.WriteFile(path, []byte(rollout), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := newCodexParser()
+	p.Line(`{"type":"turn.completed","usage":{"input_tokens":64000,"cached_input_tokens":32000,"output_tokens":640}}`, func(Event) {})
+	codexLimitsFromRollout(path, p, func(Event) {})
+	fin := p.Finish(func(Event) {})
+	if fin.Usage["input_tokens"] != 34000.0 || fin.Usage["cached_input_tokens"] != 17000.0 || fin.Usage["output_tokens"] != 340.0 || fin.Usage["context_tokens"] != 21333 {
+		t.Fatalf("usage %v", fin.Usage)
+	}
+
+	unread := newCodexParser()
+	unread.Line(`{"type":"turn.completed","usage":{"input_tokens":64000}}`, func(Event) {})
+	if fin := unread.Finish(func(Event) {}); fin.Usage != nil {
+		t.Fatalf("thread totals without the rollout must not be reported as turn usage: %v", fin.Usage)
 	}
 }
 

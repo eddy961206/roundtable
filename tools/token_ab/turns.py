@@ -1,10 +1,10 @@
 """Run the same scripted conversation against one roundtable server and record per-turn usage.
 
-usage: python turns.py <base_url> <label> <out.json> [short] [argon]
+usage: python turns.py <base_url> <label> <out.json> [short] [opus] [argon] [astra]
 
-Two seats (Opus, Argon), the same room note, 8 broadcast questions, both efforts
-changed low -> medium before question 7. Without `short`, a long message targeted
-at Argon follows. `argon` leaves the Opus seat out. Run against two servers (old and new binary, separate -data) at once.
+Seats Opus and Argon by default (name seats to pick others), the same room note,
+8 broadcast questions, every effort changed low -> medium before question 7.
+Without `short`, a long message targeted at Argon follows (Argon must be seated). Run against two servers (old and new binary, separate -data) at once.
 """
 import json
 import sys
@@ -13,10 +13,10 @@ import urllib.request
 
 BASE, LABEL, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 FLAGS = set(sys.argv[4:])
-SEATS = [{'provider': 'claude', 'model': 'claude-opus-5-5', 'effort': 'low', 'label': 'Opus', 'count': 1},
-         {'provider': 'agy', 'model': 'gemini-4-argon', 'effort': 'low', 'label': 'Argon', 'count': 1}]
-if 'argon' in FLAGS:
-    SEATS = SEATS[1:]
+ALL_SEATS = {'opus': {'provider': 'claude', 'model': 'claude-opus-5-5', 'effort': 'low', 'label': 'Opus', 'count': 1},
+             'argon': {'provider': 'agy', 'model': 'gemini-4-argon', 'effort': 'low', 'label': 'Argon', 'count': 1},
+             'astra': {'provider': 'codex', 'model': 'gpt-6-astra', 'effort': 'low', 'label': 'Astra', 'count': 1}}
+SEATS = [ALL_SEATS[k] for k in ALL_SEATS if k in FLAGS] or [ALL_SEATS['opus'], ALL_SEATS['argon']]
 
 
 def api(m, p, b=None):

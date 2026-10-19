@@ -31,6 +31,8 @@ go build -o roundtable.exe ./cmd/roundtable
 ./roundtable.exe -open
 ```
 
+에이전트가 셸에서 `roundtable rt`(아래)를 쓰게 하려면 `roundtable.exe`가 있는 폴더를 PATH에 넣는다. 빌드한 폴더 자체를 넣으면 다시 빌드해도 따로 복사할 필요가 없다. Windows 예: `[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';<roundtable 폴더>', 'User')` 뒤 새 터미널을 연다.
+
 브라우저가 `http://127.0.0.1:8787` 로 열린다. "새 방"에서 작업 폴더와 권한 모드를 정하고 질문을 던진다.
 
 옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy` `-opencode`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`, `-codex-windows-sandbox`(`elevated` | `unelevated`, 비우면 Codex 설정 유지. Windows에서 다른 프로그램이 Codex 런타임 파일을 잡고 있어 elevated 샌드박스 준비가 실패할 때 `unelevated`를 쓴다).
@@ -148,12 +150,15 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 | | 호출 | 세션 재개 | 서브에이전트 관측 | 한도 |
 |---|---|---|---|---|
 | Claude Code | `claude -p --input-format stream-json --output-format stream-json` | `--resume <session>` | 스트림의 `parent_tool_use_id`, `task_started/task_notification` | 스트림의 `rate_limit_event` |
-| Codex | `codex exec - --json` | `codex exec resume … <thread> -` | `~/.codex/sessions` 에서 `parent_thread_id` 가 같은 rollout 파일을 추적 | rollout 관측 + `codex app-server`의 `account/rateLimits/read` |
-| Antigravity | `agy --output-format stream-json -p=<prompt>` | `--conversation <id>` | `invoke_subagent` 의 `log_uri` → `transcript.jsonl` | statusLine 훅(위) |
+| Codex | `codex exec - --json -c features.plugins=false` | `codex exec resume … <thread> -` | `~/.codex/sessions` 에서 `parent_thread_id` 가 같은 rollout 파일을 추적 | rollout 관측 + `codex app-server`의 `account/rateLimits/read` |
+| Antigravity | `agy --output-format stream-json --input-format stream-json -p=` (프롬프트는 stdin) | `--conversation <id>` | `invoke_subagent` 의 `log_uri` → `transcript.jsonl` | statusLine 훅(위) |
 | OpenCode v2 | `opencode run --standalone --format json` | `--session <id>` | Roundtable 권한 모드에서는 하위 에이전트 실행을 허용하지 않음 | 응답의 토큰·비용만 기록, 계정 잔액 조회 없음 |
 
 - 각 에이전트는 자기 CLI 세션을 이어 가며 **자기 마지막 발언 이후 새 메시지만** 받는다. 매번 전체 대화를 보내지 않아 토큰이 덜 들고, 각자의 도구 맥락이 유지된다. 턴이 실패하면 그 메시지는 다음 턴에 다시 전달된다.
-- agy는 프롬프트를 명령줄 인자로만 받는다. 이스케이프 후 24KB를 넘으면 앞뒤만 남긴다.
+- 재개 턴은 방 참가자·공지·규칙을 다시 보내지 않고 한 줄 알림만 보낸다. CLI가 문맥을 압축한 것이 보이면 다음 턴에 전체 안내문을 다시 보낸다. 추론 수준만 바꾸면 세션을 유지한다(그 턴은 Gemini·Codex에서 캐시를 쓰지 못한다). 실측: [docs/토큰절감_측정_20261020.md](docs/토큰절감_측정_20261020.md).
+- agy는 프롬프트를 stdin stream-json으로 받으므로 명령줄 길이 한도가 없다.
+- Codex는 사용자 플러그인을 끄고 실행한다. 플러그인 스킬 목록(수만 자)을 재개 턴마다 다시 보내는 것을 실측했고, Roundtable은 플러그인 도구를 쓰지 않는다. 사용자 메모리·전역 AGENTS.md·개인 스킬은 그대로 읽는다.
+- 답변별 토큰은 그 턴의 값이다. agy와 Codex는 대화 전체 누적값을 보고하므로 agy는 단계별 사용량을 더하고, Codex는 rollout의 턴 시작 전 누적값을 빼서 계산한다.
 - Windows에서 npm으로 설치한 Codex는 `codex.cmd` 뒤의 실제 `codex.exe`를 찾아 실행한다(별도 설치본에 code-mode host가 빠진 경우가 있었다).
 - Codex의 Windows 샌드박스가 간헐적으로 `setup refresh had errors` 로 명령 실행에 실패하는 턴이 있다. CLI 쪽 문제이며 다시 시키면 대개 통과한다.
 

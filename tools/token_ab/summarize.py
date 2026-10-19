@@ -1,14 +1,17 @@
 """Summarize two turns.py outputs (old vs new).
 usage: python summarize.py <old.json>[@cumulative] <new.json>[@cumulative]
 
-Mark a file @cumulative when it came from a build before the agy per-turn usage
-fix (1c5a9d9 and earlier): those builds stored agy's conversation totals.
+Mark a file @cumulative when it came from a build before the per-turn usage fixes
+(agy: 1c5a9d9 and earlier; Codex: 298216b and earlier): those builds stored the
+conversation totals that agy and Codex report.
 
 Opus (Claude): per-turn new input = input_tokens + cache_creation_input_tokens;
 total_cost_usd is cumulative per session, so the last value of each session is summed.
 Argon (agy), per-turn builds: input_tokens is the uncached input, cache_read_tokens the cached input.
 Argon (agy), @cumulative builds: context_tokens is the uncached input; cache_read_tokens is
-cumulative per session, so its per-turn value is the difference from the previous turn."""
+cumulative per session, so its per-turn value is the difference from the previous turn.
+Astra (Codex): input_tokens includes cached_input_tokens; @cumulative builds store thread
+totals, so per-turn values are differences within a session."""
 import json
 import sys
 
@@ -36,12 +39,31 @@ def argon_stats(argon, cumulative):
             'argon_ms': sum(r['duration_ms'] for r in argon)}
 
 
+def astra_stats(astra, cumulative):
+    keys = ('input_tokens', 'cached_input_tokens')
+    turns, prev = [], (None, {k: 0 for k in keys})
+    for r in astra:
+        u = r['usage']
+        base = prev[1] if cumulative and prev[0] == r['session_id'] else {k: 0 for k in keys}
+        turns.append({k: u[k] - base[k] for k in keys})
+        prev = (r['session_id'], u)
+    return {'astra_input': [t['input_tokens'] for t in turns],
+            'astra_uncached': [t['input_tokens'] - t['cached_input_tokens'] for t in turns],
+            'astra_sessions': len({r['session_id'] for r in astra}),
+            'astra_ms': sum(r['duration_ms'] for r in astra)}
+
+
 def load(arg):
     path, _, kind = arg.partition('@')
     rows = json.load(open(path, encoding='utf-8'))['rows']
     opus = [r for r in rows if r['seat'] == 'Opus'][:8]
     argon = [r for r in rows if r['seat'] == 'Argon'][:8]
-    stats = argon_stats(argon, kind == 'cumulative')
+    astra = [r for r in rows if r['seat'] == 'Astra'][:8]
+    stats = {}
+    if argon:
+        stats.update(argon_stats(argon, kind == 'cumulative'))
+    if astra:
+        stats.update(astra_stats(astra, kind == 'cumulative'))
     if opus:
         stats.update(opus_stats(opus))
     return stats

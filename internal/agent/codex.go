@@ -69,7 +69,10 @@ func codexArgs(o RunOptions, windowsSandbox string) []string {
 	if resume {
 		args = append(args, "resume")
 	}
-	args = append(args, "--json", "--skip-git-repo-check", "-c", "suppress_unstable_features_warning=true")
+	// Plugins add their skills to the instructions, and Codex re-sends that whole
+	// list (about 10K tokens) whenever its shortened form changes, which happened on
+	// most resumed turns (measured 2026-10-20). Roundtable runs use no plugin tools.
+	args = append(args, "--json", "--skip-git-repo-check", "-c", "suppress_unstable_features_warning=true", "-c", "features.plugins=false")
 	for _, im := range o.Images {
 		args = append(args, "--image", im.Path)
 	}
@@ -191,6 +194,9 @@ type codexParser struct {
 	context   int
 	window    int
 	completed bool
+	// before is the thread's total_token_usage when this turn started, read from
+	// the rollout; nil until the rollout was read.
+	before map[string]any
 }
 
 func newCodexParser() *codexParser { return &codexParser{names: map[string]string{}} }
@@ -326,7 +332,20 @@ func (p *codexParser) item(done bool, it map[string]any, emit func(Event)) {
 }
 
 func (p *codexParser) Finish(emit func(Event)) Final {
+	// turn.completed reports the whole thread's totals, so a resumed turn's own
+	// usage is the difference from the totals before it. Without the rollout
+	// that difference is unknown and the totals would be misread as this turn.
+	if p.before == nil {
+		p.usage = nil
+	}
 	if p.usage != nil {
+		for k, v := range p.usage {
+			n, ok := v.(float64)
+			prev, _ := p.before[k].(float64)
+			if ok {
+				p.usage[k] = n - prev
+			}
+		}
 		if p.context > 0 {
 			p.usage["context_tokens"] = p.context
 		}
@@ -340,8 +359,9 @@ func (p *codexParser) Finish(emit func(Event)) Final {
 	return Final{Text: strings.TrimSpace(strings.Join(p.parts, "\n\n")), SessionID: p.thread, Err: p.errText, Usage: p.usage, Complete: p.completed}
 }
 
-// codexLimitsFromRollout reads the newest token_count event of the turn's own
-// rollout file: it carries the account rate limits and the context window.
+// codexLimitsFromRollout reads the turn's own rollout file. The newest
+// token_count carries the account rate limits and the context window; the last
+// one before the newest turn_context holds the thread totals before this turn.
 func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -350,16 +370,24 @@ func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
 	defer f.Close()
 	var last map[string]any
 	var observedAt int64
+	before, total := map[string]any{}, map[string]any{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), maxLineBytes)
 	for sc.Scan() {
 		line := sc.Text()
+		if strings.HasPrefix(line, `{"timestamp"`) && strings.Contains(line, `"type":"turn_context"`) {
+			before = total
+			continue
+		}
 		if !strings.Contains(line, `"token_count"`) {
 			continue
 		}
 		m := parseLine(line)
 		if m == nil || str(m, "type") != "event_msg" {
 			continue
+		}
+		if t := obj(obj(obj(m, "payload"), "info"), "total_token_usage"); t != nil {
+			total = t
 		}
 		if pl := obj(m, "payload"); str(pl, "type") == "token_count" {
 			last = pl
@@ -369,6 +397,7 @@ func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
 			}
 		}
 	}
+	p.before = before
 	if last == nil {
 		return
 	}
