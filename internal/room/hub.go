@@ -1419,7 +1419,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		}
 		if pr.bootstrap && t.Reason != "part" && pr.part.SessionID != "" && pr.stopGen == rs.stopGen {
 			replay := *t
-			replay.ID, replay.Status = newID(), "queued"
+			replay.ID, replay.Status, replay.Created = newID(), "queued", nowMs()
 			rs.enqueueFront(&replay)
 		}
 	}

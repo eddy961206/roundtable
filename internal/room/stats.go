@@ -72,7 +72,10 @@ func (h *Hub) ModelStats() (*ModelStats, error) {
 			}
 			row.LastSeenAt = max(row.LastSeenAt, m.TS)
 			if m.Timing != nil {
-				row.total = append(row.total, m.Timing.TotalMs)
+				// Interrupted turns can have no completed total-time measurement.
+				if m.Timing.TotalMs > 0 {
+					row.total = append(row.total, m.Timing.TotalMs)
+				}
 				// No output is a missing observation, not an instantaneous reply.
 				if m.Trace > 0 || m.Timing.FirstOutputMs > 0 {
 					row.first = append(row.first, m.Timing.FirstOutputMs)
