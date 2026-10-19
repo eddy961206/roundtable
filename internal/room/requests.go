@@ -12,15 +12,16 @@ import (
 )
 
 type Request struct {
-	ID        string `json:"id"`
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Text      string `json:"text"`
-	SourceMsg string `json:"source_msg"`
-	Status    string `json:"status"`
-	ResultMsg string `json:"result_msg,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	At        int64  `json:"at"`
+	WaitReason string `json:"wait_reason,omitempty"` // derived from the recipient's current part
+	ID         string `json:"id"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Text       string `json:"text"`
+	SourceMsg  string `json:"source_msg"`
+	Status     string `json:"status"`
+	ResultMsg  string `json:"result_msg,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	At         int64  `json:"at"`
 }
 
 func (s *Store) appendRequest(roomID string, r Request) error {
@@ -64,7 +65,7 @@ func (h *Hub) saveRequest(rs *roomState, r Request) error {
 	} else {
 		rs.requests = append(rs.requests, r)
 	}
-	rs.broadcast("request", r)
+	rs.broadcast("request", rs.requestView(r))
 	return nil
 }
 
@@ -105,10 +106,62 @@ func (h *Hub) CancelRequest(roomID, id string) (Request, error) {
 		rs.refreshParticipantStates()
 		rs.broadcast("queue", rs.queueView())
 	}
-	return next, nil
+	return rs.requestView(next), nil
+}
+
+func (rs *roomState) requestView(r Request) Request {
+	r.WaitReason = ""
+	if r.Status == "pending" {
+		if part := rs.seatPart(r.To); part != nil {
+			r.WaitReason = fmt.Sprintf("파트 %s 종료 대기 (%s)", part.ID, part.State)
+		}
+	}
+	return r
+}
+
+func (rs *roomState) requestViews() []Request {
+	out := make([]Request, 0, len(rs.requests))
+	for _, r := range rs.requests {
+		out = append(out, rs.requestView(r))
+	}
+	return out
+}
+
+// Request-only queue entries wait for the room session to become available.
+// An ordinary explicit mention in the same message keeps its existing routing.
+func (rs *roomState) deferredRequestTurn(t *Turn) bool {
+	if t.Reason != "mention" || rs.seatPart(t.Agent) == nil {
+		return false
+	}
+	for _, m := range rs.msgs {
+		if m.ID != t.Group {
+			continue
+		}
+		if slices.Contains(ParseParticipantMentions(ordinaryMentionText(m.Text), rs.room.Participants), t.Agent) {
+			return false
+		}
+		for _, id := range m.Requests {
+			if r := rs.request(id); r != nil && r.To == t.Agent {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (rs *roomState) isRequestSource(m *Message, to string) bool {
+	for _, id := range m.Requests {
+		if r := rs.request(id); r != nil && r.To == to {
+			return true
+		}
+	}
+	return false
 }
 
 func (rs *roomState) pendingRequests(to string, cap int64) []Request {
+	if rs.seatPart(to) != nil {
+		return nil
+	}
 	var out []Request
 	for _, r := range rs.requests {
 		if r.To != to || r.Status != "pending" {
@@ -125,7 +178,7 @@ func (rs *roomState) pendingRequests(to string, cap int64) []Request {
 }
 
 func (h *Hub) beginRequests(rs *roomState, pr *prepared) {
-	if pr.bootstrap || pr.t.Reason == "review" {
+	if pr.part != nil || pr.bootstrap || pr.t.Reason == "review" {
 		return
 	}
 	cap := pr.t.Cap
@@ -139,7 +192,7 @@ func (h *Hub) beginRequests(rs *roomState, pr *prepared) {
 			return
 		}
 		pr.requests = append(pr.requests, r.ID)
-		pr.opts.Prompt += fmt.Sprintf("\n[요청 %s from @%s: %s] 응답 마지막 줄: [[REQUEST_DONE:%s]] 또는 [[REQUEST_REJECT:%s]] 이유", r.ID, r.From, r.Text, r.ID, r.ID)
+		pr.opts.Prompt += fmt.Sprintf("\n[요청 %s from @%s: %s] 응답 끝 신호 블록에 한 줄씩: [[REQUEST_DONE:%s]] 또는 [[REQUEST_REJECT:%s]] 이유", r.ID, r.From, r.Text, r.ID, r.ID)
 	}
 }
 
@@ -149,7 +202,7 @@ var resultMarker = regexp.MustCompile(`^\[\[REQUEST_(DONE|REJECT):([^\]\s]+)\]\]
 
 func (h *Hub) markerError(rs *roomState, pr *prepared, marker, reason string) error {
 	m := rs.nextMessage("system", "system", fmt.Sprintf("@%s 마커 거절 (%s): %s", pr.p.ID, marker, reason))
-	m.Target, m.Part = pr.p.ID, pr.t.Part
+	m.NoticeFor, m.Part = pr.p.ID, pr.t.Part
 	if err := h.store.AppendMessage(rs.room.ID, m); err != nil {
 		return err
 	}
@@ -168,7 +221,7 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 		}
 	}
 	if msg.Status == "done" {
-		lines := strings.Split(strings.TrimSpace(raw), "\n")
+		lines, signalStart := trailingSignals(raw)
 		for i, rawLine := range lines {
 			line := strings.TrimSpace(rawLine)
 			switch {
@@ -199,6 +252,10 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 				}
 				msg.Attachments = append(msg.Attachments, a)
 			case strings.HasPrefix(line, "[[REQUEST:"):
+				if pr.t.Reason == "discussion" || pr.t.Reason == "review" {
+					reject(line, "discussion·review 턴에서는 새 요청을 만들 수 없음")
+					continue
+				}
 				m := requestMarker.FindStringSubmatch(line)
 				if m == nil || strings.TrimSpace(m[2]) == "" {
 					reject(line, "[[REQUEST:@좌석ID]] 요청 내용 한 줄 형식 필요")
@@ -217,8 +274,8 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 				msg.Requests = append(msg.Requests, r.ID)
 			case strings.HasPrefix(line, "[[REQUEST_DONE") || strings.HasPrefix(line, "[[REQUEST_REJECT"):
 				m := resultMarker.FindStringSubmatch(line)
-				if m == nil || i != len(lines)-1 {
-					reject(line, "요청 결과 신호는 응답 마지막 줄에 써야 함")
+				if m == nil || i < signalStart {
+					reject(line, "요청 결과 신호는 응답 끝의 연속된 신호 줄 블록에 써야 함")
 					continue
 				}
 				r := rs.request(m[2])
@@ -242,6 +299,8 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 				if err := h.saveRequest(rs, next); err != nil {
 					processingErr = err
 				}
+			case strings.HasPrefix(line, "[[REQUEST"):
+				reject(line, "요청 마커 형식 오류: [[REQUEST:@좌석ID]] 내용 또는 [[REQUEST_DONE:요청ID]] / [[REQUEST_REJECT:요청ID]] 이유")
 			}
 		}
 	}
@@ -269,7 +328,7 @@ func ordinaryMentionText(text string) string {
 }
 
 func markerBrief(mode string) string {
-	text := "- 참가자에게 요청: [[REQUEST:@좌석ID]] 확인할 내용 한 줄\n- 받은 요청 완료(응답 마지막 줄): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 마지막 줄): [[REQUEST_REJECT:요청ID]] 거절 이유\n"
+	text := "- 참가자에게 요청: [[REQUEST:@좌석ID]] 확인할 내용 한 줄 (discussion·review 턴에서는 금지)\n- 받은 요청 완료(응답 끝 신호 블록): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 끝 신호 블록): [[REQUEST_REJECT:요청ID]] 거절 이유\n- 여러 요청 결과·WORK:DONE·[[DISCUSSION:AGREE]]는 응답 끝에 빈 줄 없이 한 줄씩 모으세요. 블록 안의 순서는 자유입니다.\n- 파트를 맡은 좌석의 받은 요청은 파트 종료까지 pending으로 대기하며 파트 세션에 전달하지 않습니다.\n"
 	if mode != agent.ModeChat {
 		text += "- 기존 이미지 공유(한 줄): [[ATTACH:이미지.png]] — 작업 폴더 또는 서버 scratch 안의 PNG·JPEG·WEBP, 파일당 10MB, 메시지당 4장.\n"
 		if mode == agent.ModeWrite {

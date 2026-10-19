@@ -601,6 +601,13 @@ func (rs *roomState) broadcast(typ string, payload any) {
 	if len(rs.subs) == 0 {
 		return
 	}
+	if typ == "work" {
+		for _, r := range rs.requests {
+			if r.Status == "pending" {
+				rs.broadcast("request", rs.requestView(r))
+			}
+		}
+	}
 	b, err := json.Marshal(map[string]any{"type": typ, "data": payload})
 	if err != nil {
 		return
@@ -938,6 +945,10 @@ func (h *Hub) pump(rs *roomState) {
 			continue
 		}
 		part := rs.seatPart(p.ID)
+		if rs.deferredRequestTurn(t) {
+			i++
+			continue
+		}
 		partActive := part != nil && (part.State == "working" || part.State == "fixing")
 		if t.Reason == "part" && !partActive {
 			rs.queue = slices.Delete(rs.queue, i, i+1)
@@ -985,6 +996,7 @@ func (h *Hub) pump(rs *roomState) {
 
 // prepared contains a prompt rendered from live messages up to the turn's cap.
 type prepared struct {
+	notices   []*Message
 	requests  []string
 	inputErr  error
 	t         *Turn
@@ -1029,7 +1041,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		cap = rs.room.Seq
 	}
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
-	if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingRequests(p.ID, cap)) == 0 {
+	if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID)) == 0 {
 		// No CLI call is needed to acknowledge own/filtered messages. Keep
 		// unfinished replies as holes for a later cap to deliver exactly once.
 		p.LastSeen, p.Unseen = seen, unseen
@@ -1070,7 +1082,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 		cursor := *p
 		cursor.LastSeen, cursor.Unseen = part.LastSeen, part.Unseen
 		hist, seen, unseen = rs.deltaForContext(&cursor, false, cap, part.ID)
-		if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingRequests(p.ID, cap)) == 0 {
+		if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID)) == 0 {
 			part.LastSeen, part.Unseen = seen, unseen
 			return nil
 		}
@@ -1116,6 +1128,7 @@ func (h *Hub) keepSession(rs *roomState, pr *prepared, id string) {
 
 // prepareTurn reserves one participant and opens its reply. Caller holds h.mu.
 func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
+	rs.addTurnNotices(pr)
 	h.beginRequests(rs, pr)
 	t, p, prov := pr.t, pr.p, pr.prov
 	msg := rs.nextMessage("agent", p.ID, "")
@@ -1322,6 +1335,11 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
 		msg.Status, msg.Error = "error", fmt.Sprintf("메시지 저장 실패: %v", err)
 	}
+	if msg.Status == "done" {
+		if err := h.acknowledgeNotices(rs, pr); err != nil {
+			msg.Status, msg.Error = "error", fmt.Sprintf("공지 전달 기록 저장 실패: %v", err)
+		}
+	}
 	rs.broadcast("message", msg)
 	if h.Log != nil {
 		h.Log.Printf("turn %s %s/%s status=%s %dms err=%v", rs.room.ID, p.ID, p.Model, msg.Status, msg.Duration, err)
@@ -1419,6 +1437,12 @@ func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, part
 			continue
 		}
 		if m.Status == "cancelled" && m.Text == "" {
+			continue
+		}
+		if m.NoticeFor == p.ID {
+			continue
+		} // delivered separately, regardless of cap or history trimming
+		if partID != "" && rs.isRequestSource(m, p.ID) {
 			continue
 		}
 		out = append(out, m)

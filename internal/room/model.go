@@ -72,6 +72,8 @@ func (r *Room) enabled() []*Participant {
 
 // Message is one chat line. Agent messages stream in and end as done|error|cancelled.
 type Message struct {
+	NoticeFor        string         `json:"notice_for,omitempty"` // durable out-of-cap feedback to this seat; visible to everyone
+	NoticeDelivered  bool           `json:"notice_delivered,omitempty"`
 	Attachments      []Attachment   `json:"attachments,omitempty"`
 	Requests         []string       `json:"requests,omitempty"`
 	ID               string         `json:"id"`

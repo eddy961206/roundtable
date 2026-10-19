@@ -72,5 +72,5 @@ func (h *Hub) snapshotLocked(rs *roomState, before int64, limit int) *Snapshot {
 	if history.HasMore {
 		history.BeforeSeq = messages[0].Seq
 	}
-	return &Snapshot{Room: &roomCopy, Messages: messages, Queue: queue, Discussion: discussion, Limits: h.limitsCopy(), History: history, Work: cloneWork(rs.room.Work), Requests: append([]Request{}, rs.requests...)}
+	return &Snapshot{Room: &roomCopy, Messages: messages, Queue: queue, Discussion: discussion, Limits: h.limitsCopy(), History: history, Work: cloneWork(rs.room.Work), Requests: rs.requestViews()}
 }
