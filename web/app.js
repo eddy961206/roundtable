@@ -289,13 +289,103 @@
     return { fullPath, relPath, lines, pathDisplay };
   }
 
-  if (typeof marked !== "undefined") {
-    marked.use({
+  function wrapMarkdownCodeSpan(s) {
+    let fence = "`";
+    while (s.includes(fence)) {
+      fence += "`";
+    }
+    const pad = s.startsWith("`") || s.endsWith("`") || s.startsWith(" ") || s.endsWith(" ") ? " " : "";
+    return fence + pad + s + pad + fence;
+  }
+
+  function classifyAgentMarkerLine(line, msg) {
+    const trimmed = String(line == null ? "" : line).trim();
+    if (!trimmed) return { action: "keep", raw: line };
+    if (
+      /^\[\[REQUEST_(?:DONE|REJECT):[^\]]+\]\](?:\s+.*)?$/.test(trimmed) ||
+      /^(?:WORK:DONE|\[\[WORK:DONE\]\])$/.test(trimmed) ||
+      /^\[\[DISCUSSION:[^\]]+\]\]$/.test(trimmed)
+    ) {
+      return { action: "hide", raw: trimmed };
+    }
+    if (/^\[\[REQUEST:@[^\]]+\]\](?:\s+.*)?$/.test(trimmed)) {
+      const hasRequests = Boolean(
+        msg &&
+          ((Array.isArray(msg.requests) && msg.requests.length > 0) ||
+            (msg.id && collectMessageRequests(msg).length > 0))
+      );
+      return { action: hasRequests ? "hide" : "chip", raw: trimmed };
+    }
+    if (/^\[\[ATTACH:[^\]]+\]\]$/.test(trimmed)) {
+      const hasAttachments = Boolean(msg && Array.isArray(msg.attachments) && msg.attachments.length > 0);
+      return { action: hasAttachments ? "hide" : "chip", raw: trimmed };
+    }
+    return { action: "keep", raw: line };
+  }
+
+  function formatAgentMessageText(text, msg) {
+    const raw = String(text == null ? "" : text);
+    if (!raw) return "";
+    const lines = raw.split(/\r?\n/);
+    const out = [];
+    let fenceChar = "";
+    let fenceLen = 0;
+
+    for (const line of lines) {
+      if (fenceChar) {
+        out.push(line);
+        const closeMatch = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
+        if (closeMatch && closeMatch[1][0] === fenceChar && closeMatch[1].length >= fenceLen) {
+          fenceChar = "";
+          fenceLen = 0;
+        }
+        continue;
+      }
+      const openMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (openMatch) {
+        fenceChar = openMatch[1][0];
+        fenceLen = openMatch[1].length;
+        out.push(line);
+        continue;
+      }
+      const res = classifyAgentMarkerLine(line, msg);
+      if (res.action === "hide") {
+        continue;
+      }
+      if (res.action === "chip") {
+        out.push(wrapMarkdownCodeSpan(res.raw));
+        continue;
+      }
+      out.push(line);
+    }
+    return out.join("\n").trim();
+  }
+
+  const markedLib =
+    typeof marked !== "undefined"
+      ? marked
+      : typeof require === "function"
+      ? (() => {
+          try {
+            const m = require("./vendor/marked.min.js");
+            return m && m.marked ? m.marked : m;
+          } catch (_) {
+            return undefined;
+          }
+        })()
+      : undefined;
+
+  if (markedLib) {
+    markedLib.use({
       gfm: true,
       breaks: true,
       renderer: {
         html({ text }) {
           return esc(text);
+        },
+        codespan(token) {
+          const cls = token && token._rejectedMarker ? ' class="marker-chip muted"' : "";
+          return "<code" + cls + ">" + (token && token.text != null ? token.text : "") + "</code>";
         },
         link(token) {
           const href = token && token.href != null ? String(token.href) : "";
@@ -336,6 +426,22 @@
   function friendlyMarkdownTokens(tokens) {
     for (const token of tokens) {
       if (["code", "codespan", "html", "link", "image", "def"].includes(token.type)) continue;
+      if (token.type === "paragraph" && Array.isArray(token.tokens)) {
+        for (let i = 0; i < token.tokens.length; i++) {
+          const child = token.tokens[i];
+          if (child.type !== "codespan") continue;
+          const prev = i > 0 ? token.tokens[i - 1] : null;
+          const next = i + 1 < token.tokens.length ? token.tokens[i + 1] : null;
+          const onOwnLine = (!prev || prev.type === "br") && (!next || next.type === "br");
+          const decoded = decodeHtmlEntities(child.text || "").trim();
+          if (
+            onOwnLine &&
+            (/^\[\[REQUEST:@[^\]]+\]\](?:\s+[\s\S]*)?$/.test(decoded) || /^\[\[ATTACH:[^\]]+\]\]$/.test(decoded))
+          ) {
+            child._rejectedMarker = true;
+          }
+        }
+      }
       if (token.tokens) friendlyMarkdownTokens(token.tokens);
       else if (token.type === "text") { token.text = visibleMentions(token.text); token.escaped = false; }
       if (token.items) for (const item of token.items) if (item.tokens) friendlyMarkdownTokens(item.tokens);
@@ -346,10 +452,10 @@
 
   const md = (text) => {
     try {
-      if (typeof marked === "undefined") return "<p>" + esc(text) + "</p>";
-      const tokens = marked.lexer(text || "");
+      if (!markedLib) return "<p>" + esc(text) + "</p>";
+      const tokens = markedLib.lexer(text || "");
       friendlyMarkdownTokens(tokens);
-      return marked.parser(tokens);
+      return markedLib.parser(tokens);
     } catch {
       return "<p>" + esc(text) + "</p>";
     }
@@ -1985,6 +2091,7 @@
 
       const live = m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim() ? state.live.get(m.id) : null;
       if (m.status !== "streaming") state.live.delete(m.id);
+      const agentDisplayText = m.kind === "agent" ? formatAgentMessageText(m.text, m) : "";
       const bodyHtml =
         m.kind === "user"
           ? m.text
@@ -1992,8 +2099,17 @@
             : ""
           : live
           ? liveHtml(live)
+          : m.kind === "agent"
+          ? agentDisplayText
+            ? md(agentDisplayText)
+            : ""
           : md(m.text);
-      const bodyKey = live ? "live:" + live.ver : visibleMentions(m.text);
+      const bodyKey =
+        live
+          ? "live:" + live.ver
+          : m.kind === "agent"
+          ? visibleMentions(agentDisplayText)
+          : visibleMentions(m.text);
 
       const foot = [];
       if (m.duration_ms) foot.push("⏱ " + fmtDur(m.duration_ms));
@@ -2029,7 +2145,9 @@
 
       bubble.querySelector(".meta").innerHTML = meta.join("");
       const bodyEl = bubble.querySelector(".body");
-      bodyEl.hidden = m.kind === "user" && !m.text;
+      bodyEl.hidden =
+        (m.kind === "user" && !m.text) ||
+        (m.kind === "agent" && !live && !agentDisplayText && m.status !== "streaming");
       bodyEl.className = "body" + (m.status === "streaming" ? " cursor" : "");
       if (bodyEl.dataset.rawText !== bodyKey || isInitialMount) {
         bodyEl.dataset.rawText = bodyKey;
@@ -5681,6 +5799,9 @@
       sortRequests,
       mergeSnapshotRequests,
       formatLightboxMeta,
+      classifyAgentMarkerLine,
+      formatAgentMessageText,
+      md,
     };
   }
 
