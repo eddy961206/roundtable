@@ -61,7 +61,8 @@ type roomState struct {
 	stopGen  int  // prevents a stopped turn from scheduling follow-up work
 	resetGen int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
 
-	workBusy map[string]bool // plan creation, submit checks or cleanup running git outside h.mu
+	workBusy          map[string]bool   // plan creation, submit checks or cleanup running git outside h.mu
+	participantEvents map[string]string // last serialized seat state sent to subscribers
 }
 
 type running struct {
@@ -83,6 +84,9 @@ type discussion struct {
 }
 
 func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logger) (*Hub, error) {
+	if _, err := store.RolePresets(); err != nil {
+		return nil, err
+	}
 	absoluteScratch, err := filepath.Abs(scratch)
 	if err != nil {
 		return nil, fmt.Errorf("작업 임시 폴더: %w", err)
@@ -92,7 +96,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		return nil, fmt.Errorf("worktree 폴더: %w", err)
 	}
 	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, listSubs: map[chan []byte]struct{}{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]string{}, workRoot: workRoot, Log: logger}
-	rooms, msgs, err := store.LoadRooms()
+	rooms, msgs, _, err := store.loadRooms(false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +107,16 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		h.limits = map[string]agent.Limits{}
 	}
 	for _, r := range rooms {
+		// Persist startup recovery before any queued work can run. Statistics
+		// must see the same cancelled turns as the recovered room snapshot.
+		for _, m := range msgs[r.ID] {
+			if m.Status == "streaming" {
+				m.Status = "cancelled"
+				if err := store.AppendMessage(r.ID, m); err != nil {
+					return nil, fmt.Errorf("방 %s 중단 메시지 복구: %w", r.ID, err)
+				}
+			}
+		}
 		if r.Workspace != "" {
 			r.Workspace, err = filepath.Abs(r.Workspace)
 			if err != nil {
@@ -374,6 +388,7 @@ type ParticipantPatch struct {
 	Enabled *bool   `json:"enabled,omitempty"`
 	Model   *string `json:"model,omitempty"`
 	Effort  *string `json:"effort,omitempty"`
+	Role    *string `json:"role,omitempty"`
 }
 
 // RoomPatch is a partial update.
@@ -477,6 +492,9 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 		}
 		if pp.Effort != nil {
 			p.Effort = *pp.Effort
+		}
+		if pp.Role != nil {
+			p.Role = strings.TrimSpace(*pp.Role)
 		}
 		original := rs.room.participant(p.ID)
 		if p.Model != original.Model || p.Effort != original.Effort {
@@ -661,6 +679,32 @@ func (rs *roomState) broadcast(typ string, payload any) {
 	if summary := rs.summary(); summary != rs.listed {
 		rs.listed = summary
 		signalRooms(rs.listSubs)
+	}
+	if typ == "room" {
+		// A full room event also delivers every seat; compare future participant
+		// events against that state, including changes made by PATCH/reset.
+		rs.participantEvents = map[string]string{}
+		for _, p := range rs.room.Participants {
+			encoded, err := json.Marshal(p)
+			if err != nil {
+				panic(err)
+			}
+			rs.participantEvents[p.ID] = string(encoded)
+		}
+	}
+	if typ == "participant" {
+		p := payload.(*Participant)
+		encoded, err := json.Marshal(p)
+		if err != nil {
+			panic(err) // participant state must be JSON serializable
+		}
+		if rs.participantEvents == nil {
+			rs.participantEvents = map[string]string{}
+		}
+		if rs.participantEvents[p.ID] == string(encoded) {
+			return
+		}
+		rs.participantEvents[p.ID] = string(encoded)
 	}
 	if len(rs.subs) == 0 {
 		return
@@ -1057,6 +1101,7 @@ func (h *Hub) pump(rs *roomState) {
 
 // prepared contains a prompt rendered from live messages up to the turn's cap.
 type prepared struct {
+	started   time.Time
 	notices   []*Message
 	requests  []string
 	inputErr  error
@@ -1115,7 +1160,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
-	h.addTurnImages(rs, p, hist, &opts)
+	h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
 }
 
@@ -1133,7 +1178,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 	var hist []*Message
 	switch {
 	case part.SessionID == "":
-		prompt = BuildPartPrompt(rs.room.Work, part)
+		prompt = BuildPartPrompt(rs.room.Work, part, p.Role)
 		if t.prompt != "" {
 			prompt += "\n\n" + t.prompt
 		}
@@ -1161,7 +1206,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 		prompt = BuildPrompt(&view, p, hist, tc)
 	}
 	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
-	h.addTurnImages(rs, p, hist, &opts)
+	h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, bootstrap: bootstrap}
 }
 
@@ -1197,6 +1242,7 @@ func (h *Hub) keepSession(rs *roomState, pr *prepared, id string) {
 
 // prepareTurn reserves one participant and opens its reply. Caller holds h.mu.
 func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
+	pr.started = time.Now()
 	rs.addTurnNotices(pr)
 	h.beginRequests(rs, pr)
 	t, p, prov := pr.t, pr.p, pr.prov
@@ -1204,6 +1250,11 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	msg.Status, msg.TurnID, msg.Reason, msg.Round, msg.Model = "streaming", t.ID, t.Reason, t.Round, p.Model
 	msg.Part, msg.ReviewStep = t.Part, t.step
 	msg.Provider, msg.SessionID, msg.Mode, msg.Effort = p.Provider, pr.opts.SessionID, pr.opts.Mode, pr.opts.Effort
+	msg.Role = p.Role
+	msg.Timing = &TurnTiming{QueuedMs: max(0, pr.started.UnixMilli()-t.Created)}
+	if t.Reason == "review" && pr.part.Review != nil {
+		msg.Round = pr.part.Review.Input.Ref.Round
+	}
 	msg.SessionDirectory = pr.opts.Workspace
 	if pr.opts.Mode == agent.ModeChat || msg.SessionDirectory == "" {
 		msg.SessionDirectory = pr.opts.ScratchDir
@@ -1223,13 +1274,15 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	defer h.turnWG.Done()
 	t, p, prov, msg, opts, ctx, cancel := pr.t, pr.p, pr.prov, pr.msg, pr.opts, pr.ctx, pr.cancel
-	started := time.Now()
+	started := pr.started
+	firstOutput := false
 	var textBuf strings.Builder
 	var emitMu sync.Mutex
 	var tracePersistenceError error
 	emit := func(e agent.Event) {
 		emitMu.Lock()
 		defer emitMu.Unlock()
+		observed := time.Since(started).Milliseconds()
 		h.mu.Lock()
 		if rs.deleted || tracePersistenceError != nil {
 			h.mu.Unlock()
@@ -1250,6 +1303,10 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			return
 		}
 		msg.Trace++
+		if !firstOutput {
+			msg.Timing.FirstOutputMs = observed
+			firstOutput = true
+		}
 		switch e.Kind {
 		case agent.KindSession:
 			if e.Text != "" {
@@ -1313,6 +1370,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	run := rs.running[t.ID]
 	delete(rs.running, t.ID)
 	msg.Duration = time.Since(started).Milliseconds()
+	msg.Timing.TotalMs = msg.Duration
 	msg.Usage = res.Usage
 	if res.SessionID != "" {
 		msg.SessionID = res.SessionID
@@ -1361,7 +1419,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		}
 		if pr.bootstrap && t.Reason != "part" && pr.part.SessionID != "" && pr.stopGen == rs.stopGen {
 			replay := *t
-			replay.ID, replay.Status = newID(), "queued"
+			replay.ID, replay.Status, replay.Created = newID(), "queued", nowMs()
 			rs.enqueueFront(&replay)
 		}
 	}

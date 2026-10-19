@@ -240,7 +240,8 @@ func (s *Store) cleanupAttachments(roomID string, messages []*Message) error {
 	return nil
 }
 
-func (h *Hub) addTurnImages(rs *roomState, p *Participant, history []*Message, opts *agent.RunOptions) {
+func (h *Hub) addTurnImages(rs *roomState, p *Participant, history []*Message, opts *agent.RunOptions, reason ...string) {
+	added := 0
 	for _, m := range history {
 		for _, a := range m.Attachments {
 			path, _ := filepath.Abs(h.store.attachmentPath(rs.room.ID, a))
@@ -250,6 +251,31 @@ func (h *Hub) addTurnImages(rs *roomState, p *Participant, history []*Message, o
 				access = "경로: " + path
 			}
 			opts.Prompt += fmt.Sprintf("\n[메시지 %s / %s] [첨부 %s: %s %d×%d %q] %s", m.ID, speaker(m, rs.room), a.ID, a.Mime, a.Width, a.Height, a.Name, access)
+			added++
 		}
+	}
+	if added == 0 {
+		return
+	}
+	mode := opts.Mode
+	if mode == "" && rs != nil && rs.room != nil {
+		mode = rs.room.Mode
+	}
+	canAttach := mode == agent.ModeRead || mode == agent.ModeWrite
+	canRequest := (rs == nil || rs.disc == nil) && !strings.Contains(opts.Prompt, "[[DISCUSSION:CONTINUE]]")
+	for _, r := range reason {
+		if r == "discussion" || r == "review" {
+			canRequest = false
+		}
+	}
+	switch {
+	case canAttach && canRequest:
+		opts.Prompt += "\n(이미지 첨부 안내: 추가 시각 검토가 필요하면 [[ATTACH:캡처.png]]로 이미지를 공유하거나, 이미지 판독·시각 검토에 강점이 있는 좌석에 [[REQUEST:@좌석ID]]로 시각 검토를 요청하세요.)"
+	case canAttach:
+		opts.Prompt += "\n(이미지 첨부 안내: 추가 시각 검토 자료가 있으면 [[ATTACH:캡처.png]]로 이미지를 공유하세요. discussion·review 턴에서는 새 요청을 보낼 수 없습니다.)"
+	case canRequest:
+		opts.Prompt += "\n(이미지 첨부 안내: 추가 시각 검토가 필요하면 이미지 판독·시각 검토에 강점이 있는 좌석에 [[REQUEST:@좌석ID]]로 시각 검토를 요청하세요. chat 모드에서는 파일을 첨부할 수 없습니다.)"
+	default:
+		opts.Prompt += "\n(이미지 첨부 안내: 첨부된 이미지를 직접 확인해 시각적으로 검토하세요. chat 모드의 discussion·review 턴에서는 파일 첨부나 새 요청을 보낼 수 없습니다.)"
 	}
 }

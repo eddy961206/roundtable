@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,9 @@ type Server struct {
 func New(hub *room.Hub, reg *agent.Registry, web fs.FS) *Server {
 	s := &Server{hub: hub, reg: reg, web: web, mux: http.NewServeMux()}
 	s.routes()
+	if reg != nil {
+		go func() { _ = reg.RefreshVersions(context.Background()) }()
+	}
 	return s
 }
 
@@ -69,6 +73,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /", staticFiles(s.web))
 	s.mux.HandleFunc("GET /api/config", s.config)
 	s.mux.HandleFunc("GET /api/providers", s.providers)
+	s.mux.HandleFunc("POST /api/providers/versions", s.refreshVersions)
+	s.mux.HandleFunc("GET /api/role-presets", s.rolePresets)
+	s.mux.HandleFunc("GET /api/stats/models", s.modelStats)
 	s.mux.HandleFunc("GET /api/usage", s.usage)
 	s.mux.HandleFunc("GET /api/stream", s.streamRooms)
 	s.mux.HandleFunc("POST /api/usage/refresh", s.refreshUsage)

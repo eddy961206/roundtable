@@ -13,6 +13,143 @@ export function catalogMessage(info) {
   if (info.catalog_status === "ready" && (!info.models || !info.models.length)) return "사용할 수 있는 모델이 없습니다. OpenCode의 연결 설정을 확인하세요.";
   return "";
 }
+// ---------- Role presets (GET /api/role-presets) ----------
+// Presets and model suggestions are user-edited data on the server; the screen
+// only offers them as chips and a default. A load failure is shown, not hidden.
+export const rolePresets = { presets: [], suggestions: [], path: "", error: "", loaded: false };
+let rolePresetsLoading = null;
+export function loadRolePresets() {
+  if (rolePresetsLoading) return rolePresetsLoading;
+  rolePresetsLoading = api("GET", "/api/role-presets").then((data) => {
+    if (!data || !Array.isArray(data.presets)) throw new Error("응답에 presets 배열이 없습니다");
+    rolePresets.presets = data.presets;
+    rolePresets.suggestions = Array.isArray(data.model_suggestions) ? data.model_suggestions : [];
+    rolePresets.path = data.path || "";
+    rolePresets.error = "";
+    rolePresets.loaded = true;
+  }).catch((err) => {
+    rolePresets.error = err.message || String(err);
+    rolePresets.loaded = true;
+  }).finally(() => { rolePresetsLoading = null; });
+  return rolePresetsLoading;
+}
+
+function globMatches(pattern, value) {
+  const re = "^" + String(pattern).split("*").map((part) => part.split("?").map((s) => s.replace(/[.+^${}()|[\]\\]/g, "\\$&")).join(".")).join(".*") + "$";
+  return new RegExp(re, "i").test(value);
+}
+
+// First suggestion whose model glob matches, as in the contract (top-down, first hit).
+export function suggestedPreset(modelId) {
+  if (!modelId) return null;
+  for (const s of rolePresets.suggestions) {
+    if (s && s.match && globMatches(s.match, modelId)) {
+      return rolePresets.presets.find((p) => p.id === s.preset) || null;
+    }
+  }
+  return null;
+}
+
+// A role editor: preset chips, a free-text directive and the model suggestion.
+// `getModel` tells which model the suggestion is for. The caller reads `.value`
+// and calls `.syncSuggestion()` whenever the model changes; the suggestion only
+// overwrites text the user has not typed.
+export function buildRoleField(container, { initial = "", getModel = () => "", onInput = null, autoSuggest = true } = {}) {
+  const wrap = el("div", "role-field");
+  const chips = el("div", "role-chips");
+  chips.setAttribute("role", "group");
+  chips.setAttribute("aria-label", "역할 프리셋");
+  wrap.appendChild(chips);
+  const textarea = el("textarea", "role-input");
+  textarea.rows = 2;
+  textarea.maxLength = 600;
+  textarea.placeholder = "예: 큰 그림과 사용자 경험을 먼저 깊게 본다. 비우면 역할 없음.";
+  textarea.setAttribute("aria-label", "역할 지시문");
+  textarea.value = initial || "";
+  wrap.appendChild(textarea);
+  const note = el("p", "role-note small-note muted");
+  note.setAttribute("role", "status");
+  wrap.appendChild(note);
+  container.appendChild(wrap);
+
+  // The suggestion only fills the field while the user has not touched it: typing,
+  // clearing or picking a chip is a choice that stays, and it is applied at most once
+  // per model so a re-render never overwrites what is there.
+  let userEdited = false;
+  let suggestedForModel = null;
+  let suggestedText = "";
+  const field = {
+    root: wrap,
+    textarea,
+    get value() { return textarea.value.trim(); },
+    syncSuggestion() { render(); },
+  };
+
+  function render() {
+    // Chips are rebuilt on every render; a chip chosen with the keyboard keeps focus.
+    const focusedPreset = chips.contains(document.activeElement) ? document.activeElement.dataset.preset : null;
+    chips.replaceChildren();
+    const model = getModel();
+    const suggested = suggestedPreset(model);
+    const current = textarea.value.trim();
+    if (rolePresets.error) {
+      note.className = "role-note small-note warn";
+      note.textContent = "역할 프리셋을 불러오지 못했습니다: " + rolePresets.error + " 역할은 직접 입력할 수 있습니다.";
+    } else if (!rolePresets.loaded) {
+      note.className = "role-note small-note muted";
+      note.textContent = "역할 프리셋을 불러오는 중…";
+    } else if (!rolePresets.presets.length) {
+      note.className = "role-note small-note warn";
+      note.textContent = "역할 프리셋이 비어 있습니다. " + (rolePresets.path ? rolePresets.path + " 파일에 프리셋을 추가하세요." : "");
+    } else if (suggested) {
+      const using = current === (suggested.directive || "").trim();
+      note.className = "role-note small-note muted";
+      note.textContent = "모델 추천: " + suggested.name + (using ? " (적용됨)" : "") + " · 추천은 참고일 뿐이며 자유롭게 고쳐도 됩니다.";
+    } else {
+      note.className = "role-note small-note muted";
+      note.textContent = model ? "이 모델에 대한 추천 역할이 없습니다. 프리셋을 고르거나 직접 적으세요." : "프리셋을 고르거나 직접 적으세요.";
+    }
+    for (const preset of rolePresets.presets) {
+      const chip = el("button", "role-chip", preset.name);
+      chip.type = "button";
+      chip.dataset.preset = preset.id;
+      const directive = (preset.directive || "").trim();
+      chip.setAttribute("aria-pressed", current && current === directive ? "true" : "false");
+      chip.title = directive;
+      if (suggested && suggested.id === preset.id) {
+        chip.classList.add("suggested");
+        chip.appendChild(el("span", "role-chip-mark", "추천"));
+      }
+      chip.onclick = () => {
+        textarea.value = directive;
+        userEdited = true;
+        render();
+        if (onInput) onInput();
+      };
+      chips.appendChild(chip);
+    }
+    if (focusedPreset != null) {
+      const again = chips.querySelector('.role-chip[data-preset="' + CSS.escape(focusedPreset) + '"]');
+      if (again) again.focus();
+    }
+    // First sight of this model and the text is empty or the previous model's suggestion.
+    if (autoSuggest && !userEdited && suggested && model !== suggestedForModel && (current === "" || current === suggestedText)) {
+      suggestedForModel = model;
+      suggestedText = (suggested.directive || "").trim();
+      if (current !== suggestedText) {
+        textarea.value = suggestedText;
+        render();
+        if (onInput) onInput();
+      }
+    }
+  }
+  textarea.addEventListener("input", () => { userEdited = true; render(); if (onInput) onInput(); });
+  const ready = loadRolePresets();
+  render();
+  ready.then(() => { if (wrap.isConnected) render(); });
+  return field;
+}
+
 let catalogLoading = null;
 export async function refreshProviderCatalog(button, afterRefresh) {
   button.disabled = true;
@@ -151,6 +288,7 @@ export function renderParticipants() {
   }
 }
 
+const roleFields = new WeakMap(); // card element -> its role editor
 function buildParticipantCardSkeleton(p, info) {
   const card = el("div", "pcard");
   card.id = "pcard-" + p.id;
@@ -182,6 +320,8 @@ function buildParticipantCardSkeleton(p, info) {
   top.appendChild(sw);
   card.appendChild(top);
   card.appendChild(el("div", "participant-model muted"));
+  const roleLine = el("div", "participant-role");
+  card.appendChild(roleLine);
 
   const edit = el("details", "participant-edit");
   edit.appendChild(el("summary", "muted", "설정 · 상세"));
@@ -202,6 +342,22 @@ function buildParticipantCardSkeleton(p, info) {
     patchParticipant(p.id, { label: nameInput.value.trim() });
   };
   edit.appendChild(rename);
+
+  // Role: chips + free text; saved with its own button so a half-typed directive is not sent.
+  const roleLabel = el("div", "role-label", "역할 (이 관점을 먼저 깊게 본다)");
+  edit.appendChild(roleLabel);
+  const roleField = buildRoleField(edit, {
+    initial: p.role || "",
+    getModel: () => { const cur = participant(p.id); return cur ? cur.model : p.model; },
+    autoSuggest: false,
+  });
+  roleField.textarea.setAttribute("aria-label", participantLabel(p.id) + " 역할 지시문");
+  roleFields.set(card, roleField);
+  const roleSave = el("button", "save-role", "역할 저장");
+  roleSave.type = "button";
+  roleSave.onclick = () => patchParticipant(p.id, { role: roleField.value });
+  edit.appendChild(roleSave);
+  edit.appendChild(el("p", "small-note muted", "역할을 바꿔도 세션은 유지됩니다. 다음 턴부터 새 역할이 안내문에 들어갑니다."));
   const customLabel = el("label", "", "모델 ID 직접 입력");
   const custom = el("input", "custom-model");
   custom.placeholder = "CLI가 지원하는 정확한 모델 ID";
@@ -362,10 +518,18 @@ function updateParticipantCardInPlace(card, p, info) {
   card.querySelector(".catalog-refresh").hidden = p.provider !== "opencode" && !catalogNote.textContent;
   const nameInput = card.querySelector(".participant-name");
   const custom = card.querySelector(".custom-model");
+  const roleInput = card.querySelector(".role-input");
   if (!card.querySelector(".participant-edit").open) {
     nameInput.value = p.label;
     custom.value = p.model;
+    roleInput.value = p.role || "";
   }
+  const roleField = roleFields.get(card);
+  if (roleField) roleField.syncSuggestion();
+  const roleLine = card.querySelector(".participant-role");
+  roleLine.textContent = p.role ? "🎯 " + p.role : "역할 없음";
+  roleLine.title = p.role ? "역할: " + p.role : "설정 · 상세에서 역할을 정할 수 있습니다";
+  roleLine.classList.toggle("muted", !p.role);
   for (const control of card.querySelectorAll(".model-sel, .effort-sel, .custom-model, .apply-custom-model, .remove-participant")) {
     control.disabled = p.status === "running";
     control.title = p.status === "running" ? "현재 턴을 중지하거나 완료한 뒤 변경하세요" : "";

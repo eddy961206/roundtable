@@ -110,17 +110,94 @@ func (s *Store) LoadLimits(into any) error {
 
 // LoadAll reads full stored history for callers that explicitly need every trace.
 func (s *Store) LoadAll() ([]*Room, map[string][]*Message, map[string][]TraceLine, error) {
-	return s.loadRooms(true)
+	rooms, messages, traces, err := s.loadRooms(true, true)
+	interruptStreaming(messages)
+	return rooms, messages, traces, err
 }
 
 // LoadRooms leaves event payloads on disk. Only missing legacy session metadata
 // is recovered while loading messages; ordinary room reads never scan traces.
 func (s *Store) LoadRooms() ([]*Room, map[string][]*Message, error) {
-	rooms, messages, _, err := s.loadRooms(false)
+	rooms, messages, _, err := s.loadRooms(false, true)
+	interruptStreaming(messages)
 	return rooms, messages, err
 }
 
-func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[string][]TraceLine, error) {
+// Public history readers keep their existing in-memory recovery semantics.
+// NewHub persists interruptions separately, before it launches any new turns.
+func interruptStreaming(messages map[string][]*Message) {
+	for _, roomMessages := range messages {
+		for _, m := range roomMessages {
+			if m.Status == "streaming" {
+				m.Status = "cancelled"
+			}
+		}
+	}
+}
+
+// captureRoomFiles holds the append lock only for one room's metadata and
+// message-file boundary. Incomplete/deleted directories without room.json are
+// not rooms. Other read errors remain visible to every caller.
+func (s *Store) captureRoomFiles(id string) ([]byte, *os.File, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir, err := os.OpenRoot(s.roomDir(id))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, 0, nil
+		}
+		return nil, nil, 0, err
+	}
+	defer dir.Close()
+	data, err := dir.ReadFile("room.json")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, 0, nil
+		}
+		return nil, nil, 0, err
+	}
+	// Root.Open shares delete access on Windows, so a long snapshot reader
+	// does not prevent room deletion while it consumes the captured prefix.
+	f, err := dir.Open("messages.jsonl")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return data, nil, 0, nil // a new room may have no messages yet
+		}
+		return nil, nil, 0, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, 0, err
+	}
+	return data, f, info.Size(), nil
+}
+
+func (s *Store) readRoomSnapshot(id string) (*Room, []*Message, error) {
+	data, f, size, err := s.captureRoomFiles(id)
+	if err != nil || data == nil {
+		return nil, nil, err
+	}
+	if f != nil {
+		defer f.Close()
+	}
+	var r Room
+	file := roomFile{Room: &r}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, nil, fmt.Errorf("room %s: %w", id, err)
+	}
+	r.Work = file.Work
+	messages := []*Message{}
+	if f != nil {
+		messages, err = readMessages(io.LimitReader(f, size), f.Name())
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return &r, messages, nil
+}
+
+func (s *Store) loadRooms(withTraces, recoverSessions bool) ([]*Room, map[string][]*Message, map[string][]TraceLine, error) {
 	entries, err := os.ReadDir(filepath.Join(s.root, "rooms"))
 	if err != nil {
 		return nil, nil, nil, err
@@ -133,16 +210,13 @@ func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[
 			continue
 		}
 		dir := s.roomDir(e.Name())
-		b, err := os.ReadFile(filepath.Join(dir, "room.json"))
+		r, roomMessages, err := s.readRoomSnapshot(e.Name())
 		if err != nil {
+			return nil, nil, nil, err
+		}
+		if r == nil {
 			continue
 		}
-		var r Room
-		file := roomFile{Room: &r}
-		if err := json.Unmarshal(b, &file); err != nil {
-			return nil, nil, nil, fmt.Errorf("room %s: %w", e.Name(), err)
-		}
-		r.Work = file.Work
 		// Older rooms used the provider ID as their single seat identity.
 		// Keep that identity so messages and resumable sessions remain attached.
 		for _, p := range r.Participants {
@@ -150,14 +224,11 @@ func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[
 				p.Provider = p.ID
 			}
 		}
-		rooms = append(rooms, &r)
-		msgs[r.ID], err = loadMessages(filepath.Join(dir, "messages.jsonl"))
-		if err != nil {
-			return nil, nil, nil, err
-		}
+		rooms = append(rooms, r)
+		msgs[r.ID] = roomMessages
 		missingSessions := map[string]*Message{}
 		for _, m := range msgs[r.ID] {
-			if m.Kind == "agent" && m.SessionID == "" {
+			if recoverSessions && m.Kind == "agent" && m.SessionID == "" {
 				missingSessions[m.ID] = m
 			}
 		}
@@ -184,19 +255,16 @@ func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[
 	return rooms, msgs, traces, nil
 }
 
-func loadMessages(path string) ([]*Message, error) {
+func readMessages(source io.Reader, path string) ([]*Message, error) {
 	byID := map[string]*Message{}
 	var order []string
-	err := scanJSONLines(path, func(line []byte) error {
+	err := readJSONLines(source, path, func(line []byte) error {
 		var m Message
 		if err := json.Unmarshal(line, &m); err != nil {
 			return err
 		}
 		if _, ok := byID[m.ID]; !ok {
 			order = append(order, m.ID)
-		}
-		if m.Status == "streaming" {
-			m.Status = "cancelled"
 		}
 		byID[m.ID] = &m
 		return nil

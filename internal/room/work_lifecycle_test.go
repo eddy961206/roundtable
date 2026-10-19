@@ -237,14 +237,16 @@ func TestWorkReviewDoesNotSteerChat(t *testing.T) {
 				id = "claude"
 			}
 			seat := controlWorkSeat(t, f, id)
-			f.hub.mu.Lock()
-			rs := f.hub.rooms[f.room.ID]
-			part := rs.room.Work.part("p1")
-			part.State = "reviewing"
 			h := f.hub
-			h.runReviewStep(rs, part, ReviewStep{Who: who, Kind: "findings", Prompt: "review only"})
-			h.pump(rs)
-			f.hub.mu.Unlock()
+			func() {
+				h.mu.Lock()
+				defer h.mu.Unlock()
+				rs := h.rooms[f.room.ID]
+				part := rs.room.Work.part("p1")
+				part.State = "reviewing"
+				h.runReviewStep(rs, part, ReviewStep{Who: who, Kind: "findings", Prompt: "review only"})
+				h.pump(rs)
+			}()
 			call := nextCall(t, seat)
 			m := postQueueMessage(t, h, f.room.ID, "CHAT_NOT_REVIEW", id)
 			if m.Live || call.opts.Steer != nil {

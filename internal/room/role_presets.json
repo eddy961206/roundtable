@@ -1,0 +1,43 @@
+{
+  "description": "사용자가 직접 수정할 수 있는 역할 프리셋과 모델별 추천 데이터입니다. 서버는 데이터 폴더의 role-presets.json을 읽으며, 파일이 없을 때만 이 기본 파일을 복사해 생성합니다. 모델 추천(model_suggestions)은 현재 사용자 관찰을 바탕으로 한 참고 제안일 뿐 자동 배정하지 않습니다.",
+  "presets": [
+    {
+      "id": "big-picture",
+      "name": "큰 그림·UX·의도 파악",
+      "directive": "전체 설계의 큰 그림, 사용자 경험(UX), 숨은 의도와 요구사항 정합성을 먼저 깊게 본다. 강점은 우선순위일 뿐 다른 관점의 결함이나 개선점도 보이면 함께 말한다.",
+      "tags": ["design", "ux", "intent"]
+    },
+    {
+      "id": "logic-verification",
+      "name": "논리·검증·경계 조건",
+      "directive": "불변식, 상태 전이·동시성, 오류 처리, 경계 조건과 테스트 검증을 먼저 깊게 본다. 강점은 우선순위일 뿐 설계·UX나 문구 문제도 보이면 함께 말한다.",
+      "tags": ["logic", "verification", "edge-case"]
+    },
+    {
+      "id": "copy-visual",
+      "name": "문구·소통·시각 검토",
+      "directive": "안내문·프롬프트·UI 문구가 오해 없이 효과적인지, 이미지·화면 캡처의 시각적 배치와 가독성이 자연스러운지를 먼저 깊게 본다. 강점은 우선순위일 뿐 논리·구현 문제도 보이면 함께 말한다.",
+      "tags": ["copy", "communication", "visual"]
+    },
+    {
+      "id": "implementation",
+      "name": "구현 집중",
+      "directive": "합의된 계약과 범위 안에서 단순하고 견고한 코드 구현과 검증 통과를 먼저 깊게 챙긴다. 강점은 우선순위일 뿐 계약의 빈틈이나 UX·논리 문제도 보이면 함께 말한다.",
+      "tags": ["implementation", "code", "delivery"]
+    }
+  ],
+  "model_suggestions": [
+    {
+      "match": "claude-*",
+      "preset": "big-picture"
+    },
+    {
+      "match": "gpt-*",
+      "preset": "logic-verification"
+    },
+    {
+      "match": "gemini-*",
+      "preset": "copy-visual"
+    }
+  ]
+}

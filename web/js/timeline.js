@@ -10,6 +10,7 @@ import { renderMessageAttachments, renderMessageRequests } from "./attachments.j
 import { updateHint } from "./composer.js";
 import { findWorkPart, focusWorkPartCard, isPartErrorAbandoned, isPartErrorResolved, reviewStepLabel } from "./work.js";
 import { buildSessionActions, updateSessionActions } from "./participants.js";
+import { timingTitle } from "./stats.js";
 import { activeTraceActivity, ensureAndRenderTrace, liveHtml, toggleTrace } from "./trace.js";
 
 // ---------- timeline (Fix P2 #2: Strict 200 DOM cap in all scroll positions) ----------
@@ -487,7 +488,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
     if (m.model) meta.push('<span class="muted">' + esc(modelLabel(authorProvider(m.author), m.model)) + "</span>");
     if (m.effort) meta.push('<span class="muted">' + esc(m.effort) + "</span>");
     if (m.kind === "agent" && m.status !== "streaming" && m.duration_ms > 0) {
-      meta.push('<span class="resp-time" title="이 답변에 걸린 시간">⏱ ' + esc(fmtElapsed(m.duration_ms)) + "</span>");
+      meta.push('<span class="resp-time" title="' + esc(timingTitle(m)) + '">⏱ ' + esc(fmtElapsed(m.duration_ms)) + "</span>");
     }
     if (m.reason === "discussion") meta.push('<span class="badge">🗣 토론 ' + m.round + "R</span>");
     else if (m.reason === "mention") meta.push('<span class="badge">@호출</span>');
@@ -539,24 +540,12 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
     const agentPrepared = m.kind === "agent" ? prepareAgentMessageText(m.text, m) : { text: "", rejectedMarkers: [] };
     const agentDisplayText = agentPrepared.text;
     const hasVisibleAgentText = m.kind === "agent" && agentDisplayText.trim() !== "";
-    const bodyHtml =
-      m.kind === "user"
-        ? m.text
-          ? "<p>" + esc(rewriteProseMentions(m.text, visibleMentions)).replace(/\n/g, "<br>") + "</p>"
-          : ""
-        : live
-        ? liveHtml(live)
-        : m.kind === "agent"
-        ? hasVisibleAgentText
-          ? md(agentDisplayText)
-          : ""
-        : md(m.text);
     const bodyKey =
       live
         ? "live:" + live.ver
         : m.kind === "agent"
-        ? visibleMentions(agentDisplayText)
-        : visibleMentions(m.text);
+        ? "agent:" + JSON.stringify([visibleMentions(agentDisplayText), agentPrepared.rejectedMarkers])
+        : m.kind + ":" + visibleMentions(m.text);
 
     const foot = [];
     if (m.duration_ms) foot.push("⏱ " + fmtDur(m.duration_ms));
@@ -600,7 +589,18 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
     bodyEl.className = "body" + (m.status === "streaming" ? " cursor" : "");
     if (bodyEl.dataset.rawText !== bodyKey || isInitialMount) {
       bodyEl.dataset.rawText = bodyKey;
-      bodyEl.innerHTML = bodyHtml;
+      bodyEl.innerHTML =
+        m.kind === "user"
+          ? m.text
+            ? "<p>" + esc(rewriteProseMentions(m.text, visibleMentions)).replace(/\n/g, "<br>") + "</p>"
+            : ""
+          : live
+          ? liveHtml(live)
+          : m.kind === "agent"
+          ? hasVisibleAgentText
+            ? md(agentDisplayText)
+            : ""
+          : md(m.text);
       if (m.kind === "agent" && !live) {
         applyRejectedMarkerChips(bodyEl, agentPrepared.rejectedMarkers);
       }
