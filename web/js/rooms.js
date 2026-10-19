@@ -1,5 +1,5 @@
 // Room list in the sidebar (with the per-room ⋯ menu) and the open room's header (with inline rename).
-import { $, announce, el } from "./util.js";
+import { $, $$, announce, el } from "./util.js";
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { activeParticipants, state } from "./state.js";
@@ -159,7 +159,9 @@ function buildRenameRow(r) {
   input.setAttribute("aria-label", "새 방 이름 (Enter 저장, Esc 취소)");
   input.oninput = () => { renameDraft = input.value; };
   input.onkeydown = (e) => {
-    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); renamingId = ""; endRename(); }
+    if (e.isComposing) return; // Enter/Esc that only settle an IME composition are not commands
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); renamingId = ""; endRename(); }
   };
   form.appendChild(input);
   let busy = false;
@@ -195,6 +197,9 @@ export function renderRoomList() {
   const caret = prevInput && document.activeElement === prevInput
     ? { start: prevInput.selectionStart, end: prevInput.selectionEnd, dir: prevInput.selectionDirection }
     : null;
+  // Same for an open ⋯ menu driven by the keyboard: remember which item had focus.
+  const menuItems = menuOpenFor ? $$(".room-menu-pop .room-menu-item", ul) : [];
+  const menuIdx = menuItems.indexOf(document.activeElement);
   rebuildingList = true;
   try {
     ul.innerHTML = "";
@@ -208,6 +213,11 @@ export function renderRoomList() {
       input.focus();
       input.setSelectionRange(caret.start, caret.end, caret.dir || "none");
     }
+  }
+  if (menuIdx >= 0 && menuOpenFor) {
+    const items = $$(".room-menu-pop .room-menu-item", ul);
+    const next = items[menuIdx] || $('.room-menu-btn[data-room="' + CSS.escape(menuOpenFor) + '"]', ul);
+    if (next) next.focus();
   }
 }
 
@@ -338,6 +348,7 @@ export function bindRoomTitleEdit() {
   title.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); start(); } };
   title.ondblclick = start;
   input.onkeydown = (e) => {
+    if (e.isComposing) return; // Enter/Esc that only settle an IME composition are not commands
     if (e.key === "Enter") { e.preventDefault(); save(); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); stop(); btn.focus(); }
   };
