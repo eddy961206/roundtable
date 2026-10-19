@@ -147,19 +147,38 @@ func TestAttachmentNoticeIncludesVisualReviewGuidance(t *testing.T) {
 	}
 	rs := h.rooms[r.ID]
 	p := r.Participants[0]
+	hist := []*Message{{ID: "m2", Kind: "user", Author: "user", Text: "with image", Attachments: []Attachment{a}}}
 
 	var noImgOpts agent.RunOptions
-	h.addTurnImages(rs, p, []*Message{{ID: "m1", Kind: "user", Author: "user", Text: "no image"}}, &noImgOpts)
+	h.addTurnImages(rs, p, []*Message{{ID: "m1", Kind: "user", Author: "user", Text: "no image"}}, &noImgOpts, "mention")
 	if strings.Contains(noImgOpts.Prompt, "시각 검토") {
 		t.Fatalf("unexpected image guidance when no attachments exist: %s", noImgOpts.Prompt)
 	}
 
-	var withImgOpts agent.RunOptions
-	h.addTurnImages(rs, p, []*Message{{ID: "m2", Kind: "user", Author: "user", Text: "with image", Attachments: []Attachment{a}}}, &withImgOpts)
+	writeMention := agent.RunOptions{Mode: agent.ModeWrite}
+	h.addTurnImages(rs, p, hist, &writeMention, "mention")
 	for _, want := range []string{"[첨부 " + a.ID, "[[ATTACH:캡처.png]]", "[[REQUEST:@좌석ID]]", "시각 검토"} {
-		if !strings.Contains(withImgOpts.Prompt, want) {
-			t.Errorf("attachment prompt missing %q:\n%s", want, withImgOpts.Prompt)
+		if !strings.Contains(writeMention.Prompt, want) {
+			t.Errorf("write mention prompt missing %q:\n%s", want, writeMention.Prompt)
 		}
+	}
+
+	readDiscussion := agent.RunOptions{Mode: agent.ModeRead}
+	h.addTurnImages(rs, p, hist, &readDiscussion, "discussion")
+	if !strings.Contains(readDiscussion.Prompt, "[[ATTACH:캡처.png]]") || strings.Contains(readDiscussion.Prompt, "[[REQUEST") {
+		t.Errorf("read discussion prompt must allow ATTACH and forbid REQUEST:\n%s", readDiscussion.Prompt)
+	}
+
+	chatMention := agent.RunOptions{Mode: agent.ModeChat}
+	h.addTurnImages(rs, p, hist, &chatMention, "mention")
+	if !strings.Contains(chatMention.Prompt, "[[REQUEST:@좌석ID]]") || strings.Contains(chatMention.Prompt, "[[ATTACH") {
+		t.Errorf("chat mention prompt must allow REQUEST and forbid ATTACH:\n%s", chatMention.Prompt)
+	}
+
+	chatDiscussion := agent.RunOptions{Mode: agent.ModeChat}
+	h.addTurnImages(rs, p, hist, &chatDiscussion, "discussion")
+	if strings.Contains(chatDiscussion.Prompt, "[[ATTACH") || strings.Contains(chatDiscussion.Prompt, "[[REQUEST") {
+		t.Errorf("chat discussion prompt must not suggest ATTACH or REQUEST:\n%s", chatDiscussion.Prompt)
 	}
 }
 

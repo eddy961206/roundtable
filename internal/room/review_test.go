@@ -182,6 +182,7 @@ func TestReviewFindingErrorsAreAtomic(t *testing.T) {
 		"no opening pipe":   findingHeader + strings.TrimPrefix(findingOne, "|"),
 		"fenced table":      "```\n" + findingHeader + "```",
 		"tilde fence table": "~~~\n" + findingHeader + "~~~",
+		"row after prose":   findingHeader + "중간 설명 문장\n" + findingOne,
 	}
 	for _, location := range []string{"src/example.go:42", "other:src/example.go:42", "head:../secret:1", "head:/root/file:1", "head:C:/file:1", `head:src\file:1`, "head:src/../file:1", "head:.:1", "head:src/file:0", "head:src/file:-1", "head:src/file:01", "head:src/file:999999999999999999999999"} {
 		cases[location] = findingHeader + strings.Replace(findingOne, "head:src/example.go:42", location, 1)
@@ -423,7 +424,7 @@ func TestReviewTablesWithoutLabelsAndWithProse(t *testing.T) {
 		"prose before and after":     "파일을 확인했어.\n" + findingHeader + "추가 지적은 없어.",
 		"code fence with pipes":      "예시 코드:\n```go\nif a || b {\n\t// | 이름 | 값 |\n\t// | --- | --- |\n}\n```\n" + findingHeader + "\n```markdown\n| 번호 | 심각도 | 파일:줄 | 재현 시나리오 | 확신도 |\n| --- | --- | --- | --- | --- |\n| 1 | critical | head:src/fake.go:1 | 코드펜스 안 가짜 표 | high |\n```",
 		"tilde fence with fake rows": "~~~text\n| 1 | high | head:src/fake.go:1 | 무시 | high |\n~~~\n" + findingHeader,
-		"prose with pipes":           "조건 a | b 분기와 `|` 구분자를 확인했어.\n| 시작만 파이프인 설명\n끝만 파이프인 설명 |\n| 첫 번째 인용 줄 |\n| 두 번째 인용 줄 |\n\n" + findingHeader + "| 참고: 표 바로 다음 단일 파이프 문장\n검토 완료: x | y 케이스도 정상.",
+		"prose with pipes":           "조건 a | b 분기와 `|` 구분자, a | b | c 조건을 확인했어.\n| 시작만 파이프인 설명\n끝만 파이프인 설명 |\n\n" + findingHeader + "| 참고: 표 바로 다음 단일 파이프 문장\n검토 완료: x | y 케이스도 정상.",
 	} {
 		t.Run(name, func(t *testing.T) {
 			applyReview(t, startedReview(t, 3), reply, "", "passed")

@@ -312,35 +312,12 @@ func isPipeBounded(line string) bool {
 	return len(line) >= 2 && strings.HasPrefix(line, "|") && strings.HasSuffix(line, "|")
 }
 
-func isTableStart(lines []string, pos int, specs []reviewTableSpec) bool {
-	line := lines[pos]
-	if reviewHeaderIndex(line, specs) >= 0 {
-		return true
-	}
-	if !isPipeBounded(line) {
-		return false
-	}
-	return pos+1 < len(lines) && looksLikeSeparator(lines[pos+1])
-}
-
-func looksLikeSeparator(line string) bool {
-	if !isPipeBounded(line) || !strings.Contains(line, "---") {
-		return false
-	}
-	for _, r := range line {
-		if r != '|' && r != '-' && r != ':' && r != ' ' && r != '\t' {
-			return false
-		}
-	}
-	return true
-}
-
 func parseReviewTables(reply string, specs []reviewTableSpec) ([][][]string, error) {
 	lines := extractReviewLines(reply)
 	// Return tables in the requested order, independent of their reply order.
 	tables := make([][][]string, len(specs))
 	for pos := 0; pos < len(lines); {
-		if !isTableStart(lines, pos, specs) {
+		if !isReviewTableLine(lines[pos]) {
 			pos++ // Prose outside a table does not participate in the protocol.
 			continue
 		}
@@ -368,7 +345,7 @@ func parseReviewTables(reply string, specs []reviewTableSpec) ([][][]string, err
 		pos += 2
 		rows := [][]string{}
 		for pos < len(lines) && isReviewTableLine(lines[pos]) {
-			if isTableStart(lines, pos, specs) {
+			if reviewHeaderIndex(lines[pos], specs) >= 0 {
 				break
 			}
 			row, err := parseReviewRow(lines[pos], len(spec.headers))
