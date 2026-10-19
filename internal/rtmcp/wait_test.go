@@ -19,6 +19,7 @@ type waitAPI struct {
 	mu                                   sync.Mutex
 	events                               chan []byte
 	posted                               chan struct{}
+	polled                               chan struct{}
 	streamClosed                         chan struct{}
 	messages                             []apiMessage
 	queue                                []apiTurn
@@ -31,7 +32,7 @@ type waitAPI struct {
 }
 
 func newWaitAPI(t *testing.T) (*waitAPI, *Server) {
-	f := &waitAPI{events: make(chan []byte, 256), posted: make(chan struct{}), streamClosed: make(chan struct{}), finishAt: 2}
+	f := &waitAPI{events: make(chan []byte, 256), posted: make(chan struct{}), polled: make(chan struct{}), streamClosed: make(chan struct{}), finishAt: 2}
 	return f, newHTTP(t, f.serve, false)
 }
 
@@ -135,6 +136,9 @@ func (f *waitAPI) serve(w http.ResponseWriter, r *http.Request) {
 	limit := r.URL.Query().Get("limit")
 	if f.posts > 0 && limit == "1" {
 		f.polls++
+		if f.polls == 1 {
+			close(f.polled)
+		}
 		if f.slowFirst || (f.slow && f.polls > 1) {
 			f.mu.Unlock()
 			<-r.Context().Done()

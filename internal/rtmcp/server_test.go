@@ -1,7 +1,6 @@
 package rtmcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -351,20 +351,55 @@ func TestStdioProtocol(t *testing.T) {
 		`{"jsonrpc":"1.0","id":8,"method":"ping"}`,
 		`{bad`, `null`, `[]`,
 	}, "\n")
-	var out bytes.Buffer
-	if err := s.Serve(strings.NewReader(input), &out); err != nil {
+	// An MCP client keeps stdin open until responses arrive. EOF is shutdown,
+	// so feeding a finite reader would intentionally cancel outstanding tools.
+	in, send := io.Pipe()
+	out, receive := io.Pipe()
+	defer send.Close()
+	defer out.Close()
+	defer receive.Close()
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(in, receive); _ = receive.Close() }()
+	written := make(chan error, 1)
+	go func() { _, err := fmt.Fprintln(send, input); written <- err }()
+	decoded := make(chan map[string]any, 16)
+	decodeErr := make(chan error, 1)
+	go func() {
+		decoder := json.NewDecoder(out)
+		for {
+			var response map[string]any
+			if err := decoder.Decode(&response); err != nil {
+				decodeErr <- err
+				return
+			}
+			decoded <- response
+		}
+	}()
+	var responses []map[string]any
+	for len(responses) < 12 {
+		select {
+		case response := <-decoded:
+			responses = append(responses, response)
+		case err := <-decodeErr:
+			t.Fatal(err)
+		case <-time.After(2 * time.Second):
+			t.Fatal("stdio response did not arrive")
+		}
+	}
+	if err := <-written; err != nil {
 		t.Fatal(err)
 	}
-	var responses []map[string]any
-	for _, line := range bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n")) {
-		var v map[string]any
-		if err := json.Unmarshal(line, &v); err != nil {
+	_ = send.Close()
+	select {
+	case err := <-done:
+		if err != nil {
 			t.Fatal(err)
 		}
-		responses = append(responses, v)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not stop at EOF")
 	}
 	if len(responses) != 12 || hits != 1 {
-		t.Fatal(len(responses), hits, out.String())
+		t.Fatal(len(responses), hits, responses)
 	}
 	byID := map[string]map[string]any{}
 	codes := map[int]int{}

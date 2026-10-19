@@ -69,7 +69,7 @@ type rpcError struct {
 }
 
 // Serve uses one reader and one writer. Tool calls run independently so a long
-// wait cannot block ping, cancellation or another tool. EOF drains pending calls.
+// wait cannot block ping, cancellation or another tool. EOF cancels pending calls.
 func (s *Server) Serve(in io.Reader, out io.Writer) error {
 	type input struct {
 		req     rpcRequest
@@ -101,9 +101,11 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 				return
 			}
 		}
-		select {
-		case inputs <- input{scanErr: scanner.Err()}:
-		case <-quit:
+		if err := scanner.Err(); err != nil {
+			select {
+			case inputs <- input{scanErr: err}:
+			case <-quit:
+			}
 		}
 	}()
 	type runningCall struct{ cancel context.CancelFunc }
@@ -120,10 +122,8 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 		for _, call := range active {
 			call.cancel()
 		}
-		if inputs != nil {
-			if closer, ok := in.(io.Closer); ok {
-				_ = closer.Close()
-			}
+		if closer, ok := in.(io.Closer); ok {
+			_ = closer.Close()
 		}
 		workers.Wait()
 	}()
@@ -137,12 +137,11 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 		}
 		return enc.Encode(resp)
 	}
-	for inputs != nil || len(active) > 0 {
+	for {
 		select {
 		case item, ok := <-inputs:
 			if !ok {
-				inputs = nil
-				continue
+				return nil
 			}
 			if item.scanErr != nil {
 				return item.scanErr
@@ -154,9 +153,6 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 				}
 				continue
 			}
-			if req.Method == "" {
-				continue
-			} // scanner's EOF marker
 			if len(req.ID) == 0 {
 				if req.Method == "notifications/cancelled" {
 					var p struct {
@@ -210,7 +206,6 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 			}
 		}
 	}
-	return nil
 }
 
 func rpcIDKey(id json.RawMessage) string {

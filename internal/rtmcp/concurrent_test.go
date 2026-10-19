@@ -1,12 +1,61 @@
 package rtmcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"testing"
 	"time"
 )
+
+func TestEOFCancelsActiveWaitAndHTTPObservation(t *testing.T) {
+	for _, slowRead := range []bool{false, true} {
+		t.Run(fmt.Sprintf("blocked-read=%t", slowRead), func(t *testing.T) {
+			f, s := newWaitAPI(t)
+			defer close(f.events) // release a regressed server even if the EOF assertion fails
+			f.finishAt, f.slowFirst = 100000, slowRead
+			in, send := io.Pipe()
+			defer send.Close()
+			var out bytes.Buffer
+			done := make(chan error, 1)
+			go func() { done <- s.Serve(in, &out) }()
+			if _, err := fmt.Fprintln(send, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rt_post","arguments":{"room":"r1","text":"x","wait_seconds":600}}}`); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-f.polled:
+			case <-time.After(2 * time.Second):
+				t.Fatal("post-submission observation did not start")
+			}
+			// EOF alone must end the wait; no cancellation notification is sent.
+			if err := send.Close(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("EOF did not cancel the 600-second wait")
+			}
+			select {
+			case <-f.streamClosed:
+			case <-time.After(2 * time.Second):
+				t.Fatal("EOF left the SSE connection open")
+			}
+			if out.Len() != 0 {
+				t.Fatalf("cancelled call wrote a response after EOF: %s", out.String())
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.posts != 1 || len(f.queue) != 1 {
+				t.Fatal("EOF must not cancel the underlying room turn")
+			}
+		})
+	}
+}
 
 func TestCancellationLeavesOtherRequestsResponsive(t *testing.T) {
 	f, s := newWaitAPI(t)
