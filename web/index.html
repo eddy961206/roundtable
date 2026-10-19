@@ -164,8 +164,11 @@
             <option value="">전체 (@멘션 규칙)</option>
           </select>
         </div>
+        <div id="composer-attachments" class="composer-attachments" role="list" aria-label="첨부할 이미지 목록" hidden></div>
         <div class="composer-row">
-          <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" aria-describedby="composer-error composer-hint" placeholder="메시지 입력… @로 이름 선택"></textarea>
+          <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+          <button type="button" id="btn-attach" class="icon-btn attach-btn" aria-label="이미지 파일 선택 (PNG, JPEG, WEBP)" title="이미지 첨부 (PNG·JPEG·WEBP, 파일당 최대 10MB, 최대 4장)">📎</button>
+          <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" aria-describedby="composer-error composer-hint" placeholder="메시지 입력… @로 이름 선택 (이미지 붙여넣기·끌어놓기 가능)"></textarea>
           <button type="submit" id="btn-send" class="primary">보내기</button>
         </div>
         <div id="composer-error" class="composer-error" role="alert" hidden></div>
@@ -174,13 +177,18 @@
     </section>
   </main>
 
-  <aside id="right" aria-label="참가자 및 대기열">
+  <aside id="right" aria-label="참가자, 요청 및 대기열">
     <div class="right-head">
       <h2>참가자</h2>
       <button type="button" id="btn-add-participant" disabled>+ 추가</button>
       <button type="button" id="btn-close-right" class="icon-btn tablet-only" aria-label="참가자 패널 닫기" title="닫기">✕</button>
     </div>
     <div id="participants"></div>
+    <div class="requests-head">
+      <h2>요청</h2>
+      <span id="requests-count" class="badge">0</span>
+    </div>
+    <ul id="requests" aria-label="참가자 간 요청 목록"></ul>
     <div class="queue-head">
       <h2>대기열</h2>
       <span id="queue-count" class="badge">0</span>
@@ -271,6 +279,22 @@
       <button type="submit" id="dlg-work-ok" class="primary">계획 확정</button>
     </menu>
   </form>
+</dialog>
+
+<dialog id="dlg-lightbox" class="dlg-lightbox" aria-labelledby="lightbox-name">
+  <div class="lightbox-head">
+    <div class="lightbox-info">
+      <strong id="lightbox-name" class="lightbox-name"></strong>
+      <span id="lightbox-meta" class="muted mono"></span>
+    </div>
+    <div class="lightbox-actions">
+      <a id="lightbox-download" class="button" download>다운로드</a>
+      <button type="button" id="lightbox-close" class="icon-btn" aria-label="라이트박스 닫기 (Esc)" title="닫기 (Esc)">✕</button>
+    </div>
+  </div>
+  <div class="lightbox-stage">
+    <img id="lightbox-img" alt="">
+  </div>
 </dialog>
 
 <aside id="diff-drawer" class="diff-drawer" aria-label="파트 Diff 서랍" hidden></aside>

@@ -6,6 +6,9 @@
   const STREAM_THROTTLE_MS = 125; // max 8 renders/sec per message/trace
   const TRACE_EVENT_LIMIT = 200;
   const TRACE_CACHE_LIMIT = 8;
+  const MAX_ATTACHMENTS = 4;
+  const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+  const ALLOWED_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -21,6 +24,100 @@
     n = Number(n) || 0;
     return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(Math.round(n));
   };
+  const fmtBytes = (bytes) => {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n < 0) return "0 B";
+    if (n < 1024) return Math.round(n) + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(2) + " MB";
+  };
+  function detectImageMimeFromBytes(bytes) {
+    if (!bytes || bytes.length < 3) return "";
+    if (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47 &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    ) {
+      return "image/png";
+    }
+    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+      return "image/jpeg";
+    }
+    if (
+      bytes.length >= 12 &&
+      bytes[0] === 0x52 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x46 &&
+      bytes[8] === 0x57 &&
+      bytes[9] === 0x45 &&
+      bytes[10] === 0x42 &&
+      bytes[11] === 0x50
+    ) {
+      return "image/webp";
+    }
+    return "";
+  }
+  function validateAttachmentCandidate({ mime, magicMime, size, activeCount }) {
+    if (activeCount >= MAX_ATTACHMENTS) {
+      return { ok: false, code: "count", reason: "최대 4장까지 첨부할 수 있습니다 (4장 초과)" };
+    }
+    const checkMime = magicMime !== undefined ? magicMime : mime;
+    if (checkMime && !ALLOWED_IMAGE_MIMES.has(checkMime)) {
+      return { ok: false, code: "format", reason: "PNG·JPEG·WEBP 형식만 첨부할 수 있습니다" };
+    }
+    if (magicMime !== undefined && !ALLOWED_IMAGE_MIMES.has(magicMime)) {
+      return { ok: false, code: "format", reason: "PNG·JPEG·WEBP 형식만 첨부할 수 있습니다" };
+    }
+    if (size <= 0) {
+      return { ok: false, code: "size", reason: "빈 파일은 첨부할 수 없습니다" };
+    }
+    if (size > MAX_ATTACHMENT_BYTES) {
+      return { ok: false, code: "size", reason: "파일 크기 10MB 초과 (" + fmtBytes(size) + ")" };
+    }
+    return { ok: true, code: "", reason: "" };
+  }
+  const REQUEST_STATUS_LABELS = {
+    pending: "대기 (pending)",
+    in_progress: "진행 중 (in_progress)",
+    done: "완료 (done)",
+    rejected: "거절됨 (rejected)",
+    cancelled: "취소됨 (cancelled)",
+  };
+  function requestStatusLabel(status) {
+    return REQUEST_STATUS_LABELS[status] ? REQUEST_STATUS_LABELS[status] : String(status);
+  }
+  function isIncompleteRequest(status) {
+    return status === "pending" || status === "in_progress";
+  }
+  const REQUEST_STATUS_PRIORITY = {
+    in_progress: 0,
+    pending: 1,
+    rejected: 2,
+    done: 3,
+    cancelled: 4,
+  };
+  function sortRequests(requests) {
+    const list = Array.from(requests);
+    return list.sort((a, b) => {
+      const incA = isIncompleteRequest(a.status);
+      const incB = isIncompleteRequest(b.status);
+      if (incA !== incB) return incA ? -1 : 1;
+      const priA = REQUEST_STATUS_PRIORITY[a.status] !== undefined ? REQUEST_STATUS_PRIORITY[a.status] : 9;
+      const priB = REQUEST_STATUS_PRIORITY[b.status] !== undefined ? REQUEST_STATUS_PRIORITY[b.status] : 9;
+      if (priA !== priB) return priA - priB;
+      if (a.at !== b.at) {
+        return incA ? a.at - b.at : b.at - a.at;
+      }
+      return String(a.id).localeCompare(String(b.id));
+    });
+  }
   const fmtTime = (ms) =>
     ms ? new Date(ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
   const fmtDur = (ms) => (ms >= 60000 ? (ms / 60000).toFixed(1) + "분" : (ms / 1000).toFixed(1) + "초");
@@ -272,6 +369,8 @@
     order: [],
     winStart: 0,
     winEnd: 0,
+    requests: new Map(),
+    draftAttachments: [],
     queue: [],
     discussion: null,
     traces: new Map(),
@@ -280,7 +379,7 @@
     traceErrors: new Map(),
     expanded: new Set(),
     userCollapsed: new Set(),
-    autoTrace: localStorage.getItem("rt.autoTrace") === "1",
+    autoTrace: typeof localStorage !== "undefined" && localStorage.getItem("rt.autoTrace") === "1",
     target: "",
     mentionCands: [],
     mentionIdx: 0,
@@ -594,7 +693,7 @@
     panelTimer = setTimeout(() => {
       panelTimer = null;
       if (!state.room || document.hidden) return;
-      renderParticipants(); renderTargetControls(); renderUsagePanel(); renderQueue(); renderDiscussion(); renderWork(); updateHint();
+      renderParticipants(); renderTargetControls(); renderUsagePanel(); renderRequests(); renderQueue(); renderDiscussion(); renderWork(); updateHint();
     }, STREAM_THROTTLE_MS);
   }
   let roomsTimer = null;
@@ -710,6 +809,8 @@
       pendingRestoreScrollTop = null;
       suppressScrollStick = false;
       closeDiffDrawer();
+      closeLightbox();
+      clearDraftAttachments();
       state.draftMentions.clear();
       clearComposerError();
       state.expanded.clear();
@@ -747,6 +848,12 @@
     if (state.workRevision === workRev) {
       state.workRevision++;
       state.work = snap.work;
+    }
+    state.requests.clear();
+    if (Array.isArray(snap.requests)) {
+      for (const req of snap.requests) {
+        if (req && req.id) state.requests.set(req.id, req);
+      }
     }
     state.history = snap.history;
     state.browsingHistory = preserveHistory;
@@ -793,6 +900,7 @@
     pruneMessageCaches();
     renderTimeline(shouldScrollBottom, priorTop);
     renderParticipants();
+    renderRequests();
     renderQueue();
     renderDiscussion();
     renderRoomList();
@@ -816,6 +924,18 @@
       }
       handle(msg.type, msg.data);
     };
+    es.addEventListener("request", (ev) => {
+      if (state.es !== es || state.roomId !== id) return;
+      state.lastEvent = Date.now();
+      let payload;
+      try {
+        payload = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      const req = payload && payload.type === "request" && payload.data ? payload.data : payload;
+      handle("request", req);
+    });
     let connected = false;
     es.onerror = () => {
       if (state.es !== es || state.roomId !== id) return;
@@ -837,6 +957,9 @@
     switch (type) {
       case "message":
         upsertMessage(data);
+        break;
+      case "request":
+        upsertRequest(data);
         break;
       case "delta": {
         const m = state.messages.get(data.id);
@@ -882,7 +1005,10 @@
         schedulePanels();
         for (const id of state.order.slice(state.winStart, state.winEnd)) {
           const m = state.messages.get(id);
-          if (m && m.author === data.id) scheduleRender(id);
+          if (!m) continue;
+          const hasAttBySeat = Array.isArray(m.attachments) && m.attachments.some((a) => a && a.by === data.id);
+          const hasReqSeat = collectMessageRequests(m).some((r) => r.from === data.id || r.to === data.id);
+          if (m.author === data.id || hasAttBySeat || hasReqSeat) scheduleRender(id);
         }
         break;
       }
@@ -914,6 +1040,7 @@
         renderRoomHead();
         renderWork();
         renderParticipants();
+        renderRequests();
         renderQueue();
         renderDiscussion();
         for (const id of state.order.slice(state.winStart, state.winEnd)) scheduleRender(id);
@@ -1213,10 +1340,18 @@
   let isRenderingTimeline = false;
   let suppressScrollStick = false;
   let pendingRestoreScrollTop = null;
+  let lastTimelineScrollTop = 0;
+  let lastTimelineScrollHeight = 0;
 
   function isTimelineAtBottom(tl = $("#timeline")) {
     if (!tl) return true;
     return tl.scrollHeight - tl.scrollTop - tl.clientHeight < 60;
+  }
+
+  function recordTimelineScrollMetrics(tl = $("#timeline")) {
+    if (!tl) return;
+    lastTimelineScrollTop = tl.scrollTop;
+    lastTimelineScrollHeight = tl.scrollHeight;
   }
 
   function restoreTimelineScrollTop(targetTop) {
@@ -1224,12 +1359,14 @@
     if (!tl) return;
     suppressScrollStick = true;
     tl.scrollTop = targetTop;
+    recordTimelineScrollMetrics(tl);
     if (state.traceFetching.size > 0 && !state.stickToBottom) {
       pendingRestoreScrollTop = targetTop;
     } else {
       pendingRestoreScrollTop = null;
       requestAnimationFrame(() => {
         suppressScrollStick = false;
+        recordTimelineScrollMetrics(tl);
       });
     }
   }
@@ -1244,14 +1381,75 @@
     if (tl) {
       suppressScrollStick = true;
       tl.scrollTop = pendingRestoreScrollTop;
+      recordTimelineScrollMetrics(tl);
     }
     if (state.traceFetching.size === 0) {
       pendingRestoreScrollTop = null;
       requestAnimationFrame(() => {
         suppressScrollStick = false;
+        recordTimelineScrollMetrics(tl);
         updateJumpBottomBtn();
       });
     }
+  }
+
+  function onTimelineImageLoad(ev) {
+    const target = ev && ev.target;
+    if (!target || target.tagName !== "IMG") return;
+    const tl = $("#timeline");
+    if (!tl || document.hidden) return;
+    if (!state.browsingHistory && state.stickToBottom) {
+      suppressScrollStick = true;
+      tl.scrollTop = tl.scrollHeight;
+      recordTimelineScrollMetrics(tl);
+      requestAnimationFrame(() => {
+        if (!state.browsingHistory && state.stickToBottom) {
+          tl.scrollTop = tl.scrollHeight;
+          recordTimelineScrollMetrics(tl);
+        }
+        suppressScrollStick = false;
+        updateJumpBottomBtn();
+      });
+    } else if (pendingRestoreScrollTop !== null) {
+      suppressScrollStick = true;
+      tl.scrollTop = pendingRestoreScrollTop;
+      recordTimelineScrollMetrics(tl);
+      requestAnimationFrame(() => {
+        suppressScrollStick = false;
+        recordTimelineScrollMetrics(tl);
+        updateJumpBottomBtn();
+      });
+    } else {
+      recordTimelineScrollMetrics(tl);
+    }
+  }
+
+  async function focusTimelineMessage(msgId) {
+    if (!msgId || !state.roomId) return;
+    closeDrawers();
+    if (!state.messages.has(msgId) && (state.browsingHistory || state.pendingMessages > 0)) {
+      await jumpToLatestMessages();
+    }
+    const idx = state.order.indexOf(msgId);
+    if (idx >= 0 && (idx < state.winStart || idx >= state.winEnd)) {
+      const half = Math.floor(DOM_CAP_STEP / 2);
+      state.winStart = Math.max(0, Math.min(idx - half, state.order.length - DOM_CAP_STEP));
+      state.winEnd = Math.min(state.order.length, state.winStart + DOM_CAP_STEP);
+      renderTimeline(false);
+    }
+    const node = $("#m-" + msgId);
+    if (!node) {
+      announce("해당 메시지를 현재 대화 범위에서 찾지 못했습니다.");
+      return;
+    }
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    node.classList.remove("msg-flash");
+    void node.offsetWidth;
+    node.classList.add("msg-flash");
+    setTimeout(() => {
+      node.classList.remove("msg-flash");
+    }, 1600);
+    announce("메시지로 이동했습니다.");
   }
 
   function updateJumpBottomBtn() {
@@ -1298,6 +1496,7 @@
       return;
     }
     tl.scrollTop = tl.scrollHeight;
+    recordTimelineScrollMetrics(tl);
     updateJumpBottomBtn();
   }
 
@@ -1316,6 +1515,7 @@
         state.winEnd = 0;
         updateTimelineBanners(tl);
         renderRoomEmptyGuide(tl);
+        recordTimelineScrollMetrics(tl);
         return;
       }
 
@@ -1338,6 +1538,7 @@
         pendingRestoreScrollTop = null;
         suppressScrollStick = false;
         tl.scrollTop = tl.scrollHeight;
+        recordTimelineScrollMetrics(tl);
         state.stickToBottom = true;
         state.unreadBelow = 0;
       } else {
@@ -1763,7 +1964,13 @@
       const live = m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim() ? state.live.get(m.id) : null;
       if (m.status !== "streaming") state.live.delete(m.id);
       const bodyHtml =
-        m.kind === "user" ? "<p>" + esc(rewriteProseMentions(m.text, visibleMentions)).replace(/\n/g, "<br>") + "</p>" : live ? liveHtml(live) : md(m.text);
+        m.kind === "user"
+          ? m.text
+            ? "<p>" + esc(rewriteProseMentions(m.text, visibleMentions)).replace(/\n/g, "<br>") + "</p>"
+            : ""
+          : live
+          ? liveHtml(live)
+          : md(m.text);
       const bodyKey = live ? "live:" + live.ver : visibleMentions(m.text);
 
       const foot = [];
@@ -1787,6 +1994,8 @@
           '<div class="bubble">' +
           '<div class="meta"></div>' +
           '<div class="body"></div>' +
+          '<div class="msg-attachments" hidden></div>' +
+          '<div class="msg-requests" hidden></div>' +
           '<div class="err-slot"></div>' +
           '<div class="foot"></div>' +
           '<div class="trace" id="t-' +
@@ -1798,6 +2007,7 @@
 
       bubble.querySelector(".meta").innerHTML = meta.join("");
       const bodyEl = bubble.querySelector(".body");
+      bodyEl.hidden = m.kind === "user" && !m.text;
       bodyEl.className = "body" + (m.status === "streaming" ? " cursor" : "");
       if (bodyEl.dataset.rawText !== bodyKey || isInitialMount) {
         bodyEl.dataset.rawText = bodyKey;
@@ -1818,6 +2028,9 @@
           preEl.appendChild(b);
         });
       }
+
+      renderMessageAttachments(bubble.querySelector(".msg-attachments"), m);
+      renderMessageRequests(bubble.querySelector(".msg-requests"), m);
 
       const errSlot = bubble.querySelector(".err-slot");
       errSlot.innerHTML = "";
@@ -1898,10 +2111,221 @@
       pendingRestoreScrollTop = null;
       suppressScrollStick = false;
       tl.scrollTop = tl.scrollHeight;
+      recordTimelineScrollMetrics(tl);
       state.stickToBottom = true;
       state.unreadBelow = 0;
     }
     if (!batch) updateJumpBottomBtn();
+  }
+
+  function formatLightboxMeta(att, width, height) {
+    const parts = [];
+    if (width > 0 && height > 0) parts.push(width + "×" + height);
+    if (att.bytes > 0) parts.push(fmtBytes(att.bytes));
+    if (att.by) parts.push(att.by === "user" ? "나" : participantLabel(att.by));
+    return parts.join(" · ");
+  }
+
+  function openLightbox(att, url) {
+    const dlg = $("#dlg-lightbox");
+    if (!dlg || !att) return;
+    const nameEl = $("#lightbox-name");
+    const metaEl = $("#lightbox-meta");
+    const dlEl = $("#lightbox-download");
+    const imgEl = $("#lightbox-img");
+    if (nameEl) nameEl.textContent = att.name;
+    if (metaEl) metaEl.textContent = formatLightboxMeta(att, att.width, att.height);
+    if (dlEl) {
+      dlEl.href = url;
+      dlEl.setAttribute("download", att.name);
+    }
+    if (imgEl) {
+      imgEl.onload = () => {
+        if (!(att.width > 0 && att.height > 0) && imgEl.naturalWidth > 0 && imgEl.naturalHeight > 0 && metaEl) {
+          metaEl.textContent = formatLightboxMeta(att, imgEl.naturalWidth, imgEl.naturalHeight);
+        }
+      };
+      imgEl.src = url;
+      imgEl.alt = att.name;
+    }
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function closeLightbox() {
+    const dlg = $("#dlg-lightbox");
+    if (dlg && dlg.open) dlg.close();
+  }
+
+  function renderMessageAttachments(slot, m) {
+    if (!slot) return;
+    const atts = Array.isArray(m.attachments) ? m.attachments : [];
+    if (!atts.length || !state.roomId) {
+      slot.hidden = true;
+      slot.replaceChildren();
+      delete slot.dataset.sig;
+      return;
+    }
+    const sig = JSON.stringify(
+      atts.map((a) => [
+        a.id,
+        a.name,
+        a.mime,
+        a.bytes,
+        a.width,
+        a.height,
+        a.by,
+        a.by && a.by !== "user" ? participantLabel(a.by) : "",
+        a.by && a.by !== "user" ? seatClass(a.by) : "",
+      ])
+    );
+    slot.hidden = false;
+    if (slot.dataset.sig === sig) return;
+    slot.dataset.sig = sig;
+    slot.replaceChildren();
+
+    const grid = el("div", "att-grid");
+    for (const att of atts) {
+      const isAgentAtt = Boolean(att.by && att.by !== "user");
+      const sCls = isAgentAtt ? seatClass(att.by) : "";
+      const btn = el("button", "att-thumb" + (isAgentAtt ? " agent-att" + sCls : " user-att"));
+      btn.type = "button";
+      const url = "/api/rooms/" + encodeURIComponent(state.roomId) + "/attachments/" + encodeURIComponent(att.id);
+
+      const img = document.createElement("img");
+      img.className = "att-img";
+      img.loading = "lazy";
+      img.src = url;
+      img.alt = att.name;
+      if (att.width > 0 && att.height > 0) {
+        img.width = att.width;
+        img.height = att.height;
+      }
+      img.addEventListener("load", onTimelineImageLoad);
+      btn.appendChild(img);
+
+      const cap = el("span", "att-caption");
+      cap.appendChild(el("span", "att-caption-name", att.name));
+      if (att.width > 0 && att.height > 0) {
+        cap.appendChild(el("span", "mono", att.width + "×" + att.height));
+      }
+      btn.appendChild(cap);
+
+      const dimTxt = att.width > 0 && att.height > 0 ? " (" + att.width + "×" + att.height + ")" : "";
+      const byTxt = isAgentAtt ? " · " + participantLabel(att.by) : "";
+      btn.title = att.name + dimTxt + byTxt + " · 클릭하여 원본 보기";
+      btn.setAttribute("aria-label", att.name + dimTxt + " 라이트박스 열기");
+      btn.onclick = () => openLightbox(att, url);
+      grid.appendChild(btn);
+    }
+    slot.appendChild(grid);
+  }
+
+  function collectMessageRequests(m) {
+    if (!m) return [];
+    const ids = [];
+    const seen = new Set();
+    if (Array.isArray(m.requests)) {
+      for (const rid of m.requests) {
+        if (rid && !seen.has(rid)) {
+          seen.add(rid);
+          ids.push(rid);
+        }
+      }
+    }
+    for (const req of state.requests.values()) {
+      if (req && req.source_msg === m.id && !seen.has(req.id)) {
+        seen.add(req.id);
+        ids.push(req.id);
+      }
+    }
+    const list = [];
+    for (const rid of ids) {
+      const req = state.requests.get(rid);
+      if (req) list.push(req);
+    }
+    return list;
+  }
+
+  function buildSeatRouteChip(seatId) {
+    return el(
+      "span",
+      "seat-chip" + seatClass(seatId) + " " + authorProvider(seatId),
+      participantLabel(seatId)
+    );
+  }
+
+  function buildMessageRequestCard(req) {
+    const card = el("div", "req-card" + seatClass(req.to) + " status-" + req.status);
+    card.dataset.reqId = req.id;
+
+    const head = el("div", "req-card-head");
+    const route = el("div", "req-route");
+    route.appendChild(buildSeatRouteChip(req.from));
+    route.appendChild(el("span", "req-arrow muted", "→"));
+    route.appendChild(buildSeatRouteChip(req.to));
+    const stBadge = el("span", "badge req-status-badge status-" + req.status, requestStatusLabel(req.status));
+    route.appendChild(stBadge);
+    head.appendChild(route);
+
+    const actions = el("div", "req-card-actions");
+    if (req.result_msg) {
+      const jumpBtn = el("button", "ghost req-jump-btn", "결과 메시지로 이동");
+      jumpBtn.type = "button";
+      jumpBtn.onclick = () => focusTimelineMessage(req.result_msg);
+      actions.appendChild(jumpBtn);
+    }
+    if (isIncompleteRequest(req.status)) {
+      const cancelBtn = el("button", "danger ghost req-cancel-btn", "취소");
+      cancelBtn.type = "button";
+      cancelBtn.onclick = () => cancelRequest(req.id, cancelBtn);
+      actions.appendChild(cancelBtn);
+    }
+    if (actions.childNodes.length > 0) {
+      head.appendChild(actions);
+    }
+    card.appendChild(head);
+
+    if (req.text) {
+      card.appendChild(el("div", "req-card-text", rewriteProseMentions(req.text, visibleMentions)));
+    }
+    if (req.status === "rejected" && req.reason) {
+      const reasonEl = el("div", "req-card-reason", "거절 사유: " + req.reason);
+      card.appendChild(reasonEl);
+    }
+    return card;
+  }
+
+  function renderMessageRequests(slot, m) {
+    if (!slot) return;
+    const reqs = collectMessageRequests(m);
+    if (!reqs.length) {
+      slot.hidden = true;
+      slot.replaceChildren();
+      delete slot.dataset.sig;
+      return;
+    }
+    const sig = JSON.stringify(
+      reqs.map((r) => [
+        r.id,
+        r.from,
+        r.to,
+        r.text,
+        r.status,
+        r.result_msg,
+        r.reason,
+        participantLabel(r.from),
+        participantLabel(r.to),
+        seatClass(r.from),
+        seatClass(r.to),
+      ])
+    );
+    slot.hidden = false;
+    if (slot.dataset.sig === sig) return;
+    slot.dataset.sig = sig;
+    slot.replaceChildren();
+    for (const req of reqs) {
+      slot.appendChild(buildMessageRequestCard(req));
+    }
   }
 
   function updateTraceCount(id) {
@@ -2788,6 +3212,137 @@
     }
   }
 
+  function upsertRequest(req) {
+    if (!req || !req.id) return;
+    state.requests.set(req.id, req);
+    if (req.source_msg) {
+      const srcMsg = state.messages.get(req.source_msg);
+      if (srcMsg) {
+        if (!Array.isArray(srcMsg.requests)) {
+          srcMsg.requests = [req.id];
+        } else if (!srcMsg.requests.includes(req.id)) {
+          srcMsg.requests.push(req.id);
+        }
+        if (!document.hidden) renderMessage(req.source_msg, false);
+      }
+    }
+    for (const id of state.order.slice(state.winStart, state.winEnd)) {
+      if (id === req.source_msg) continue;
+      const m = state.messages.get(id);
+      if (m && Array.isArray(m.requests) && m.requests.includes(req.id)) {
+        if (!document.hidden) renderMessage(id, false);
+      }
+    }
+    if (!document.hidden) renderRequests();
+  }
+
+  async function cancelRequest(reqId, btn) {
+    if (!state.roomId || !reqId) return;
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    if (btn) btn.disabled = true;
+    try {
+      const updated = await api("POST", "/api/rooms/" + roomId + "/requests/" + encodeURIComponent(reqId) + "/cancel");
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (updated && updated.id) {
+        upsertRequest(updated);
+      } else {
+        const cur = state.requests.get(reqId);
+        if (cur) upsertRequest({ ...cur, status: "cancelled" });
+      }
+      announce("요청이 취소되었습니다.");
+    } catch (e) {
+      if (state.roomId === roomId && openSeq === sequence) alert(e.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function renderRequests() {
+    const ul = $("#requests");
+    const cnt = $("#requests-count");
+    const sorted = sortRequests(state.requests.values());
+    const activeCount = sorted.filter((r) => isIncompleteRequest(r.status)).length;
+    if (cnt) {
+      cnt.textContent = String(sorted.length);
+      cnt.className = "badge" + (activeCount > 0 ? " warn" : "");
+      cnt.title = activeCount > 0 ? "미완료 " + activeCount + "건 / 전체 " + sorted.length + "건" : "전체 " + sorted.length + "건";
+    }
+    if (!ul) return;
+    const sig = JSON.stringify(
+      sorted.map((r) => [
+        r.id,
+        r.from,
+        r.to,
+        r.text,
+        r.source_msg,
+        r.status,
+        r.result_msg,
+        r.reason,
+        r.at,
+        participantLabel(r.from),
+        participantLabel(r.to),
+        seatClass(r.from),
+        seatClass(r.to),
+      ])
+    );
+    if (ul.dataset.sig === sig) return;
+    ul.dataset.sig = sig;
+    ul.replaceChildren();
+    if (!sorted.length) {
+      ul.appendChild(el("li", "muted", "진행 중인 요청 없음"));
+      return;
+    }
+    for (const req of sorted) {
+      const li = el("li", "req-item status-" + req.status);
+      li.dataset.reqId = req.id;
+
+      const top = el("div", "req-item-top");
+      const route = el("div", "req-route");
+      route.appendChild(buildSeatRouteChip(req.from));
+      route.appendChild(el("span", "req-arrow muted", "→"));
+      route.appendChild(buildSeatRouteChip(req.to));
+      top.appendChild(route);
+      top.appendChild(el("span", "badge req-status-badge status-" + req.status, requestStatusLabel(req.status)));
+      li.appendChild(top);
+
+      if (req.text) {
+        li.appendChild(el("div", "req-item-body", rewriteProseMentions(req.text, visibleMentions)));
+      }
+      if (req.status === "rejected" && req.reason) {
+        li.appendChild(el("div", "req-item-reason", "거절 사유: " + req.reason));
+      }
+
+      const actions = el("div", "req-item-actions");
+      if (req.source_msg) {
+        const srcBtn = el("button", "ghost", "요청 이동");
+        srcBtn.type = "button";
+        srcBtn.onclick = () => focusTimelineMessage(req.source_msg);
+        actions.appendChild(srcBtn);
+      }
+      if (req.result_msg) {
+        const resBtn = el("button", "ghost", "결과 이동");
+        resBtn.type = "button";
+        resBtn.onclick = () => focusTimelineMessage(req.result_msg);
+        actions.appendChild(resBtn);
+      }
+      if (isIncompleteRequest(req.status)) {
+        const cancelBtn = el("button", "danger", "취소");
+        cancelBtn.type = "button";
+        cancelBtn.setAttribute(
+          "aria-label",
+          participantLabel(req.from) + " → " + participantLabel(req.to) + " 요청 취소"
+        );
+        cancelBtn.onclick = () => cancelRequest(req.id, cancelBtn);
+        actions.appendChild(cancelBtn);
+      }
+      if (actions.childNodes.length > 0) {
+        li.appendChild(actions);
+      }
+      ul.appendChild(li);
+    }
+  }
+
   function renderQueue() {
     const ul = $("#queue");
     const cnt = $("#queue-count");
@@ -2803,6 +3358,7 @@
       const reasonTxt =
         {
           mention: "@호출",
+          request: "요청",
           broadcast: "전체",
           discussion: "토론 " + t.round + "R",
           part: "파트" + (t.part ? " " + t.part : ""),
@@ -4031,13 +4587,27 @@
       timelineEl.addEventListener("touchmove", cancelPendingScrollRestore, { passive: true });
       timelineEl.addEventListener("pointerdown", cancelPendingScrollRestore, { passive: true });
       timelineEl.addEventListener("keydown", cancelPendingScrollRestore);
+      timelineEl.addEventListener("load", onTimelineImageLoad, true);
       timelineEl.addEventListener(
         "scroll",
         () => {
           if (isRenderingTimeline || suppressScrollStick || pendingRestoreScrollTop !== null || document.hidden) return;
+          if (!state.browsingHistory && state.stickToBottom) {
+            const heightGrew = timelineEl.scrollHeight > lastTimelineScrollHeight;
+            const scrolledUp = timelineEl.scrollTop < lastTimelineScrollTop - 4;
+            if (heightGrew && !scrolledUp) {
+              suppressScrollStick = true;
+              timelineEl.scrollTop = timelineEl.scrollHeight;
+              recordTimelineScrollMetrics(timelineEl);
+              suppressScrollStick = false;
+              updateJumpBottomBtn();
+              return;
+            }
+          }
           const atBottom = !state.browsingHistory && isTimelineAtBottom(timelineEl);
           state.stickToBottom = atBottom;
           if (atBottom) state.unreadBelow = 0;
+          recordTimelineScrollMetrics(timelineEl);
           updateJumpBottomBtn();
         },
         { passive: true }
@@ -4127,12 +4697,80 @@
       }
     };
 
-    $("#composer").onsubmit = (e) => {
-      e.preventDefault();
-      send();
-    };
+    const lightboxCloseBtn = $("#lightbox-close");
+    if (lightboxCloseBtn) {
+      lightboxCloseBtn.onclick = () => closeLightbox();
+    }
+    const dlgLightbox = $("#dlg-lightbox");
+    if (dlgLightbox) {
+      dlgLightbox.addEventListener("click", (e) => {
+        if (e.target === dlgLightbox) closeLightbox();
+      });
+      dlgLightbox.addEventListener("close", () => {
+        const img = $("#lightbox-img");
+        if (img) img.removeAttribute("src");
+      });
+    }
+
+    const btnAttach = $("#btn-attach");
+    const fileInput = $("#file-input");
+    if (btnAttach && fileInput) {
+      btnAttach.onclick = () => {
+        if (!state.roomId) return;
+        fileInput.click();
+      };
+      fileInput.addEventListener("change", () => {
+        if (fileInput.files && fileInput.files.length > 0) {
+          addAttachmentFiles(fileInput.files);
+        }
+        fileInput.value = "";
+      });
+    }
+
+    const composerEl = $("#composer");
+    if (composerEl) {
+      composerEl.onsubmit = (e) => {
+        e.preventDefault();
+        send();
+      };
+      let dragDepth = 0;
+      const hasFiles = (dt) => dt && dt.types && Array.from(dt.types).includes("Files");
+      composerEl.addEventListener("dragenter", (e) => {
+        if (!hasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        dragDepth++;
+        composerEl.classList.add("drag-over");
+      });
+      composerEl.addEventListener("dragover", (e) => {
+        if (!hasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        composerEl.classList.add("drag-over");
+      });
+      composerEl.addEventListener("dragleave", (e) => {
+        if (!hasFiles(e.dataTransfer)) return;
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0) composerEl.classList.remove("drag-over");
+      });
+      composerEl.addEventListener("drop", (e) => {
+        if (!hasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        dragDepth = 0;
+        composerEl.classList.remove("drag-over");
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          addAttachmentFiles(e.dataTransfer.files);
+        }
+      });
+    }
 
     const input = $("#input");
+    input.addEventListener("paste", (e) => {
+      const files = extractClipboardImageFiles(e.clipboardData);
+      if (files.length > 0) {
+        e.preventDefault();
+        addAttachmentFiles(files);
+      }
+    });
     input.addEventListener("keydown", (e) => {
       const pop = $("#mention-pop");
       if (pop && !pop.hidden && state.mentionCands.length > 0) {
@@ -4247,8 +4885,12 @@
       state.roomId = null;
       state.room = null;
       state.work = null;
+      state.requests.clear();
+      closeLightbox();
+      clearDraftAttachments();
       closeDiffDrawer();
       renderUsagePanel();
+      renderRequests();
       $("#btn-add-participant").disabled = true;
       $("#participants").replaceChildren();
       localStorage.removeItem("rt.room");
@@ -4440,36 +5082,328 @@
     updateHint();
   }
 
-  function clearComposerError() {
+  let draftAttachmentSeq = 0;
+
+  function showComposerError(msg) {
     const error = $("#composer-error");
-    error.hidden = true;
-    error.textContent = "";
-    $("#input").removeAttribute("aria-invalid");
+    if (!error) return;
+    error.hidden = false;
+    error.textContent = msg;
+    const input = $("#input");
+    if (input) input.setAttribute("aria-invalid", "true");
   }
 
+  function clearComposerError() {
+    const error = $("#composer-error");
+    if (!error) return;
+    error.hidden = true;
+    error.textContent = "";
+    const input = $("#input");
+    if (input) input.removeAttribute("aria-invalid");
+  }
+
+  function hasAttachmentError() {
+    return state.draftAttachments.some((item) => item.status === "error");
+  }
+
+  function activeDraftAttachmentCount() {
+    return state.draftAttachments.filter((item) => item.status === "uploading" || item.status === "ready").length;
+  }
+
+  function clearDraftAttachments() {
+    for (const item of state.draftAttachments) {
+      item.cancelled = true;
+      if (item.previewUrl) {
+        URL.revokeObjectURL(item.previewUrl);
+        item.previewUrl = "";
+      }
+    }
+    state.draftAttachments = [];
+    renderDraftAttachments();
+  }
+
+  function removeDraftAttachment(localId) {
+    const idx = state.draftAttachments.findIndex((item) => item.localId === localId);
+    if (idx < 0) return;
+    const [removed] = state.draftAttachments.splice(idx, 1);
+    removed.cancelled = true;
+    if (removed.previewUrl) {
+      URL.revokeObjectURL(removed.previewUrl);
+      removed.previewUrl = "";
+    }
+    promoteWaitingCountAttachments();
+    if (!hasAttachmentError()) {
+      clearComposerError();
+    }
+    renderDraftAttachments();
+  }
+
+  function promoteWaitingCountAttachments() {
+    if (!state.roomId) return;
+    for (const item of state.draftAttachments) {
+      if (activeDraftAttachmentCount() >= MAX_ATTACHMENTS) break;
+      if (item.status === "error" && item.errorCode === "count" && item.file) {
+        const check = validateAttachmentCandidate({
+          mime: item.file.type,
+          size: item.size,
+          activeCount: activeDraftAttachmentCount(),
+        });
+        if (check.ok) {
+          item.status = "uploading";
+          item.error = "";
+          item.errorCode = "";
+          item.uploadPromise = verifyAndUploadAttachment(item);
+        } else {
+          item.error = check.reason;
+          item.errorCode = check.code;
+        }
+      }
+    }
+  }
+
+  function renderDraftAttachments() {
+    const box = $("#composer-attachments");
+    if (!box) return;
+    if (!state.draftAttachments.length) {
+      box.hidden = true;
+      box.replaceChildren();
+      return;
+    }
+    box.hidden = false;
+    const nodes = state.draftAttachments.map((item) => {
+      let cls = "att-chip";
+      if (item.status === "uploading") cls += " uploading";
+      else if (item.status === "error") cls += " error";
+      const chip = el("div", cls);
+      chip.dataset.localId = item.localId;
+
+      if (item.previewUrl) {
+        const thumb = document.createElement("img");
+        thumb.className = "att-chip-thumb";
+        thumb.src = item.previewUrl;
+        thumb.alt = item.name;
+        chip.appendChild(thumb);
+      } else {
+        const placeholder = el("div", "att-chip-thumb", "🖼");
+        placeholder.style.display = "flex";
+        placeholder.style.alignItems = "center";
+        placeholder.style.justifyContent = "center";
+        chip.appendChild(placeholder);
+      }
+
+      const info = el("div", "att-chip-info");
+      const nameEl = el("div", "att-chip-name", item.name);
+      nameEl.title = item.name;
+      info.appendChild(nameEl);
+
+      const sizeText = fmtBytes(item.uploaded ? item.uploaded.bytes : item.size);
+      const statusSuffix = item.status === "uploading" ? " · 업로드 중…" : "";
+      info.appendChild(el("div", "att-chip-meta", sizeText + statusSuffix));
+
+      if (item.status === "error" && item.error) {
+        const errEl = el("div", "att-chip-err", item.error);
+        errEl.title = item.error;
+        info.appendChild(errEl);
+      }
+      chip.appendChild(info);
+
+      const rmBtn = el("button", "att-chip-remove", "✕");
+      rmBtn.type = "button";
+      rmBtn.title = "첨부 제거";
+      rmBtn.setAttribute("aria-label", item.name + " 첨부 제거");
+      rmBtn.onclick = () => removeDraftAttachment(item.localId);
+      chip.appendChild(rmBtn);
+      return chip;
+    });
+    box.replaceChildren(...nodes);
+  }
+
+  function extractClipboardImageFiles(clipboardData) {
+    if (!clipboardData) return [];
+    const out = [];
+    if (clipboardData.items && clipboardData.items.length) {
+      for (const item of Array.from(clipboardData.items)) {
+        if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
+          const f = item.getAsFile();
+          if (f) out.push(f);
+        }
+      }
+    }
+    if (!out.length && clipboardData.files && clipboardData.files.length) {
+      for (const f of Array.from(clipboardData.files)) {
+        if (f.type && f.type.startsWith("image/")) out.push(f);
+      }
+    }
+    return out;
+  }
+
+  function addAttachmentFiles(fileList) {
+    if (!state.roomId || !fileList) return;
+    const files = Array.from(fileList);
+    if (!files.length) return;
+
+    for (const file of files) {
+      const localId = "draft-att-" + ++draftAttachmentSeq;
+      const name = file.name ? file.name : "clipboard-image.png";
+      const size = typeof file.size === "number" ? file.size : 0;
+      const activeCount = activeDraftAttachmentCount();
+      const check = validateAttachmentCandidate({
+        mime: file.type,
+        size,
+        activeCount,
+      });
+
+      let previewUrl = "";
+      if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function" && size > 0) {
+        try {
+          previewUrl = URL.createObjectURL(file);
+        } catch (_) {
+          previewUrl = "";
+        }
+      }
+
+      const item = {
+        localId,
+        roomId: state.roomId,
+        file,
+        name,
+        size,
+        previewUrl,
+        status: check.ok ? "uploading" : "error",
+        error: check.ok ? "" : check.reason,
+        errorCode: check.ok ? "" : check.code,
+        uploaded: null,
+        uploadPromise: null,
+        cancelled: false,
+      };
+      state.draftAttachments.push(item);
+      if (check.ok) {
+        item.uploadPromise = verifyAndUploadAttachment(item);
+      }
+    }
+    renderDraftAttachments();
+  }
+
+  async function verifyAndUploadAttachment(item) {
+    const roomId = item.roomId;
+    try {
+      if (item.file && typeof item.file.slice === "function") {
+        const slice = item.file.slice(0, 12);
+        if (typeof slice.arrayBuffer === "function") {
+          const buf = await slice.arrayBuffer();
+          if (item.cancelled || state.roomId !== roomId) return null;
+          const magicMime = detectImageMimeFromBytes(new Uint8Array(buf));
+          const magicCheck = validateAttachmentCandidate({
+            mime: item.file.type,
+            magicMime,
+            size: item.size,
+            activeCount: 0,
+          });
+          if (!magicCheck.ok) {
+            item.status = "error";
+            item.error = magicCheck.reason;
+            item.errorCode = magicCheck.code;
+            renderDraftAttachments();
+            return null;
+          }
+        }
+      }
+
+      const fd = new FormData();
+      fd.append("file", item.file, item.name);
+      const res = await fetch("/api/rooms/" + encodeURIComponent(roomId) + "/attachments", {
+        method: "POST",
+        body: fd,
+      });
+      if (item.cancelled || state.roomId !== roomId) return null;
+      const raw = await res.text();
+      let data = null;
+      if (raw) {
+        try {
+          data = JSON.parse(raw);
+        } catch (_) {
+          data = null;
+        }
+      }
+      if (!res.ok) {
+        const reason = data && data.error ? data.error : raw ? raw.trim() : res.statusText;
+        throw new Error(reason);
+      }
+      if (!data || !data.id) {
+        throw new Error("서버 응답에 첨부 ID가 없습니다.");
+      }
+      item.uploaded = data;
+      item.status = "ready";
+      item.error = "";
+      item.errorCode = "";
+      renderDraftAttachments();
+      return data;
+    } catch (err) {
+      if (item.cancelled || state.roomId !== roomId) return null;
+      item.status = "error";
+      item.error = "업로드 실패: " + (err && err.message ? err.message : "알 수 없는 오류");
+      item.errorCode = "upload";
+      renderDraftAttachments();
+      return null;
+    }
+  }
+
+  let isSendingMessage = false;
+
   async function send() {
+    if (isSendingMessage || !state.roomId) return;
     const input = $("#input");
     const draft = input.value.trim();
     let text;
     try { text = encodedMentions(draft); }
     catch (err) {
-      const error = $("#composer-error");
-      error.hidden = false;
-      error.textContent = err.message;
-      input.setAttribute("aria-invalid", "true");
+      showComposerError(err.message);
       input.focus();
       return;
     }
+    if (hasAttachmentError()) {
+      showComposerError("오류가 있는 첨부 칩을 제거한 뒤 전송하세요.");
+      return;
+    }
     clearComposerError();
-    if (!text || !state.roomId) return;
+    if (!text && state.draftAttachments.length === 0) return;
+
     const roomId = state.roomId;
     const sequence = openSeq;
+    const pendingUploads = state.draftAttachments
+      .filter((item) => item.status === "uploading" && item.uploadPromise)
+      .map((item) => item.uploadPromise);
+
+    if (pendingUploads.length > 0) {
+      isSendingMessage = true;
+      try {
+        await Promise.all(pendingUploads);
+      } finally {
+        isSendingMessage = false;
+      }
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (hasAttachmentError()) {
+        showComposerError("이미지 업로드에 실패했습니다. 오류 칩을 확인하세요.");
+        return;
+      }
+    }
+
+    const attachmentIds = state.draftAttachments
+      .filter((item) => item.status === "ready" && item.uploaded && item.uploaded.id)
+      .map((item) => item.uploaded.id);
+
     const target = state.target;
     input.value = "";
     closeMentionPop();
+    isSendingMessage = true;
     try {
-      await api("POST", "/api/rooms/" + roomId + "/messages", { text, target });
+      const payload = { text, target };
+      if (attachmentIds.length > 0) {
+        payload.attachments = attachmentIds;
+      }
+      await api("POST", "/api/rooms/" + roomId + "/messages", payload);
       if (state.roomId !== roomId || openSeq !== sequence) return;
+      clearDraftAttachments();
       if (!input.value) state.draftMentions.clear();
       if (target) {
         setTarget("", false);
@@ -4481,6 +5415,8 @@
       alert(e.message);
       if (!input.value) input.value = draft;
       updateHint();
+    } finally {
+      isSendingMessage = false;
     }
   }
 
@@ -4662,7 +5598,21 @@
     }
   }
 
-  boot().catch((e) => {
-    document.body.innerHTML = "<pre style='padding:20px'>시작 실패: " + esc(e.message) + "</pre>";
-  });
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      fmtBytes,
+      detectImageMimeFromBytes,
+      validateAttachmentCandidate,
+      requestStatusLabel,
+      isIncompleteRequest,
+      sortRequests,
+      formatLightboxMeta,
+    };
+  }
+
+  if (typeof document !== "undefined") {
+    boot().catch((e) => {
+      document.body.innerHTML = "<pre style='padding:20px'>시작 실패: " + esc(e.message) + "</pre>";
+    });
+  }
 })();
