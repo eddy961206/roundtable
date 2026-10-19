@@ -2918,8 +2918,8 @@
     };
 
     const totalItems = rev.rounds.reduce((acc, r) => acc + (r.items ? r.items.length : 0), 0);
-    const ovSuffix = rev.override
-      ? " · 사람 판정으로 통과 · " + (Array.isArray(rev.override.items) ? rev.override.items.length : 0) + "건"
+    const ovSuffix = rev.resolution
+      ? " · 사람 판정으로 통과 · " + rev.resolution.item_ids.length + "건"
       : "";
     const sum = el(
       "summary",
@@ -3185,7 +3185,7 @@
       const maxRounds = rev && rev.max_rounds ? rev.max_rounds : w.review_rounds;
       const revBadgeCls =
         "badge review-summary-badge" +
-        (unresolved > 0 && !(rev && rev.override) ? " warn" : rev && ((rev.summary && rev.summary.passed) || rev.override) ? " ok" : "");
+        (unresolved > 0 && !(rev && rev.resolution) ? " warn" : rev && ((rev.summary && rev.summary.passed) || rev.resolution) ? " ok" : "");
       const revSummaryTxt =
         "리뷰 " +
         curRound +
@@ -3194,8 +3194,8 @@
         "R · 미해결 " +
         unresolved +
         "건" +
-        (rev && rev.override
-          ? " · 사람 판정으로 통과 · " + (Array.isArray(rev.override.items) ? rev.override.items.length : 0) + "건"
+        (rev && rev.resolution
+          ? " · 사람 판정으로 통과 · " + rev.resolution.item_ids.length + "건"
           : "");
       meta.appendChild(el("span", revBadgeCls, revSummaryTxt));
       if (rev && rev.phase) {
