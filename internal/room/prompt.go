@@ -1,6 +1,8 @@
 package room
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
@@ -19,19 +21,41 @@ type turnContext struct {
 	Parallel    bool   // broadcast delivered to several agents at once
 	Round       int
 	TotalRounds int
-	FirstTurn   bool // no resumable session: the whole transcript is included
+	FirstTurn   bool  // no resumable session: the whole transcript is included
+	Briefed     bool  // the resumed session already holds the current standing brief
+	Part        *Part // the seat's working/fixing part (D9)
 }
 
-var signalRe = regexp.MustCompile(`\[\[DISCUSSION:(CONTINUE|AGREE|PASS|CONCLUDE)\]\]\s*$`)
+var signalRe = regexp.MustCompile(`^\[\[DISCUSSION:(CONTINUE|AGREE|PASS|CONCLUDE)\]\]$`)
+
+// trailingSignals is shared by all completion consumers. Only consecutive
+// signal lines at the end count; ordinary text (including a blank line) ends
+// the block. Each consumer removes only its own signals.
+func trailingSignals(text string) (lines []string, start int) {
+	lines = strings.Split(strings.TrimSpace(text), "\n")
+	start = len(lines)
+	for start > 0 {
+		line := strings.TrimSpace(lines[start-1])
+		if line != workDoneSignal && !signalRe.MatchString(line) && !resultMarker.MatchString(line) {
+			break
+		}
+		start--
+	}
+	return lines, start
+}
 
 // ParseSignal extracts the discussion marker and returns the cleaned text.
 func ParseSignal(text string) (clean, signal string) {
-	m := signalRe.FindStringSubmatch(strings.TrimSpace(text))
-	if m == nil {
-		return strings.TrimSpace(text), ""
+	lines, start := trailingSignals(text)
+	var kept []string
+	for i, line := range lines {
+		if m := signalRe.FindStringSubmatch(strings.TrimSpace(line)); i >= start && m != nil {
+			signal = m[1]
+		} else {
+			kept = append(kept, line)
+		}
 	}
-	clean = strings.TrimSpace(signalRe.ReplaceAllString(strings.TrimSpace(text), ""))
-	return clean, m[1]
+	return strings.TrimSpace(strings.Join(kept, "\n")), signal
 }
 
 func speaker(m *Message, r *Room) string {
@@ -47,13 +71,12 @@ func speaker(m *Message, r *Room) string {
 	return "@" + m.Author
 }
 
-// BuildPrompt renders the instruction block plus the messages the agent has not seen.
-func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) string {
+// standingBrief is the part of a prompt that only changes with room settings.
+// A resumed session that already holds the same brief gets a one-line reminder.
+func standingBrief(r *Room, me *Participant) string {
 	var b strings.Builder
 	others := make([]string, 0)
-	ids := make([]string, 0)
 	for _, p := range r.enabled() {
-		ids = append(ids, "@"+p.ID)
 		if p.ID != me.ID {
 			others = append(others, "@"+p.ID+"("+p.Label+")")
 		}
@@ -66,12 +89,11 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 	}
 	b.WriteString("\n규칙:\n")
 	b.WriteString("- 아래 대화의 마지막 메시지에 이어 자연스럽게 답하세요. 출력 전체가 채팅 메시지 하나로 그대로 전송됩니다. \"[@" + me.ID + "]\" 같은 접두어나 서명을 붙이지 마세요.\n")
-	if len(others) > 0 && tc.Reason != "discussion" {
+	if len(others) > 0 {
 		fmt.Fprintf(&b, "- 다른 참가자를 호출하려면 @이름(%s, @all)을 쓰세요. 그러면 그 참가자가 이어서 답합니다. 호출 없이 언급만 할 때는 @ 없이 이름만 쓰세요. 호출은 꼭 필요할 때만 하세요.\n", strings.Join(others, ", "))
 		b.WriteString("- @claude, @codex, @agy는 해당 공급자의 모든 활성 참가자를 호출합니다. 한 명만 부르려면 위 목록의 고유 @ID를 쓰세요.\n")
-	} else if len(others) > 0 {
-		b.WriteString("- 이번 턴에는 다른 참가자를 추가로 호출할 수 없습니다. 언급은 @ 없이 이름만 쓰세요.\n")
 	}
+	b.WriteString("- 공백 없는 이름만 @이름으로 부를 수 있고, 확실하게는 @좌석ID를 쓰세요. 요청 대상도 같은 규칙입니다.\n")
 	b.WriteString("- 다른 참가자의 주장은 근거를 확인하고, 동의하지 않으면 이유를 들어 반박하세요. 확인하지 않은 것을 확인했다고 말하지 마세요. 의견과 사실을 구분하세요.\n")
 	if r.Persona && len(others) > 0 {
 		b.WriteString("- 다른 AI 참가자와는 친한 동료이자 은근한 경쟁자처럼 대화하세요. 좋은 점은 인정하고 빈틈은 재치 있게 짚되, 정확성과 사용자의 목표를 항상 우선하세요.\n")
@@ -85,12 +107,39 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 		b.WriteString("- 도구 실행이나 파일 수정 없이 대화로만 답하세요.\n")
 	}
 	b.WriteString("- 대화에서 쓰인 언어로 답하세요. 채팅에 어울리게 간결하되, 판단에 필요한 근거는 생략하지 마세요.\n")
+	b.WriteString(markerBrief(r.Mode))
+	return b.String()
+}
+
+// briefKey identifies a standing brief so an unchanged one is not re-sent.
+func briefKey(brief string) string {
+	sum := sha256.Sum256([]byte(brief))
+	return hex.EncodeToString(sum[:8])
+}
+
+// BuildPrompt renders the instruction block plus the messages the agent has not seen.
+func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) string {
+	var b strings.Builder
+	if tc.Briefed {
+		fmt.Fprintf(&b, "(단톡방 \"%s\"의 참가자·공지·규칙은 이 세션에서 받은 그대로입니다. 당신은 \"@%s\"(%s)입니다.)\n", r.Title, me.ID, me.Label)
+	} else {
+		b.WriteString(standingBrief(r, me))
+	}
+	if tc.Parallel || tc.Reason == "discussion" || tc.Part != nil {
+		b.WriteString("\n이번 턴:\n")
+	}
+	if tc.Part != nil {
+		fmt.Fprintf(&b, "- 지금은 작업 계획의 파트 %s(%s)를 맡고 있습니다. branch %s 에만 커밋하세요. 파트를 끝냈으면 모든 변경을 커밋한 뒤 응답 끝 신호 블록에 %s 한 줄을 쓰세요.\n", tc.Part.ID, tc.Part.Title, tc.Part.Branch, workDoneSignal)
+	}
 	if tc.Parallel {
 		b.WriteString("- 같은 메시지를 다른 참가자들도 동시에 받았습니다. 다른 답변을 기다리지 말고 독립적으로 답하세요.\n")
 	}
 	if tc.Reason == "discussion" {
+		if len(r.enabled()) > 1 {
+			b.WriteString("- 이번 턴에는 다른 참가자를 추가로 호출할 수 없습니다. 언급은 @ 없이 이름만 쓰세요.\n")
+		}
 		fmt.Fprintf(&b, "- 지금은 자율 토론 %d/%d 라운드입니다. 앞선 답변을 검토해 새 근거가 있을 때만 기여하고, 이미 나온 말은 반복하지 마세요.\n", tc.Round, tc.TotalRounds)
-		b.WriteString("- 응답 마지막 줄에 반드시 다음 중 하나만 붙이세요: [[DISCUSSION:CONTINUE]] [[DISCUSSION:AGREE]] [[DISCUSSION:PASS]] [[DISCUSSION:CONCLUDE]]\n")
+		b.WriteString("- 응답 끝 신호 블록에 다음 중 하나를 한 줄로 붙이세요: [[DISCUSSION:CONTINUE]] [[DISCUSSION:AGREE]] [[DISCUSSION:PASS]] [[DISCUSSION:CONCLUDE]]\n")
 		b.WriteString("  새 기여가 있으면 CONTINUE, 새 내용 없이 동의하면 AGREE, 할 말이 없으면 PASS, 충분한 최종 결론을 제시했으면 CONCLUDE.\n")
 	}
 	if tc.FirstTurn {
@@ -102,6 +151,54 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 	b.WriteString("=== 끝 ===\n\n")
 	fmt.Fprintf(&b, "지금 \"@%s\"로서 답할 차례입니다.", me.ID)
 	return b.String()
+}
+
+// BuildPartPrompt starts a part session from the plan alone; room history is never included (D9).
+func BuildPartPrompt(plan *WorkPlan, part *Part) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "작업 계획의 파트 %s \"%s\"를 맡았습니다.\n\n", part.ID, part.Title)
+	fmt.Fprintf(&b, "전체 목표:\n%s\n\n", plan.Goal)
+	fmt.Fprintf(&b, "완료 조건:\n%s\n\n", part.Brief)
+	fmt.Fprintf(&b, "범위: %s\n", strings.Join(part.Scope, ", "))
+	fmt.Fprintf(&b, "작업 폴더: %s (branch %s, 기준 커밋 %s)\n\n", part.Worktree, part.Branch, plan.BaseSHA)
+	b.WriteString("규칙:\n")
+	b.WriteString("- 이 작업 폴더 안에서만 수정하고, 범위 밖의 파일은 바꾸지 마세요.\n")
+	fmt.Fprintf(&b, "- 변경은 branch %s 에 커밋하세요. 커밋하지 않은 변경이나 추적하지 않는 파일이 남아 있으면 제출이 거부됩니다.\n", part.Branch)
+	fmt.Fprintf(&b, "- 파트를 끝냈으면 응답 끝 신호 블록에 %s 한 줄을 쓰세요. 그러면 다른 공급사 참가자가 diff를 리뷰합니다.\n", workDoneSignal)
+	b.WriteString("- 무엇을 바꿨는지 답변에 적으세요.\n")
+	b.WriteString(markerBrief(agent.ModeWrite))
+	return b.String()
+}
+
+// BuildFixPrompt asks the author to fix the review items it accepted.
+func BuildFixPrompt(part *Part) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "파트 %s 리뷰의 수용 항목과 남은 이견 항목을 고치세요. 고친 뒤 branch %s 에 커밋하고 응답 끝 신호 블록에 %s 한 줄을 쓰세요. 새 커밋으로 다시 리뷰합니다.\n", part.ID, part.Branch, workDoneSignal)
+	for _, round := range part.Review.Rounds {
+		for _, item := range round.Items {
+			if item.Status != "accepted_pending" && item.Status != "disputed" {
+				continue
+			}
+			f := item.Finding
+			fmt.Fprintf(&b, "- %s [%s] %s:%s:%d — %s\n", f.ID, f.Severity, f.Side, f.File, f.Line, f.Scenario)
+		}
+	}
+	return b.String()
+}
+
+// ParseWorkDone strips WORK:DONE lines from the terminal signal block.
+func ParseWorkDone(text string) (string, bool) {
+	lines, start := trailingSignals(text)
+	var kept []string
+	done := false
+	for i, line := range lines {
+		if i >= start && strings.TrimSpace(line) == workDoneSignal {
+			done = true
+		} else {
+			kept = append(kept, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n")), done
 }
 
 func renderHistory(r *Room, history []*Message) string {

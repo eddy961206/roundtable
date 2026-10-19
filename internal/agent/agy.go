@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -15,8 +16,6 @@ import (
 	"sync"
 	"time"
 )
-
-const agyPromptLimit = 24 * 1024 // Windows command line budget
 
 // Agy runs Google's Antigravity CLI in print mode.
 type Agy struct {
@@ -110,7 +109,10 @@ func groupAgyModels(lines []string) ([]ModelOption, map[string][]string) {
 // command expansion is disabled"), and on 2026-10-17 a read-mode run with both
 // flags created a file. Without it, plan mode refused and wrote a plan instead.
 func agyArgs(o RunOptions) []string {
-	args := []string{"--sandbox", "--output-format", "stream-json"}
+	args := []string{"--sandbox", "--output-format", "stream-json", "--input-format", "stream-json"}
+	for _, dir := range imageDirs(o.Images) {
+		args = append(args, "--add-dir", dir)
+	}
 	if o.Mode == ModeWrite {
 		args = append(args, "--disable-slash-commands")
 	}
@@ -126,9 +128,6 @@ func agyArgs(o RunOptions) []string {
 	if o.Timeout > 0 {
 		args = append(args, "--print-timeout", fmt.Sprintf("%ds", int(o.Timeout.Seconds())))
 	}
-	for _, d := range o.ExtraDirs {
-		args = append(args, "--add-dir", d)
-	}
 	switch o.Mode {
 	case ModeRead:
 		args = append(args, "--mode", "plan", "--add-dir", o.Workspace)
@@ -137,58 +136,35 @@ func agyArgs(o RunOptions) []string {
 	default:
 		args = append(args, "--mode", "plan")
 	}
-	args = append(args, "-p="+compactPrompt(o.Prompt, agyPromptLimit))
-	return args
+	// The prompt goes through stdin (agyInput): agy 1.4 reads stream-json turns
+	// there, so long turns no longer hit the Windows command-line limit.
+	return append(args, "-p=")
 }
 
-// escapedLen estimates the Windows command-line length after argument quoting:
-// every quote becomes two characters and backslashes may double.
-func escapedLen(s string) int {
-	return len(s) + strings.Count(s, "\"")*2 + strings.Count(s, "\\")
-}
-
-func compactPrompt(s string, limit int) string {
-	if escapedLen(s) <= limit {
-		return s
+// agyInput is one stream-json user turn (verified with agy 1.4.2 on 2026-10-19,
+// including a 212KB prompt answered without truncation).
+func agyInput(prompt string) string {
+	b, err := json.Marshal(map[string]any{"event": "user", "message": map[string]string{"content": prompt}})
+	if err != nil {
+		panic(err) // a string map always marshals
 	}
-	limit = limit * len(s) / escapedLen(s) // shrink the byte budget by the escape overhead
-	marker := "\n\n[명령줄 길이 한도로 이전 대화 일부 생략]\n\n"
-	head := 6000
-	tail := limit - len(marker) - head
-	h := s[:head]
-	for len(h) > 0 && !isRuneStart(s[len(h)]) {
-		h = h[:len(h)-1]
-	}
-	t := s[len(s)-tail:]
-	for len(t) > 0 && !isRuneStart(t[0]) {
-		t = t[1:]
-	}
-	return h + marker + t
+	return string(b) + "\n"
 }
 
 func (a *Agy) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, error) {
+	if err := validateImages(o.Images); err != nil {
+		return Result{}, err
+	}
 	path, err := resolveCommand(a.cmd)
 	if err != nil {
 		return Result{}, fmt.Errorf("agy CLI를 찾지 못함: %w", err)
 	}
 	started := time.Now()
-	// agy only takes the prompt as a command-line argument (Windows caps the whole
-	// line near 32K). Cutting the middle silently dropped other participants'
-	// answers, so a long turn is handed over as a file the agent must read first.
-	if escapedLen(o.Prompt) > agyPromptLimit {
-		file, cleanup, err := writeAgyPromptFile(o)
-		if err != nil {
-			return Result{}, err
-		}
-		defer cleanup()
-		o.Prompt = agyFilePointer(file, len(o.Prompt))
-		o.ExtraDirs = append(o.ExtraDirs, filepath.Dir(file))
-	}
 	cmd := exec.Command(path, agyArgs(o)...)
 	cmd.Dir = workDir(o)
 	cmd.Env = os.Environ()
 	p := newAgyParser()
-	stderr, runErr := runLines(ctx, cmd, "", func(line string) { p.Line(line, emit) })
+	stderr, runErr := runLines(ctx, cmd, agyInput(o.Prompt), func(line string) { p.Line(line, emit) })
 	fin := p.Finish(emit)
 	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr}
 	if l, ok := a.CurrentLimits(); ok && l.At >= started.UnixMilli() {
@@ -439,37 +415,4 @@ func (p *agyParser) Finish(emit func(Event)) Final {
 		emit(x)
 	}
 	return Final{Text: text, SessionID: p.conv, Err: p.errText, Usage: p.usage, Complete: p.completed}
-}
-
-// writeAgyPromptFile stores the full turn input for agy to read. The file lives in
-// roundtable's own scratch folder, never in the user's workspace, and is removed
-// when the turn ends.
-func writeAgyPromptFile(o RunOptions) (string, func(), error) {
-	if o.ScratchDir == "" {
-		return "", nil, fmt.Errorf("agy 긴 입력을 둘 임시 폴더가 설정되지 않았어")
-	}
-	dir := filepath.Join(o.ScratchDir, "agy-input")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", nil, err
-	}
-	f, err := os.CreateTemp(dir, "turn-*.md")
-	if err != nil {
-		return "", nil, err
-	}
-	if _, err := f.WriteString(o.Prompt); err != nil {
-		f.Close()
-		os.Remove(f.Name())
-		return "", nil, err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
-		return "", nil, err
-	}
-	return f.Name(), func() { os.Remove(f.Name()) }, nil
-}
-
-func agyFilePointer(file string, size int) string {
-	return fmt.Sprintf("이번 턴의 전체 입력(참가자 규칙, 방 공지, 새 대화 내용, 지시)은 길어서 파일로 전달했어: %s (%d바이트)\n"+
-		"반드시 이 파일을 처음부터 끝까지 빠짐없이 읽은 뒤, 그 안의 규칙과 마지막 지시에 따라 답해. 이 파일의 내용이 이번 사용자 메시지야. "+
-		"파일을 다 읽지 못했으면 그 사실을 답에 밝혀.", file, size)
 }

@@ -42,10 +42,12 @@ type Hub struct {
 	limitsSaveError error
 	nativeSessions  map[string]bool
 	mcp             *agent.MCPServer // read-only tool server attached to read/write runs
+	workRoot        string           // <data>/worktrees: part and integration worktrees live outside user repos
 	Log             *log.Logger
 }
 
 type roomState struct {
+	requests []Request
 	room     *Room
 	msgs     []*Message
 	queue    []*Turn
@@ -55,6 +57,8 @@ type roomState struct {
 	deleted  bool // late invocation callbacks must not recreate a deleted room
 	stopGen  int  // prevents a stopped turn from scheduling follow-up work
 	resetGen int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
+
+	workBusy map[string]bool // plan creation or part submit checks running git outside h.mu
 }
 
 type running struct {
@@ -80,7 +84,11 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 	if err != nil {
 		return nil, fmt.Errorf("작업 임시 폴더: %w", err)
 	}
-	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]bool{}, Log: logger}
+	workRoot, err := filepath.Abs(filepath.Join(store.Root(), "worktrees"))
+	if err != nil {
+		return nil, fmt.Errorf("worktree 폴더: %w", err)
+	}
+	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]bool{}, workRoot: workRoot, Log: logger}
 	rooms, msgs, err := store.LoadRooms()
 	if err != nil {
 		return nil, err
@@ -98,7 +106,22 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 				return nil, fmt.Errorf("방 %s 작업 폴더: %w", r.ID, err)
 			}
 		}
-		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
+		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, workBusy: map[string]bool{}}
+		rs.requests, err = store.loadRequests(r.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, request := range slices.Clone(rs.requests) {
+			if request.Status == "in_progress" {
+				request.Status = "pending"
+				if err := h.saveRequest(rs, request); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if err := store.cleanupAttachments(r.ID, rs.msgs); err != nil {
+			return nil, err
+		}
 		for _, m := range rs.msgs {
 			if m.Kind != "agent" {
 				continue
@@ -108,7 +131,22 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 			}
 		}
 		rs.refreshParticipantStates()
+		if r.Work != nil {
+			if err := h.recoverWork(rs); err != nil {
+				return nil, err
+			}
+		}
 		h.rooms[r.ID] = rs
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rs := range h.rooms {
+		h.advanceQueue(rs)
+		if rs.room.Work != nil {
+			if err := h.store.SaveRoom(rs.room); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return h, nil
 }
@@ -207,7 +245,7 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	if err := h.store.SaveRoom(r); err != nil {
 		return nil, err
 	}
-	h.rooms[r.ID] = &roomState{room: r, running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
+	h.rooms[r.ID] = &roomState{room: r, running: map[string]*running{}, subs: map[chan []byte]struct{}{}, workBusy: map[string]bool{}}
 	return r, nil
 }
 
@@ -242,12 +280,14 @@ func sortSummaries(s []RoomSummary) {
 
 // Snapshot is everything the page needs to render a room.
 type Snapshot struct {
+	Requests   []Request               `json:"requests"`
 	Room       *Room                   `json:"room"`
 	Messages   []*Message              `json:"messages"`
 	Queue      []*Turn                 `json:"queue"`
 	Discussion *DiscussionView         `json:"discussion"`
 	Limits     map[string]agent.Limits `json:"limits"`
 	History    HistoryPage             `json:"history"`
+	Work       *WorkPlan               `json:"work"`
 }
 
 type DiscussionView struct {
@@ -370,6 +410,9 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	if contextChanged && len(rs.running) > 0 {
 		return nil, fmt.Errorf("실행 중에는 모드와 작업 폴더를 변경할 수 없음")
 	}
+	if contextChanged && (rs.room.Work != nil || rs.workBusy[busyPlan]) {
+		return nil, fmt.Errorf("작업 계획이 있는 방은 모드와 작업 폴더를 변경할 수 없음")
+	}
 	if patch.MaxChain != nil {
 		if *patch.MaxChain < 1 {
 			return nil, fmt.Errorf("연쇄 한도는 1 이상이어야 함")
@@ -422,9 +465,13 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 			if err := validateModel(p.Provider, p.Model, p.Effort, choices[p.Provider]); err != nil {
 				return nil, err
 			}
-			p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
-			p.Unseen = nil
-			p.ContextWindow = prov.ContextWindow(p.Model)
+			// Each CLI takes the effort per invocation, so an effort change resumes
+			// the same session instead of re-sending the room history.
+			if p.Model != original.Model {
+				p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
+				p.Unseen = nil
+				p.ContextWindow = prov.ContextWindow(p.Model)
+			}
 		}
 	}
 	if contextChanged {
@@ -434,7 +481,7 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 		}
 	}
 	for _, p := range next.Participants {
-		if p.Enabled && h.nativeSessions[nativeSessionKey(p.Provider, p.SessionID)] {
+		if p.Enabled && h.seatNativeOpen(rs, p) {
 			return nil, fmt.Errorf("%s의 CLI 창을 닫은 뒤 다시 켜야 함", p.Label)
 		}
 	}
@@ -474,6 +521,9 @@ func (rs *roomState) dropQueuedFor(h *Hub, agentID string) {
 	for _, t := range dropped {
 		if t.Reason == "discussion" {
 			h.discussionStep(rs, t.Agent, "PASS", "cancelled")
+		}
+		if t.Reason == "review" {
+			h.reviewTurnLost(rs, t, "리뷰 턴을 맡은 좌석이 비활성화됨")
 		}
 	}
 	rs.refreshParticipantStates()
@@ -619,9 +669,9 @@ func (h *Hub) enabledIDs(rs *roomState) []string {
 // PostUser adds a user message and routes it: mentions, or everyone when none.
 // target addresses one agent; if that agent is running and can steer, the text
 // is injected live, otherwise a priority turn is queued.
-func (h *Hub) PostUser(id, text, target string) (*Message, error) {
+func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Message, error) {
 	text = strings.TrimSpace(text)
-	if text == "" {
+	if text == "" && len(attachmentIDs) == 0 {
 		return nil, fmt.Errorf("빈 메시지")
 	}
 	h.mu.Lock()
@@ -639,19 +689,33 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 			return nil, fmt.Errorf("활성 대상 없음: %s", target)
 		}
 	}
+	attachments, err := h.resolveAttachments(rs, attachmentIDs)
+	if err != nil {
+		return nil, err
+	}
 	m := rs.nextMessage("user", "user", text)
+	m.Attachments = attachments
+	m.Target = target
+	mentioned := append([]string{}, ParseParticipantMentions(text, rs.room.Participants)...)
+	m.Mentions = &mentioned
+	if err := h.store.AppendMessage(id, m); err != nil {
+		rs.msgs = rs.msgs[:len(rs.msgs)-1]
+		return nil, err
+	}
 	if target != "" {
-		m.Target = target
-		if run := rs.runningFor(target); run != nil && run.steer != nil {
+		if run := rs.runningFor(target); run != nil && run.steer != nil && len(attachments) == 0 {
 			select {
 			case run.steer <- text:
 				m.Live = true
+				m.Part = run.turn.Part
 				run.live = append(run.live, m)
 			default:
 			}
 		}
 		rs.broadcast("message", m)
-		_ = h.store.AppendMessage(id, m)
+		if m.Live {
+			_ = h.store.AppendMessage(id, m)
+		}
 		_ = h.store.SaveRoom(rs.room)
 		if !m.Live {
 			rs.enqueueFront(&Turn{ID: newID(), Agent: target, Reason: "mention", Group: m.ID, Cap: m.Seq, Created: nowMs(), Status: "queued"})
@@ -661,10 +725,8 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 		return &mc, nil
 	}
 	rs.broadcast("message", m)
-	_ = h.store.AppendMessage(id, m)
 	_ = h.store.SaveRoom(rs.room)
 	ids := h.enabledIDs(rs)
-	mentioned := ParseParticipantMentions(text, rs.room.Participants)
 	var targets []string
 	for _, id := range mentioned {
 		if slices.Contains(ids, id) {
@@ -761,6 +823,11 @@ func (h *Hub) Stop(id string) error {
 	if !ok {
 		return fmt.Errorf("방 없음: %s", id)
 	}
+	for _, t := range rs.queue {
+		if t.Reason == "review" {
+			h.reviewTurnLost(rs, t, "사용자가 중지해 리뷰 턴이 취소됨")
+		}
+	}
 	rs.stopLocked("사용자가 중지함")
 	return nil
 }
@@ -799,6 +866,9 @@ func (h *Hub) CancelTurn(id, turnID string) error {
 			rs.queue = append(rs.queue[:i], rs.queue[i+1:]...)
 			if t.Reason == "discussion" {
 				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
+			}
+			if t.Reason == "review" {
+				h.reviewTurnLost(rs, t, "사용자가 리뷰 턴을 취소함")
 			}
 			rs.broadcast("queue", rs.queueView())
 			h.pump(rs)
@@ -858,11 +928,27 @@ func (h *Hub) pump(rs *roomState) {
 	for i := 0; i < len(rs.queue); {
 		t := rs.queue[i]
 		p := rs.room.participant(t.Agent)
-		if p == nil || !p.Enabled || p.Removed || h.reg.Get(p.Provider) == nil || h.nativeSessions[nativeSessionKey(p.Provider, p.SessionID)] {
+		if p == nil || !p.Enabled || p.Removed || h.reg.Get(p.Provider) == nil || h.seatNativeOpen(rs, p) {
 			rs.queue = slices.Delete(rs.queue, i, i+1)
 			if t.Reason == "discussion" {
 				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
 			}
+			if t.Reason == "review" {
+				h.reviewTurnLost(rs, t, "리뷰 턴을 맡은 좌석을 실행할 수 없음")
+			}
+			continue
+		}
+		part := rs.seatPart(p.ID)
+		partActive := part != nil && (part.State == "working" || part.State == "fixing")
+		if t.Reason == "part" && !partActive {
+			rs.queue = slices.Delete(rs.queue, i, i+1)
+			skipped = true
+			continue
+		}
+		// Room discussions can run outside an inactive part. Submission still
+		// reserves the author until its state and worktree checks are settled.
+		if t.Reason != "review" && part != nil && (rs.workBusy[part.ID] || (!partActive && t.Reason != "discussion")) {
+			i++
 			continue
 		}
 		// Ordinary priority turns must not block a later discussion turn for
@@ -900,17 +986,24 @@ func (h *Hub) pump(rs *roomState) {
 
 // prepared contains a prompt rendered from live messages up to the turn's cap.
 type prepared struct {
-	t        *Turn
-	p        *Participant
-	seen     int64
-	unseen   []int64
-	stopGen  int
-	resetGen int
-	prov     agent.Provider
-	msg      *Message
-	opts     agent.RunOptions
-	ctx      context.Context
-	cancel   context.CancelFunc
+	notices   []*Message
+	requests  []string
+	inputErr  error
+	t         *Turn
+	p         *Participant
+	seen      int64
+	unseen    []int64
+	brief     string
+	stopGen   int
+	resetGen  int
+	prov      agent.Provider
+	msg       *Message
+	opts      agent.RunOptions
+	ctx       context.Context
+	cancel    context.CancelFunc
+	part      *Part // the turn runs in this part's worktree (D9, review)
+	reviewer  bool  // fresh reviewer session that must not be kept (D10)
+	bootstrap bool  // first part turn contains plan context only
 }
 
 // buildTurn renders a prompt without reserving a participant. Caller holds h.mu.
@@ -923,32 +1016,114 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	if prov == nil {
 		return nil
 	}
+	if t.Reason == "review" {
+		return h.buildReviewTurn(rs, t, p, prov)
+	}
+	if part := rs.activePart(p.ID); part != nil {
+		return h.buildPartTurn(rs, t, p, prov, part)
+	}
+	if t.Reason == "part" {
+		return nil // the part left working/fixing before its turn started
+	}
 	first := p.SessionID == ""
 	cap := t.Cap
 	if t.Reason == "discussion" {
 		cap = rs.room.Seq
 	}
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
-	if len(hist) == 0 && t.Reason != "discussion" {
+	if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID, "")) == 0 {
 		// No CLI call is needed to acknowledge own/filtered messages. Keep
 		// unfinished replies as holes for a later cap to deliver exactly once.
 		p.LastSeen, p.Unseen = seen, unseen
 		return nil
 	}
-	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first}
+	brief := briefKey(standingBrief(rs.room, p))
+	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Briefed: !first && p.Brief == brief}
 	if rs.disc != nil && t.Reason == "discussion" {
 		tc.TotalRounds = rs.disc.Total
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
-	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
+	h.addTurnImages(rs, p, hist, &opts)
+	return &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
+}
+
+// buildPartTurn runs every turn of a seat with a working/fixing part in the
+// part session and worktree (D9). The first part turn gets only plan context.
+func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.Provider, part *Part) *prepared {
+	t.Part = part.ID
+	seen, unseen := part.LastSeen, slices.Clone(part.Unseen)
+	bootstrap := part.SessionID == ""
+	var prompt string
+	var hist []*Message
+	switch {
+	case part.SessionID == "":
+		prompt = BuildPartPrompt(rs.room.Work, part)
+		if t.prompt != "" {
+			prompt += "\n\n" + t.prompt
+		}
+	case t.prompt != "":
+		prompt = t.prompt
+	default:
+		cap := t.Cap
+		if t.Reason == "discussion" {
+			cap = rs.room.Seq
+		}
+		cursor := *p
+		cursor.LastSeen, cursor.Unseen = part.LastSeen, part.Unseen
+		hist, seen, unseen = rs.deltaForContext(&cursor, false, cap, part.ID)
+		if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID, part.ID)) == 0 {
+			part.LastSeen, part.Unseen = seen, unseen
+			return nil
+		}
+		tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, Part: part}
+		if rs.disc != nil && t.Reason == "discussion" {
+			tc.TotalRounds = rs.disc.Total
+		}
+		view := *rs.room
+		view.Workspace = part.Worktree
+		view.Mode = agent.ModeWrite
+		prompt = BuildPrompt(&view, p, hist, tc)
+	}
+	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
+	h.addTurnImages(rs, p, hist, &opts)
+	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, bootstrap: bootstrap}
+}
+
+// buildReviewTurn runs a ReviewState step: the reviewer in a fresh read-only
+// session (D10), the author in the part session. Room history is never added.
+func (h *Hub) buildReviewTurn(rs *roomState, t *Turn, p *Participant, prov agent.Provider) *prepared {
+	part := rs.room.Work.part(t.Part)
+	if part.State != "reviewing" {
+		return nil
+	}
+	reviewer := p.ID == part.Reviewer
+	opts := agent.RunOptions{Prompt: t.prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
+	if reviewer {
+		opts.SessionID, opts.Mode = "", agent.ModeRead
+	}
+	return &prepared{t: t, p: p, seen: p.LastSeen, unseen: slices.Clone(p.Unseen), stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, reviewer: reviewer}
+}
+
+// keepSession stores a CLI session id in the slot the turn ran in. Caller holds h.mu.
+func (h *Hub) keepSession(rs *roomState, pr *prepared, id string) {
+	switch {
+	case pr.reviewer:
+	case pr.part != nil:
+		pr.part.SessionID = id
+	case pr.resetGen == rs.resetGen:
+		pr.p.SessionID = id
+	}
 }
 
 // prepareTurn reserves one participant and opens its reply. Caller holds h.mu.
 func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
+	rs.addTurnNotices(pr)
+	h.beginRequests(rs, pr)
 	t, p, prov := pr.t, pr.p, pr.prov
 	msg := rs.nextMessage("agent", p.ID, "")
 	msg.Status, msg.TurnID, msg.Reason, msg.Round, msg.Model = "streaming", t.ID, t.Reason, t.Round, p.Model
+	msg.Part, msg.ReviewStep = t.Part, t.step
 	msg.Provider, msg.SessionID, msg.Mode, msg.Effort = p.Provider, pr.opts.SessionID, pr.opts.Mode, pr.opts.Effort
 	msg.SessionDirectory = pr.opts.Workspace
 	if pr.opts.Mode == agent.ModeChat || msg.SessionDirectory == "" {
@@ -956,7 +1131,7 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), turnTimeout)
 	var steer chan string
-	if prov.CanSteer() {
+	if prov.CanSteer() && t.Reason != "review" {
 		steer = make(chan string, 8)
 	}
 	t.Status = "running"
@@ -1000,9 +1175,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		case agent.KindSession:
 			if e.Text != "" {
 				msg.SessionID = e.Text
-				if pr.resetGen == rs.resetGen {
-					p.SessionID = e.Text
-				}
+				h.keepSession(rs, pr, e.Text)
 				_ = h.store.AppendMessage(rs.room.ID, msg)
 				_ = h.store.SaveRoom(rs.room)
 				rs.broadcast("message", msg)
@@ -1043,6 +1216,12 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	var res agent.Result
 	err := ctx.Err()
 	if err == nil {
+		err = pr.inputErr
+	}
+	if err == nil && len(opts.Images) > 0 && p.Provider != "codex" && p.Provider != "claude" && p.Provider != "agy" {
+		err = fmt.Errorf("%s 공급사의 이미지 전달은 지원하지 않음", p.Provider)
+	}
+	if err == nil {
 		res, err = prov.Run(ctx, opts, emit)
 	}
 	h.mu.Lock()
@@ -1059,13 +1238,14 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if res.SessionID != "" {
 		msg.SessionID = res.SessionID
 	}
-	if res.SessionID != "" && pr.resetGen == rs.resetGen {
-		p.SessionID = res.SessionID
+	if res.SessionID != "" {
+		h.keepSession(rs, pr, res.SessionID)
 	}
 	text := strings.TrimSpace(res.Text)
 	if text == "" {
 		text = strings.TrimSpace(textBuf.String())
 	}
+	rawText := text
 	var signal string
 	if t.Reason == "discussion" {
 		text, signal = ParseSignal(text)
@@ -1074,7 +1254,16 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		}
 		msg.Signal = signal
 	}
+	workDone := false
+	if pr.part != nil && t.Reason != "review" && t.Reason != "discussion" {
+		text, workDone = ParseWorkDone(text)
+		if workDone {
+			msg.Signal = workDoneSignal
+		}
+	}
 	msg.Text = text
+	mentions := append([]string{}, ParseParticipantMentions(ordinaryMentionText(text), rs.room.Participants)...)
+	msg.Mentions = &mentions
 	switch {
 	case tracePersistenceError != nil:
 		msg.Status, msg.Error = "error", fmt.Sprintf("실행 기록 저장 실패: %v", tracePersistenceError)
@@ -1085,8 +1274,17 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	default:
 		msg.Status = "done"
 	}
-	if msg.Status == "done" && pr.resetGen == rs.resetGen {
-		p.LastSeen, p.Unseen = pr.seen, pr.unseen
+	if msg.Status == "done" && t.Reason != "review" {
+		if pr.part != nil {
+			pr.part.LastSeen, pr.part.Unseen = pr.seen, pr.unseen
+		} else if pr.resetGen == rs.resetGen {
+			p.LastSeen, p.Unseen, p.Brief = pr.seen, pr.unseen, pr.brief
+		}
+		if pr.bootstrap && t.Reason != "part" && pr.part.SessionID != "" && pr.stopGen == rs.stopGen {
+			replay := *t
+			replay.ID, replay.Status = newID(), "queued"
+			rs.enqueueFront(&replay)
+		}
 	}
 	// Only this invocation's steers count against Result.Steered. Earlier
 	// accepted steers may still lie above this turn's delivery boundary.
@@ -1104,15 +1302,48 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			}
 		}
 	}
+	// D11: malformed output is not applied; allow one persisted correction per step.
+	var nextStep *ReviewStep
+	var outcome string
+	if t.Reason == "review" && msg.Status == "done" && pr.part.State == "reviewing" {
+		var applyErr error
+		nextStep, outcome, applyErr = pr.part.Review.Apply(text)
+		if applyErr != nil {
+			msg.Status, msg.Error = "error", "리뷰 표 형식 오류: "+applyErr.Error()
+			nextStep = pr.part.Review.RetryFormat(applyErr)
+			if nextStep != nil {
+				outcome = "format_retry"
+			}
+		}
+	}
+	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
+		msg.Status, msg.Error = "error", fmt.Sprintf("메시지 저장 실패: %v", err)
+	}
+	if err := h.finishMarkers(rs, pr, rawText); err != nil {
+		msg.Status, msg.Error = "error", fmt.Sprintf("첨부·요청 저장 실패: %v", err)
+	}
 	p.Turns++
 	rs.room.UpdatedAt = nowMs()
-	_ = h.store.AppendMessage(rs.room.ID, msg)
+	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
+		msg.Status, msg.Error = "error", fmt.Sprintf("메시지 저장 실패: %v", err)
+	}
+	if msg.Status == "done" {
+		if err := h.acknowledgeNotices(rs, pr); err != nil {
+			msg.Status, msg.Error = "error", fmt.Sprintf("공지 전달 기록 저장 실패: %v", err)
+		}
+	}
 	rs.broadcast("message", msg)
 	if h.Log != nil {
 		h.Log.Printf("turn %s %s/%s status=%s %dms err=%v", rs.room.ID, p.ID, p.Model, msg.Status, msg.Duration, err)
 	}
 
-	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" {
+	if t.Reason == "review" {
+		h.finishReview(rs, pr.part, msg, nextStep, outcome)
+	}
+	if workDone && msg.Status == "done" && pr.stopGen == rs.stopGen {
+		h.submitAsync(rs, pr.part.ID)
+	}
+	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" {
 		h.chainMentions(rs, msg, t)
 	}
 	if pr.stopGen == rs.stopGen && t.Reason == "discussion" {
@@ -1148,6 +1379,9 @@ func applyUsage(p *Participant, prov agent.Provider, u map[string]any) {
 	p.Totals.Cached += num("cache_read_input_tokens") + num("cached_input_tokens") + num("cache_read_tokens")
 	p.Totals.Cost += num("total_cost_usd")
 	if c := num("context_tokens"); c > 0 {
+		if int(c) < p.ContextTokens { // the CLI compacted this session; the brief may be gone
+			p.Brief = ""
+		}
 		p.ContextTokens = int(c)
 	}
 	if w := num("context_window"); w > 0 {
@@ -1161,6 +1395,10 @@ func applyUsage(p *Participant, prov agent.Provider, u map[string]any) {
 // remain holes below LastSeen; own replies never become undelivered holes.
 // Delivery is committed only after success (or when no CLI input is needed).
 func (rs *roomState) deltaFor(p *Participant, first bool, cap int64) ([]*Message, int64, []int64) {
+	return rs.deltaForContext(p, first, cap, "")
+}
+
+func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, partID string) ([]*Message, int64, []int64) {
 	last := p.LastSeen
 	if first {
 		last = 0
@@ -1183,7 +1421,7 @@ func (rs *roomState) deltaFor(p *Participant, first bool, cap int64) ([]*Message
 		if m.Seq > seen {
 			seen = m.Seq
 		}
-		if (m.Target != "" && m.Target != p.ID) || (!first && (m.Author == p.ID || m.Live)) {
+		if (m.Target != "" && m.Target != p.ID) || (!first && (m.Author == p.ID || (m.Live && m.Part == partID))) {
 			continue
 		}
 		if m.Status == "streaming" {
@@ -1193,19 +1431,26 @@ func (rs *roomState) deltaFor(p *Participant, first bool, cap int64) ([]*Message
 		if m.Status == "cancelled" && m.Text == "" {
 			continue
 		}
+		if m.NoticeFor == p.ID {
+			continue
+		} // delivered separately, regardless of cap or history trimming
 		out = append(out, m)
 	}
 	return out, seen, unseen
 }
 
 func (h *Hub) chainMentions(rs *roomState, msg *Message, t *Turn) {
-	var others []*Participant
-	for _, p := range rs.room.enabled() {
-		if p.ID != msg.Author {
-			others = append(others, p)
+	var targets []string
+	for _, id := range msg.mentionIDs(rs.room.Participants) {
+		if p := rs.room.participant(id); p != nil && p.Enabled && !p.Removed && p.ID != msg.Author {
+			targets = append(targets, id)
 		}
 	}
-	targets := ParseParticipantMentions(msg.Text, others)
+	for _, id := range msg.Requests {
+		if r := rs.request(id); r != nil && r.Status == "pending" && !slices.Contains(targets, r.To) {
+			targets = append(targets, r.To)
+		}
+	}
 	if len(targets) == 0 {
 		return
 	}

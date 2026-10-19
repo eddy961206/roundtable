@@ -279,7 +279,7 @@ func TestArgsPerMode(t *testing.T) {
 	if strings.Contains(c, "dangerously") {
 		t.Error("claude args must never bypass permissions")
 	}
-	x := codexArgs(RunOptions{Mode: ModeWrite, Workspace: ws, Model: "gpt-6.1-sol", Effort: "high"})
+	x := codexArgs(RunOptions{Mode: ModeWrite, Workspace: ws, Model: "gpt-6.1-sol", Effort: "high"}, "")
 	xs := strings.Join(x, " ")
 	for _, want := range []string{"exec --json", `model="gpt-6.1-sol"`, `model_reasoning_effort="high"`, `sandbox_mode="workspace-write"`, "--cd " + ws + " -"} {
 		if !strings.Contains(xs, want) {
@@ -289,33 +289,19 @@ func TestArgsPerMode(t *testing.T) {
 	if strings.Contains(xs, "bypass") {
 		t.Error("codex args must never bypass the sandbox")
 	}
-	xr := strings.Join(codexArgs(RunOptions{Mode: ModeRead, Workspace: ws, SessionID: "tid"}), " ")
+	xr := strings.Join(codexArgs(RunOptions{Mode: ModeRead, Workspace: ws, SessionID: "tid"}, ""), " ")
 	if !strings.HasPrefix(xr, "exec resume --json") || !strings.HasSuffix(xr, " tid -") || !strings.Contains(xr, `sandbox_mode="read-only"`) || strings.Contains(xr, "--cd") || strings.Contains(xr, "--color") {
 		t.Errorf("codex resume args wrong: %s", xr)
 	}
 	a := agyArgs(RunOptions{Mode: ModeChat, Model: "gemini-3.8-flash-high", Prompt: "hi", SessionID: "cid"})
 	as := strings.Join(a, " ")
-	for _, want := range []string{"--mode plan", "--model gemini-3.8-flash-high", "--conversation cid", "--sandbox", "-p=hi"} {
+	for _, want := range []string{"--mode plan", "--model gemini-3.8-flash-high", "--conversation cid", "--sandbox", "--input-format stream-json"} {
 		if !strings.Contains(as, want) {
 			t.Errorf("agy args missing %q: %s", want, as)
 		}
 	}
-	if a[len(a)-1] != "-p=hi" {
-		t.Error("agy prompt must be the last argument")
-	}
-}
-
-func TestCompactPrompt(t *testing.T) {
-	long := strings.Repeat("가나다라마바사아자차카타파하", 4000)
-	got := compactPrompt(long, agyPromptLimit)
-	if len(got) > agyPromptLimit {
-		t.Fatalf("len %d > limit", len(got))
-	}
-	if !strings.Contains(got, "생략") || !strings.HasPrefix(got, "가나다") || !strings.HasSuffix(got, "파하") {
-		t.Fatalf("compact shape wrong: head=%q tail=%q", got[:12], got[len(got)-12:])
-	}
-	if compactPrompt("short", 100) != "short" {
-		t.Fatal("short prompt must be untouched")
+	if a[len(a)-1] != "-p=" {
+		t.Error("agy prompt must come through stdin, not the command line")
 	}
 }
 

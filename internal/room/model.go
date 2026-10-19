@@ -13,6 +13,7 @@ type Participant struct {
 	Model         string         `json:"model"`
 	Effort        string         `json:"effort"`
 	SessionID     string         `json:"session_id"`
+	Brief         string         `json:"brief,omitempty"`  // briefKey of the standing brief this session holds
 	LastSeen      int64          `json:"last_seen"`        // highest message seq considered for delivery
 	Unseen        []int64        `json:"unseen,omitempty"` // unfinished replies below LastSeen
 	Status        string         `json:"status"`           // idle | queued | running
@@ -47,6 +48,7 @@ type Room struct {
 	DiscussionRounds int            `json:"discussion_rounds"` // default rounds for 토론 mode
 	Seq              int64          `json:"seq"`
 	Persona          bool           `json:"persona"` // allow light banter between agents
+	Work             *WorkPlan      `json:"-"`       // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {
@@ -70,6 +72,11 @@ func (r *Room) enabled() []*Participant {
 
 // Message is one chat line. Agent messages stream in and end as done|error|cancelled.
 type Message struct {
+	NoticeFor        string         `json:"notice_for,omitempty"` // durable out-of-cap feedback to this seat; visible to everyone
+	NoticeDelivered  bool           `json:"notice_delivered,omitempty"`
+	Attachments      []Attachment   `json:"attachments,omitempty"`
+	Requests         []string       `json:"requests,omitempty"`
+	Mentions         *[]string      `json:"mentions,omitempty"` // nil: legacy; empty list: resolved without ordinary mentions
 	ID               string         `json:"id"`
 	Seq              int64          `json:"seq"`
 	TS               int64          `json:"ts"`
@@ -80,9 +87,11 @@ type Message struct {
 	Target           string         `json:"target,omitempty"` // user message addressed to one agent only
 	Live             bool           `json:"live,omitempty"`   // injected into a running turn (steering)
 	TurnID           string         `json:"turn_id,omitempty"`
-	Reason           string         `json:"reason,omitempty"` // mention | broadcast | discussion
+	Reason           string         `json:"reason,omitempty"` // mention | broadcast | discussion | part | review
 	Round            int            `json:"round,omitempty"`
-	Signal           string         `json:"signal,omitempty"` // discussion signal
+	Signal           string         `json:"signal,omitempty"` // discussion signal or WORK:DONE
+	Part             string         `json:"part,omitempty"`
+	ReviewStep       string         `json:"review_step,omitempty"` // findings | author_reply | rebuttal | recheck
 	Error            string         `json:"error,omitempty"`
 	Model            string         `json:"model,omitempty"`
 	Provider         string         `json:"provider,omitempty"`
@@ -106,8 +115,11 @@ type Turn struct {
 	Round    int    `json:"round,omitempty"`
 	Status   string `json:"status"` // queued | running
 	Created  int64  `json:"created"`
+	Part     string `json:"part,omitempty"` // work part this turn runs for (D9, review)
 	parallel bool   // broadcast prompt instructions survive independent start times
 	priority bool   // targeted user messages precede ordinary waiting turns
+	prompt   string // hub-built part or review instruction
+	step     string // review step kind
 }
 
 // TraceLine binds an agent event to the message it belongs to.

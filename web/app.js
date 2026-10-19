@@ -6,6 +6,9 @@
   const STREAM_THROTTLE_MS = 125; // max 8 renders/sec per message/trace
   const TRACE_EVENT_LIMIT = 200;
   const TRACE_CACHE_LIMIT = 8;
+  const MAX_ATTACHMENTS = 4;
+  const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+  const ALLOWED_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -21,6 +24,124 @@
     n = Number(n) || 0;
     return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(Math.round(n));
   };
+  const fmtBytes = (bytes) => {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n < 0) return "0 B";
+    if (n < 1024) return Math.round(n) + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(2) + " MB";
+  };
+  function detectImageMimeFromBytes(bytes) {
+    if (!bytes || bytes.length < 3) return "";
+    if (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47 &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    ) {
+      return "image/png";
+    }
+    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+      return "image/jpeg";
+    }
+    if (
+      bytes.length >= 12 &&
+      bytes[0] === 0x52 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x46 &&
+      bytes[8] === 0x57 &&
+      bytes[9] === 0x45 &&
+      bytes[10] === 0x42 &&
+      bytes[11] === 0x50
+    ) {
+      return "image/webp";
+    }
+    return "";
+  }
+  function validateAttachmentCandidate({ mime, magicMime, size, activeCount }) {
+    if (activeCount >= MAX_ATTACHMENTS) {
+      return { ok: false, code: "count", reason: "최대 4장까지 첨부할 수 있습니다 (4장 초과)" };
+    }
+    if (magicMime !== undefined) {
+      if (!ALLOWED_IMAGE_MIMES.has(magicMime)) {
+        return { ok: false, code: "format", reason: "PNG·JPEG·WEBP 형식만 첨부할 수 있습니다" };
+      }
+    } else if (mime) {
+      if (!ALLOWED_IMAGE_MIMES.has(mime)) {
+        return { ok: false, code: "format", reason: "PNG·JPEG·WEBP 형식만 첨부할 수 있습니다" };
+      }
+    }
+    if (size <= 0) {
+      return { ok: false, code: "size", reason: "빈 파일은 첨부할 수 없습니다" };
+    }
+    if (size > MAX_ATTACHMENT_BYTES) {
+      return { ok: false, code: "size", reason: "파일 크기 10MB 초과 (" + fmtBytes(size) + ")" };
+    }
+    return { ok: true, code: "", reason: "" };
+  }
+  const REQUEST_STATUS_LABELS = {
+    pending: "대기 (pending)",
+    in_progress: "진행 중 (in_progress)",
+    done: "완료 (done)",
+    rejected: "거절됨 (rejected)",
+    cancelled: "취소됨 (cancelled)",
+  };
+  function requestStatusLabel(status) {
+    return REQUEST_STATUS_LABELS[status] ? REQUEST_STATUS_LABELS[status] : String(status);
+  }
+  function isIncompleteRequest(status) {
+    return status === "pending" || status === "in_progress";
+  }
+  const REQUEST_STATUS_PRIORITY = {
+    in_progress: 0,
+    pending: 1,
+    rejected: 2,
+    done: 3,
+    cancelled: 4,
+  };
+  function sortRequests(requests) {
+    const list = Array.from(requests);
+    return list.sort((a, b) => {
+      const incA = isIncompleteRequest(a.status);
+      const incB = isIncompleteRequest(b.status);
+      if (incA !== incB) return incA ? -1 : 1;
+      const priA = REQUEST_STATUS_PRIORITY[a.status] !== undefined ? REQUEST_STATUS_PRIORITY[a.status] : 9;
+      const priB = REQUEST_STATUS_PRIORITY[b.status] !== undefined ? REQUEST_STATUS_PRIORITY[b.status] : 9;
+      if (priA !== priB) return priA - priB;
+      if (a.at !== b.at) {
+        return incA ? a.at - b.at : b.at - a.at;
+      }
+      return String(a.id).localeCompare(String(b.id));
+    });
+  }
+  function mergeSnapshotRequests(currentMap, snapRequests, updatedDuringFetchIds) {
+    const next = new Map();
+    const updated = updatedDuringFetchIds instanceof Set ? updatedDuringFetchIds : new Set();
+    if (Array.isArray(snapRequests)) {
+      for (const req of snapRequests) {
+        if (!req || !req.id) continue;
+        const prev = currentMap && typeof currentMap.get === "function" ? currentMap.get(req.id) : undefined;
+        const keepPrev =
+          prev &&
+          (updated.has(req.id) || (!isIncompleteRequest(prev.status) && isIncompleteRequest(req.status)));
+        next.set(req.id, keepPrev ? prev : req);
+      }
+    }
+    if (currentMap && typeof currentMap.entries === "function") {
+      for (const [id, prev] of currentMap.entries()) {
+        if (!next.has(id) && updated.has(id) && prev) {
+          next.set(id, prev);
+        }
+      }
+    }
+    return next;
+  }
   const fmtTime = (ms) =>
     ms ? new Date(ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
   const fmtDur = (ms) => (ms >= 60000 ? (ms / 60000).toFixed(1) + "분" : (ms / 1000).toFixed(1) + "초");
@@ -103,8 +224,228 @@
     return { kind: "unsafe", url: raw };
   }
 
-  if (typeof marked !== "undefined") {
-    marked.use({
+  function stripWorkspacePrefix(rawPath) {
+    const norm = String(rawPath ?? "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+([a-zA-Z]:\/)/, "$1");
+    const roots = [];
+    if (state.work && Array.isArray(state.work.parts)) {
+      for (const p of state.work.parts) {
+        if (p && p.worktree) roots.push(p.worktree);
+      }
+    }
+    if (state.room && state.room.workspace) {
+      roots.push(state.room.workspace);
+    }
+    for (const root of roots) {
+      const ws = String(root)
+        .replace(/\\/g, "/")
+        .replace(/^\/+([a-zA-Z]:\/)/, "$1")
+        .replace(/\/+$/, "");
+      if (!ws) continue;
+      const normLower = norm.toLowerCase();
+      const wsLower = ws.toLowerCase();
+      if (normLower.startsWith(wsLower + "/")) {
+        return norm.slice(ws.length + 1);
+      }
+      if (normLower === wsLower) {
+        return norm.split("/").pop() || norm;
+      }
+      // Also strip sibling git worktree prefix (<workspace>-wt/<branch>/...)
+      if (normLower.startsWith(wsLower + "-wt/")) {
+        const rest = norm.slice((ws + "-wt/").length);
+        const slashIdx = rest.indexOf("/");
+        if (slashIdx >= 0 && slashIdx + 1 < rest.length) {
+          return rest.slice(slashIdx + 1);
+        }
+      }
+      const wtMatch = ws.match(/^(.*)-wt\/[^/]+$/i);
+      if (wtMatch && normLower.startsWith(wtMatch[1].toLowerCase() + "/")) {
+        return norm.slice(wtMatch[1].length + 1);
+      }
+    }
+    if (!/^[a-zA-Z]:\//.test(norm)) {
+      return norm.replace(/^\/+/, "");
+    }
+    return norm;
+  }
+
+  function formatFileHref(rawHref) {
+    let raw = String(rawHref ?? "").trim().replace(/^file:(?:\/\/(?:localhost(?=\/))?)?/i, "");
+    try {
+      raw = decodeURIComponent(raw);
+    } catch {
+      // keep raw path when percent sequence is not valid URI encoding
+    }
+    raw = raw.replace(/\\/g, "/").replace(/^\/+([a-zA-Z]:\/)/, "$1");
+    const m = raw.match(/^(.*?)(?:#L?(\d+)(?:-L?(\d+))?|:(\d+)(?:-(\d+))?)?$/i);
+    const filePath = m ? m[1] : raw;
+    const startLine = m ? m[2] || m[4] || "" : "";
+    const endLine = m ? m[3] || m[5] || "" : "";
+    const lines = startLine ? ":" + startLine + (endLine ? "-" + endLine : "") : "";
+    const relPath = stripWorkspacePrefix(filePath);
+    const pathDisplay = (relPath || filePath) + lines;
+    const fullPath = filePath + (startLine ? "#L" + startLine + (endLine ? "-L" + endLine : "") : "");
+    return { fullPath, relPath, lines, pathDisplay };
+  }
+
+  function wrapMarkdownCodeSpan(s) {
+    let fence = "`";
+    while (s.includes(fence)) {
+      fence += "`";
+    }
+    const pad = s.startsWith("`") || s.endsWith("`") || s.startsWith(" ") || s.endsWith(" ") ? " " : "";
+    return fence + pad + s + pad + fence;
+  }
+
+  function resolveMessageRequests(msg) {
+    if (!msg) return [];
+    const out = [];
+    const seenObj = new Set();
+    const seenId = new Set();
+    if (Array.isArray(msg.requests)) {
+      for (const item of msg.requests) {
+        if (!item) continue;
+        if (typeof item === "object") {
+          if (!seenObj.has(item)) {
+            seenObj.add(item);
+            out.push(item);
+          }
+          if (item.id) seenId.add(item.id);
+        } else if (typeof item === "string") {
+          seenId.add(item);
+          const req = state.requests.get(item);
+          if (req && !seenObj.has(req)) {
+            seenObj.add(req);
+            out.push(req);
+          }
+        }
+      }
+    }
+    if (msg.id) {
+      for (const req of state.requests.values()) {
+        if (req && req.source_msg === msg.id && !seenObj.has(req) && !seenId.has(req.id)) {
+          seenObj.add(req);
+          out.push(req);
+        }
+      }
+    }
+    return out;
+  }
+
+  function classifyAgentMarkerLine(line, msg) {
+    const rawLine = String(line == null ? "" : line);
+    if (/^(?: {4,}|\t)/.test(rawLine)) return { action: "keep", raw: line };
+    const trimmed = rawLine.trim();
+    if (!trimmed) return { action: "keep", raw: line };
+    if (
+      /^\[\[REQUEST_(?:DONE|REJECT):[^\]]+\]\](?:\s+.*)?$/.test(trimmed) ||
+      /^(?:WORK:DONE|\[\[WORK:DONE\]\])$/.test(trimmed) ||
+      /^\[\[DISCUSSION:[^\]]+\]\]$/.test(trimmed)
+    ) {
+      return { action: "hide", raw: trimmed };
+    }
+    const reqMatch = trimmed.match(/^\[\[REQUEST:@([^\]]+)\]\](?:\s+(.*))?$/);
+    if (reqMatch) {
+      const targetSeat = reqMatch[1].trim();
+      const reqText = (reqMatch[2] !== undefined ? reqMatch[2] : "").trim();
+      const reqs = resolveMessageRequests(msg);
+      const matched =
+        reqText !== "" &&
+        reqs.some((r) => {
+          if (!r || typeof r.text !== "string") return false;
+          if (r.to && r.to !== targetSeat) return false;
+          return r.text.trim() === reqText;
+        });
+      return { action: matched ? "hide" : "chip", raw: trimmed };
+    }
+    const attMatch = trimmed.match(/^\[\[ATTACH:([^\]]+)\]\]$/);
+    if (attMatch) {
+      // 첨부는 이름으로만 대조, 거절 사유는 system 메시지로 보임
+      const rawPath = attMatch[1].trim().replace(/^["']|["']$/g, "");
+      const parts = rawPath.split(/[\\/]/).filter(Boolean);
+      const fileName = parts.length > 0 ? parts[parts.length - 1] : rawPath;
+      const atts = msg && Array.isArray(msg.attachments) ? msg.attachments : [];
+      const matched =
+        fileName !== "" &&
+        atts.some((a) => a && typeof a.name === "string" && a.name === fileName);
+      return { action: matched ? "hide" : "chip", raw: trimmed };
+    }
+    return { action: "keep", raw: line };
+  }
+
+  function prepareAgentMessageText(text, msg) {
+    const raw = String(text == null ? "" : text);
+    if (!raw) return { text: "", rejectedMarkers: [] };
+    const lines = raw.split(/\r?\n/);
+    const out = [];
+    const rejectedMarkers = [];
+    let fenceChar = "";
+    let fenceLen = 0;
+
+    for (const line of lines) {
+      if (fenceChar) {
+        out.push(line);
+        const closeMatch = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
+        if (closeMatch && closeMatch[1][0] === fenceChar && closeMatch[1].length >= fenceLen) {
+          fenceChar = "";
+          fenceLen = 0;
+        }
+        continue;
+      }
+      const openMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (openMatch) {
+        fenceChar = openMatch[1][0];
+        fenceLen = openMatch[1].length;
+        out.push(line);
+        continue;
+      }
+      const res = classifyAgentMarkerLine(line, msg);
+      if (res.action === "hide") {
+        continue;
+      }
+      if (res.action === "chip") {
+        rejectedMarkers.push(res.raw);
+        out.push(wrapMarkdownCodeSpan(res.raw));
+        continue;
+      }
+      out.push(line);
+    }
+    return { text: out.join("\n"), rejectedMarkers };
+  }
+
+  function formatAgentMessageText(text, msg) {
+    return prepareAgentMessageText(text, msg).text;
+  }
+
+  function applyRejectedMarkerChips(container, rejectedMarkers) {
+    if (!container || !Array.isArray(rejectedMarkers) || rejectedMarkers.length === 0) return;
+    const markerSet = new Set(rejectedMarkers);
+    container.querySelectorAll("code").forEach((codeEl) => {
+      if (codeEl.parentElement && codeEl.parentElement.tagName === "PRE") return;
+      const txt = codeEl.textContent || "";
+      if (markerSet.has(txt)) {
+        codeEl.classList.add("marker-chip", "muted");
+      }
+    });
+  }
+
+  const markedLib =
+    typeof marked !== "undefined"
+      ? marked
+      : typeof require === "function"
+      ? (() => {
+          try {
+            const m = require("./vendor/marked.min.js");
+            return m && m.marked ? m.marked : m;
+          } catch (_) {
+            return undefined;
+          }
+        })()
+      : undefined;
+
+  if (markedLib) {
+    markedLib.use({
       gfm: true,
       breaks: true,
       renderer: {
@@ -117,15 +458,9 @@
           const title = token && token.title != null ? String(token.title) : "";
           const check = classifyMarkdownUrl(href);
           if (check.kind === "file") {
-            // Agents cite local files as file:///abs/path#L10-L20. A browser cannot open
-            // them, and the absolute path drowns the sentence: show the agent's label
-            // (or file name + lines) and keep the full path in the tooltip.
-            const pathTxt = decodeURIComponent(href.replace(/^file:\/\/\/?/i, ""));
-            const m = pathTxt.match(/^(.*?)(?:#L(\d+)(?:-L(\d+))?)?$/);
-            const file = m[1].split(/[\\/]/).pop();
-            const lines = m[2] ? ":" + m[2] + (m[3] ? "-" + m[3] : "") : "";
-            const label = text.trim() && text.trim() !== href ? text.trim() : file + lines;
-            return '<code class="file-path" title="' + esc(pathTxt) + '">' + esc(label) + "</code>";
+            const info = formatFileHref(href);
+            const label = info.pathDisplay || text.trim() || href;
+            return '<code class="file-path" title="' + esc(info.fullPath) + '">' + esc(label) + "</code>";
           }
           if (check.kind !== "safe") {
             return esc(text || href);
@@ -166,10 +501,10 @@
 
   const md = (text) => {
     try {
-      if (typeof marked === "undefined") return "<p>" + esc(text) + "</p>";
-      const tokens = marked.lexer(text || "");
+      if (!markedLib) return "<p>" + esc(text) + "</p>";
+      const tokens = markedLib.lexer(text || "");
       friendlyMarkdownTokens(tokens);
-      return marked.parser(tokens);
+      return markedLib.parser(tokens);
     } catch {
       return "<p>" + esc(text) + "</p>";
     }
@@ -183,7 +518,11 @@
       signal,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (!res.ok) {
+      const err = new Error(data.error || res.statusText);
+      err.status = res.status;
+      throw err;
+    }
     return data;
   };
 
@@ -195,10 +534,22 @@
     roomSearch: "",
     roomId: null,
     room: null,
+    work: null,
+    workRevision: 0,
+    partNotices: new Map(),
+    partReviewOpen: new Map(),
+    workBoardCollapsed: false,
+    diffPartId: null,
+    diffData: null,
+    diffLoading: false,
+    diffError: "",
+    diffController: null,
     messages: new Map(),
     order: [],
     winStart: 0,
     winEnd: 0,
+    requests: new Map(),
+    draftAttachments: [],
     queue: [],
     discussion: null,
     traces: new Map(),
@@ -207,7 +558,7 @@
     traceErrors: new Map(),
     expanded: new Set(),
     userCollapsed: new Set(),
-    autoTrace: localStorage.getItem("rt.autoTrace") === "1",
+    autoTrace: typeof localStorage !== "undefined" && localStorage.getItem("rt.autoTrace") === "1",
     target: "",
     mentionCands: [],
     mentionIdx: 0,
@@ -225,6 +576,8 @@
     historyLoading: false,
     latestSeq: 0,
     pendingMessages: 0,
+    stickToBottom: true,
+    unreadBelow: 0,
     traceMeta: new Map(),
     tracePending: new Map(),
     traceControllers: new Map(),
@@ -519,7 +872,7 @@
     panelTimer = setTimeout(() => {
       panelTimer = null;
       if (!state.room || document.hidden) return;
-      renderParticipants(); renderTargetControls(); renderUsagePanel(); renderQueue(); renderDiscussion(); updateHint();
+      renderParticipants(); renderTargetControls(); renderUsagePanel(); renderRequests(); renderQueue(); renderDiscussion(); renderWork(); updateHint();
     }, STREAM_THROTTLE_MS);
   }
   let roomsTimer = null;
@@ -614,9 +967,9 @@
 
   // ---------- room ----------
   let openSeq = 0;
+  let activeSyncUpdatedReqIds = null;
   async function openRoom(id, resync, latest = false) {
     const preserveHistory = !!(resync && !latest && state.roomId === id && state.browsingHistory && state.order.length);
-    const priorTop = $("#timeline").scrollTop;
     const before = preserveHistory ? state.messages.get(state.order[state.order.length - 1]).seq + 1 : 0;
     const my = ++openSeq;
     if (!resync) {
@@ -626,6 +979,19 @@
       }
       state.roomId = id;
       state.target = "";
+      state.work = null;
+      state.workRevision = 0;
+      state.requests.clear();
+      state.partNotices.clear();
+      state.partReviewOpen.clear();
+      state.workBoardCollapsed = false;
+      state.stickToBottom = true;
+      state.unreadBelow = 0;
+      pendingRestoreScrollTop = null;
+      suppressScrollStick = false;
+      closeDiffDrawer();
+      closeLightbox();
+      clearDraftAttachments();
       state.draftMentions.clear();
       clearComposerError();
       state.expanded.clear();
@@ -634,8 +1000,16 @@
       const pbox = $("#participants");
       if (pbox) pbox.innerHTML = "";
     }
+    const workRev = state.workRevision;
+    const updatedReqIds = new Set();
+    activeSyncUpdatedReqIds = updatedReqIds;
     const snap = await api("GET", "/api/rooms/" + id + (preserveHistory ? "?before=" + before + "&limit=200" : ""));
+    if (activeSyncUpdatedReqIds === updatedReqIds) activeSyncUpdatedReqIds = null;
     if (my !== openSeq || state.roomId !== id) return;
+
+    const tl = $("#timeline");
+    const priorTop = tl ? tl.scrollTop : 0;
+    const shouldScrollBottom = !resync || latest || (state.stickToBottom && !preserveHistory);
 
     state.messages.clear();
     state.order = [];
@@ -655,10 +1029,28 @@
       if (m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim()) seedLive(id, m.id);
     }
     state.room = snap.room;
+    if (state.workRevision === workRev) {
+      state.workRevision++;
+      state.work = snap.work;
+    }
+    state.requests = mergeSnapshotRequests(state.requests, snap.requests, updatedReqIds);
     state.history = snap.history;
     state.browsingHistory = preserveHistory;
     state.historyLoading = false;
-    state.pendingMessages = preserveHistory ? state.pendingMessages + Math.max(0, snap.room.seq - state.latestSeq) : 0;
+    const prevLatestSeq = state.latestSeq;
+    const seqDelta = prevLatestSeq > 0 ? Math.max(0, (snap.room && snap.room.seq ? snap.room.seq : 0) - prevLatestSeq) : 0;
+    const userNewInSnap = prevLatestSeq > 0 ? (snap.messages || []).filter((m) => m.seq > prevLatestSeq && m.kind === "user").length : 0;
+    const msgNewNonUser = prevLatestSeq > 0 ? (snap.messages || []).filter((m) => m.seq > prevLatestSeq && m.kind !== "user").length : 0;
+    const newUnreadInResync = Math.max(seqDelta - userNewInSnap, msgNewNonUser);
+    state.pendingMessages = preserveHistory ? state.pendingMessages + seqDelta : 0;
+    if (shouldScrollBottom) {
+      pendingRestoreScrollTop = null;
+      suppressScrollStick = false;
+      state.stickToBottom = true;
+      state.unreadBelow = 0;
+    } else if (resync && !preserveHistory) {
+      state.unreadBelow += newUnreadInResync;
+    }
     state.latestSeq = snap.room.seq;
     state.queue = snap.queue || [];
     state.discussion = snap.discussion;
@@ -683,10 +1075,11 @@
     roomSec.dataset.mode = state.room.mode || "read";
 
     renderRoomHead();
+    renderWork();
     pruneMessageCaches();
-    renderTimeline(!preserveHistory);
-    if (preserveHistory) $("#timeline").scrollTop = priorTop;
+    renderTimeline(shouldScrollBottom, priorTop);
     renderParticipants();
+    renderRequests();
     renderQueue();
     renderDiscussion();
     renderRoomList();
@@ -732,11 +1125,14 @@
       case "message":
         upsertMessage(data);
         break;
+      case "request":
+        upsertRequest(data);
+        break;
       case "delta": {
         const m = state.messages.get(data.id);
         if (!m) return;
         m.text = (m.text || "") + (data.block && m.text ? "\n\n" : "") + data.text;
-        scheduleRender(m.id);
+        scheduleRender(data.id);
         break;
       }
       case "trace": {
@@ -776,7 +1172,10 @@
         schedulePanels();
         for (const id of state.order.slice(state.winStart, state.winEnd)) {
           const m = state.messages.get(id);
-          if (m && m.author === data.id) scheduleRender(id);
+          if (!m) continue;
+          const hasAttBySeat = Array.isArray(m.attachments) && m.attachments.some((a) => a && a.by === data.id);
+          const hasReqSeat = collectMessageRequests(m).some((r) => r.from === data.id || r.to === data.id);
+          if (m.author === data.id || hasAttBySeat || hasReqSeat) scheduleRender(id);
         }
         break;
       }
@@ -790,6 +1189,14 @@
         state.discussion = data;
         schedulePanels();
         break;
+      case "work":
+        state.roomStateRevision++;
+        state.workRevision++;
+        state.work = data;
+        renderRoomHead();
+        renderWork();
+        refreshPartErrorMessages();
+        break;
       case "limits":
         refreshLimits(false, true);
         break;
@@ -798,7 +1205,9 @@
         state.room = data;
         if ($("#room")) $("#room").dataset.mode = data.mode || "read";
         renderRoomHead();
+        renderWork();
         renderParticipants();
+        renderRequests();
         renderQueue();
         renderDiscussion();
         for (const id of state.order.slice(state.winStart, state.winEnd)) scheduleRender(id);
@@ -813,13 +1222,21 @@
     const existed = !!prev;
     const isNewSequence = m.seq > state.latestSeq;
     if (isNewSequence) { state.latestSeq = m.seq; state.history.total++; }
-    const tl = $("#timeline");
-    if (!existed && !state.browsingHistory && state.order.length >= DOM_CAP_STEP && tl.scrollHeight - tl.scrollTop - tl.clientHeight >= 80) state.browsingHistory = true;
+    if (!existed && m.kind === "user" && !state.browsingHistory) {
+      state.stickToBottom = true;
+      state.unreadBelow = 0;
+    }
+    const atBottomNow = !state.browsingHistory && state.stickToBottom;
+    if (!existed && !state.browsingHistory && state.order.length >= DOM_CAP_STEP && !atBottomNow) state.browsingHistory = true;
     if (!existed && (state.browsingHistory || (!isNewSequence && state.order.length))) {
       if (isNewSequence) state.pendingMessages++;
       updateTimelineBanners();
+      updateJumpBottomBtn();
       scheduleRoomList();
       return;
+    }
+    if (!existed && isNewSequence && m.kind !== "user" && !atBottomNow) {
+      state.unreadBelow++;
     }
     state.messages.set(m.id, m);
     if (!existed) {
@@ -839,6 +1256,9 @@
       }
     }
     if (!document.hidden) renderMessage(m.id, !existed);
+    if (m.status === "done" && (m.part || m.review_step)) {
+      refreshPartErrorMessages(m.part || "");
+    }
     if (state.room) schedulePanels();
     if (!existed || prev.status !== m.status) scheduleRoomList();
 
@@ -882,9 +1302,19 @@
       }
     }
 
+    const btnWorkPlan = $("#btn-work-plan");
+    if (btnWorkPlan) {
+      btnWorkPlan.hidden = r.mode !== "write";
+      btnWorkPlan.disabled = !!state.work;
+      btnWorkPlan.title = state.work
+        ? "이미 작업 계획이 확정된 방입니다"
+        : "작업 분배 및 적대적 교차 리뷰 계획을 확정합니다";
+    }
+
     $("#rounds").value = r.discussion_rounds || 3;
     $("#btn-export").href = "/api/rooms/" + r.id + "/export.md";
 
+    renderWorkHeadBar();
     renderTargetControls();
     renderUsagePanel();
   }
@@ -1074,36 +1504,227 @@
   }
 
   // ---------- timeline (Fix P2 #2: Strict 200 DOM cap in all scroll positions) ----------
-  function renderTimeline(scrollToBottom) {
+  let isRenderingTimeline = false;
+  let suppressScrollStick = false;
+  let pendingRestoreScrollTop = null;
+  let lastTimelineScrollTop = 0;
+  let lastTimelineScrollHeight = 0;
+
+  function isTimelineAtBottom(tl = $("#timeline")) {
+    if (!tl) return true;
+    return tl.scrollHeight - tl.scrollTop - tl.clientHeight < 60;
+  }
+
+  function recordTimelineScrollMetrics(tl = $("#timeline")) {
+    if (!tl) return;
+    lastTimelineScrollTop = tl.scrollTop;
+    lastTimelineScrollHeight = tl.scrollHeight;
+  }
+
+  function restoreTimelineScrollTop(targetTop) {
     const tl = $("#timeline");
     if (!tl) return;
-    tl.innerHTML = "";
+    suppressScrollStick = true;
+    tl.scrollTop = targetTop;
+    recordTimelineScrollMetrics(tl);
+    if (state.traceFetching.size > 0 && !state.stickToBottom) {
+      pendingRestoreScrollTop = targetTop;
+    } else {
+      pendingRestoreScrollTop = null;
+      requestAnimationFrame(() => {
+        suppressScrollStick = false;
+        recordTimelineScrollMetrics(tl);
+      });
+    }
+  }
 
-    const total = state.order.length;
-    if (!total) {
-      state.winStart = 0;
-      state.winEnd = 0;
-      updateTimelineBanners(tl);
-      renderRoomEmptyGuide(tl);
+  function syncPendingScrollRestore() {
+    if (pendingRestoreScrollTop === null) return;
+    if (state.stickToBottom) {
+      pendingRestoreScrollTop = null;
       return;
     }
-
-    if (scrollToBottom || state.winEnd > total || state.winEnd <= state.winStart) {
-      state.winEnd = total;
-      state.winStart = Math.max(0, total - DOM_CAP_STEP);
+    const tl = $("#timeline");
+    if (tl) {
+      suppressScrollStick = true;
+      tl.scrollTop = pendingRestoreScrollTop;
+      recordTimelineScrollMetrics(tl);
     }
-    if (state.winEnd - state.winStart > DOM_CAP_STEP) {
-      state.winStart = state.winEnd - DOM_CAP_STEP;
+    if (state.traceFetching.size === 0) {
+      pendingRestoreScrollTop = null;
+      requestAnimationFrame(() => {
+        suppressScrollStick = false;
+        recordTimelineScrollMetrics(tl);
+        updateJumpBottomBtn();
+      });
     }
+  }
 
-    updateTimelineBanners(tl);
-    const newerBtn = $("#timeline-newer", tl);
-    for (let i = state.winStart; i < state.winEnd; i++) {
-      renderMessage(state.order[i], true, true, newerBtn);
+  function onTimelineImageLoad(ev) {
+    const target = ev && ev.target;
+    if (!target || target.tagName !== "IMG") return;
+    const tl = $("#timeline");
+    if (!tl || document.hidden) return;
+    if (!state.browsingHistory && state.stickToBottom) {
+      suppressScrollStick = true;
+      tl.scrollTop = tl.scrollHeight;
+      recordTimelineScrollMetrics(tl);
+      requestAnimationFrame(() => {
+        if (!state.browsingHistory && state.stickToBottom) {
+          tl.scrollTop = tl.scrollHeight;
+          recordTimelineScrollMetrics(tl);
+        }
+        suppressScrollStick = false;
+        updateJumpBottomBtn();
+      });
+    } else if (pendingRestoreScrollTop !== null) {
+      suppressScrollStick = true;
+      tl.scrollTop = pendingRestoreScrollTop;
+      recordTimelineScrollMetrics(tl);
+      requestAnimationFrame(() => {
+        suppressScrollStick = false;
+        recordTimelineScrollMetrics(tl);
+        updateJumpBottomBtn();
+      });
+    } else {
+      recordTimelineScrollMetrics(tl);
     }
-    updateTimelineBanners(tl);
+  }
 
-    if (scrollToBottom) tl.scrollTop = tl.scrollHeight;
+  async function focusTimelineMessage(msgId) {
+    if (!msgId || !state.roomId) return;
+    const roomId = state.roomId;
+    closeDrawers();
+    if (!state.messages.has(msgId) && (state.browsingHistory || state.pendingMessages > 0)) {
+      await jumpToLatestMessages();
+      if (state.roomId !== roomId) return;
+    }
+    const sequence = openSeq;
+    while (!state.messages.has(msgId) && state.history && state.history.has_more && state.order.length > 0) {
+      if (state.historyLoading) break;
+      const prevOldest = state.order[0];
+      await loadOlderMessages();
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (!state.order.length || state.order[0] === prevOldest) break;
+    }
+    const idx = state.order.indexOf(msgId);
+    if (idx >= 0 && (idx < state.winStart || idx >= state.winEnd)) {
+      const half = Math.floor(DOM_CAP_STEP / 2);
+      state.winStart = Math.max(0, Math.min(idx - half, state.order.length - DOM_CAP_STEP));
+      state.winEnd = Math.min(state.order.length, state.winStart + DOM_CAP_STEP);
+      renderTimeline(false);
+    }
+    const node = $("#m-" + msgId);
+    if (!node) {
+      announce("해당 메시지를 현재 대화 범위에서 찾지 못했습니다.");
+      return;
+    }
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    node.classList.remove("msg-flash");
+    void node.offsetWidth;
+    node.classList.add("msg-flash");
+    setTimeout(() => {
+      node.classList.remove("msg-flash");
+    }, 1600);
+    announce("메시지로 이동했습니다.");
+  }
+
+  function updateJumpBottomBtn() {
+    if (isRenderingTimeline) return;
+    const btn = $("#btn-jump-bottom");
+    const badge = $("#jump-bottom-count");
+    const tl = $("#timeline");
+    if (!btn || !tl || !state.roomId) {
+      if (btn) btn.hidden = true;
+      return;
+    }
+    const atBottom = !state.browsingHistory && state.stickToBottom;
+    if (atBottom) {
+      state.unreadBelow = 0;
+      btn.hidden = true;
+      if (badge) badge.hidden = true;
+      return;
+    }
+    btn.hidden = false;
+    const count = (state.browsingHistory ? state.pendingMessages : 0) + state.unreadBelow;
+    if (badge) {
+      if (count > 0) {
+        badge.hidden = false;
+        badge.textContent = count > 99 ? "99+" : String(count);
+      } else {
+        badge.hidden = true;
+        badge.textContent = "0";
+      }
+    }
+    const label = count > 0 ? "맨 아래로 이동 (새 메시지 " + count + "개)" : "맨 아래로 이동";
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  }
+
+  async function scrollToTimelineBottom() {
+    const tl = $("#timeline");
+    if (!tl) return;
+    pendingRestoreScrollTop = null;
+    suppressScrollStick = false;
+    state.stickToBottom = true;
+    state.unreadBelow = 0;
+    if (state.browsingHistory || state.pendingMessages > 0 || state.winEnd < state.order.length) {
+      await jumpToLatestMessages();
+      return;
+    }
+    tl.scrollTop = tl.scrollHeight;
+    recordTimelineScrollMetrics(tl);
+    updateJumpBottomBtn();
+  }
+
+  function renderTimeline(scrollToBottom, explicitPriorTop) {
+    const tl = $("#timeline");
+    if (!tl) return;
+    const priorTop = explicitPriorTop !== undefined ? explicitPriorTop : tl.scrollTop;
+    const shouldPinBottom = scrollToBottom || (state.stickToBottom && !state.browsingHistory);
+    isRenderingTimeline = true;
+    try {
+      tl.innerHTML = "";
+
+      const total = state.order.length;
+      if (!total) {
+        state.winStart = 0;
+        state.winEnd = 0;
+        updateTimelineBanners(tl);
+        renderRoomEmptyGuide(tl);
+        recordTimelineScrollMetrics(tl);
+        return;
+      }
+
+      if (shouldPinBottom || state.winEnd > total || state.winEnd <= state.winStart) {
+        state.winEnd = total;
+        state.winStart = Math.max(0, total - DOM_CAP_STEP);
+      }
+      if (state.winEnd - state.winStart > DOM_CAP_STEP) {
+        state.winStart = state.winEnd - DOM_CAP_STEP;
+      }
+
+      updateTimelineBanners(tl);
+      const newerBtn = $("#timeline-newer", tl);
+      for (let i = state.winStart; i < state.winEnd; i++) {
+        renderMessage(state.order[i], true, true, newerBtn);
+      }
+      updateTimelineBanners(tl);
+
+      if (shouldPinBottom) {
+        pendingRestoreScrollTop = null;
+        suppressScrollStick = false;
+        tl.scrollTop = tl.scrollHeight;
+        recordTimelineScrollMetrics(tl);
+        state.stickToBottom = true;
+        state.unreadBelow = 0;
+      } else {
+        restoreTimelineScrollTop(priorTop);
+      }
+    } finally {
+      isRenderingTimeline = false;
+    }
+    updateJumpBottomBtn();
   }
 
   function updateTimelineBanners(tl = $("#timeline")) {
@@ -1119,6 +1740,7 @@
     } else if (older) older.remove();
     $("#history-banner").hidden = !(state.browsingHistory || state.pendingMessages);
     $("#history-status").textContent = "이전 대화 보는 중" + (state.pendingMessages ? " · 새 메시지 " + state.pendingMessages + "개" : "");
+    updateJumpBottomBtn();
   }
 
   function pruneMessageCaches() {
@@ -1136,7 +1758,7 @@
     const anchor = tl.querySelector(".msg");
     const anchorId = anchor && anchor.id;
     const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
-    state.historyLoading = true; state.browsingHistory = true;
+    state.historyLoading = true; state.browsingHistory = true; state.stickToBottom = false;
     updateTimelineBanners(tl);
     try {
       const page = await api("GET", "/api/rooms/" + roomId + "?before=" + before + "&limit=100");
@@ -1150,7 +1772,11 @@
       pruneMessageCaches();
       renderTimeline(false);
       const restored = anchorId && document.getElementById(anchorId);
-      if (restored) tl.scrollTop += restored.getBoundingClientRect().top - anchorTop;
+      if (restored) {
+        const nextTop = tl.scrollTop + (restored.getBoundingClientRect().top - anchorTop);
+        restoreTimelineScrollTop(nextTop);
+      }
+      updateJumpBottomBtn();
       announce("이전 대화 " + page.messages.length + "개를 불러왔습니다. 최신 대화는 아래 버튼으로 돌아갈 수 있습니다.");
     } catch (err) {
       if (state.roomId === roomId && openSeq === sequence) announce("이전 대화 조회 실패: " + err.message);
@@ -1161,6 +1787,10 @@
 
   async function jumpToLatestMessages() {
     if (!state.roomId) return;
+    pendingRestoreScrollTop = null;
+    suppressScrollStick = false;
+    state.stickToBottom = true;
+    state.unreadBelow = 0;
     try { await openRoom(state.roomId, true, true); }
     catch (err) { announce("최신 대화 조회 실패: " + err.message); }
   }
@@ -1386,7 +2016,7 @@
     const emptyGuide = $("#timeline-empty");
     if (emptyGuide) emptyGuide.remove();
 
-    const atBottom = tl.scrollHeight - tl.scrollTop - tl.clientHeight < 80;
+    const atBottom = !state.browsingHistory && state.stickToBottom;
     const total = state.order.length;
     const idx = state.order.indexOf(id);
 
@@ -1426,8 +2056,21 @@
       (m.status === "error" ? " error" : "");
 
     if (m.kind === "system") {
+      const sysBadges = [];
+      if (m.part) sysBadges.push('<span class="badge msg-part-badge">🧩 ' + esc(m.part) + "</span> ");
+      if (m.review_step) {
+        sysBadges.push(
+          '<span class="badge msg-review-step-badge ' +
+            esc(m.review_step) +
+            '">' +
+            esc(reviewStepLabel(m.review_step)) +
+            "</span> "
+        );
+      }
       node.innerHTML =
-        '<div class="bubble"><span>ℹ ' +
+        '<div class="bubble">' +
+        sysBadges.join("") +
+        "<span>ℹ " +
         esc(rewriteProseMentions(m.text, visibleMentions)) +
         '</span> <span class="muted">' +
         fmtTime(m.ts) +
@@ -1451,6 +2094,22 @@
       }
       if (m.reason === "discussion") meta.push('<span class="badge">🗣 토론 ' + m.round + "R</span>");
       else if (m.reason === "mention") meta.push('<span class="badge">@호출</span>');
+      else if (m.reason === "part") meta.push('<span class="badge">🔨 파트 작업</span>');
+      else if (m.reason === "review") meta.push('<span class="badge">🔍 교차 리뷰</span>');
+      if (m.part) {
+        const pInfo = findWorkPart(m.part);
+        const pTitleAttr = pInfo ? ' title="' + esc(pInfo.title) + '"' : "";
+        meta.push('<span class="badge msg-part-badge"' + pTitleAttr + ">🧩 " + esc(m.part) + "</span>");
+      }
+      if (m.review_step) {
+        meta.push(
+          '<span class="badge msg-review-step-badge ' +
+            esc(m.review_step) +
+            '">' +
+            esc(reviewStepLabel(m.review_step)) +
+            "</span>"
+        );
+      }
       meta.push('<span class="muted">' + fmtTime(m.ts) + "</span>");
 
       if (m.status === "streaming") {
@@ -1469,6 +2128,11 @@
         meta.push('<span class="badge">⏹ 중단됨</span>');
       } else if (m.status === "error") {
         meta.push('<span class="badge" style="color:var(--danger);border-color:var(--danger)">⚠ 실패</span>');
+        if (isPartErrorResolved(m)) {
+          meta.push('<span class="badge muted resolved-after-badge">이후 해결됨</span>');
+        } else if (isPartErrorAbandoned(m)) {
+          meta.push('<span class="badge muted abandoned-after-badge">파트 포기됨</span>');
+        }
       }
       if (m.signal) {
         meta.push('<span class="signal ' + esc(m.signal) + '">' + esc(m.signal) + "</span>");
@@ -1476,9 +2140,27 @@
 
       const live = m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim() ? state.live.get(m.id) : null;
       if (m.status !== "streaming") state.live.delete(m.id);
+      const agentPrepared = m.kind === "agent" ? prepareAgentMessageText(m.text, m) : { text: "", rejectedMarkers: [] };
+      const agentDisplayText = agentPrepared.text;
+      const hasVisibleAgentText = m.kind === "agent" && agentDisplayText.trim() !== "";
       const bodyHtml =
-        m.kind === "user" ? "<p>" + esc(rewriteProseMentions(m.text, visibleMentions)).replace(/\n/g, "<br>") + "</p>" : live ? liveHtml(live) : md(m.text);
-      const bodyKey = live ? "live:" + live.ver : visibleMentions(m.text);
+        m.kind === "user"
+          ? m.text
+            ? "<p>" + esc(rewriteProseMentions(m.text, visibleMentions)).replace(/\n/g, "<br>") + "</p>"
+            : ""
+          : live
+          ? liveHtml(live)
+          : m.kind === "agent"
+          ? hasVisibleAgentText
+            ? md(agentDisplayText)
+            : ""
+          : md(m.text);
+      const bodyKey =
+        live
+          ? "live:" + live.ver
+          : m.kind === "agent"
+          ? visibleMentions(agentDisplayText)
+          : visibleMentions(m.text);
 
       const foot = [];
       if (m.duration_ms) foot.push("⏱ " + fmtDur(m.duration_ms));
@@ -1501,6 +2183,8 @@
           '<div class="bubble">' +
           '<div class="meta"></div>' +
           '<div class="body"></div>' +
+          '<div class="msg-attachments" hidden></div>' +
+          '<div class="msg-requests" hidden></div>' +
           '<div class="err-slot"></div>' +
           '<div class="foot"></div>' +
           '<div class="trace" id="t-' +
@@ -1512,10 +2196,16 @@
 
       bubble.querySelector(".meta").innerHTML = meta.join("");
       const bodyEl = bubble.querySelector(".body");
+      bodyEl.hidden =
+        (m.kind === "user" && !m.text) ||
+        (m.kind === "agent" && !live && !hasVisibleAgentText && m.status !== "streaming");
       bodyEl.className = "body" + (m.status === "streaming" ? " cursor" : "");
       if (bodyEl.dataset.rawText !== bodyKey || isInitialMount) {
         bodyEl.dataset.rawText = bodyKey;
         bodyEl.innerHTML = bodyHtml;
+        if (m.kind === "agent" && !live) {
+          applyRejectedMarkerChips(bodyEl, agentPrepared.rejectedMarkers);
+        }
         bodyEl.querySelectorAll("pre").forEach((preEl) => {
           const b = el("button", "copy", "복사");
           b.type = "button";
@@ -1533,17 +2223,28 @@
         });
       }
 
+      renderMessageAttachments(bubble.querySelector(".msg-attachments"), m);
+      renderMessageRequests(bubble.querySelector(".msg-requests"), m);
+
       const errSlot = bubble.querySelector(".err-slot");
       errSlot.innerHTML = "";
       if (m.error || m.status === "error") {
         const errBox = el("div", "err-box");
         errBox.appendChild(el("span", "", "⚠ 원인: " + (m.error || "에이전트 실행 실패")));
         if (m.kind === "agent" && m.status === "error") {
-          const rBtn = el("button", "retry-btn", "↻ 다시 시도");
-          rBtn.type = "button";
-          rBtn.title = participantLabel(m.author) + "에게 직전 사용자 메시지를 다시 요청합니다";
-          rBtn.onclick = () => retryTurn(m.id, rBtn);
-          errBox.appendChild(rBtn);
+          if (m.part || m.review_step) {
+            const pBtn = el("button", "retry-btn part-retry-guide-btn", "파트 보드에서 재시도");
+            pBtn.type = "button";
+            pBtn.title = (m.part ? m.part + " " : "") + "파트 보드 카드로 이동하여 재시도합니다";
+            pBtn.onclick = () => focusWorkPartCard(m.part);
+            errBox.appendChild(pBtn);
+          } else {
+            const rBtn = el("button", "retry-btn", "↻ 다시 시도");
+            rBtn.type = "button";
+            rBtn.title = participantLabel(m.author) + "에게 직전 사용자 메시지를 다시 요청합니다";
+            rBtn.onclick = () => retryTurn(m.id, rBtn);
+            errBox.appendChild(rBtn);
+          }
         }
         errSlot.appendChild(errBox);
       }
@@ -1601,7 +2302,223 @@
     }
 
     if (!batch && (atBottom || (isNew && m.kind === "user"))) {
+      pendingRestoreScrollTop = null;
+      suppressScrollStick = false;
       tl.scrollTop = tl.scrollHeight;
+      recordTimelineScrollMetrics(tl);
+      state.stickToBottom = true;
+      state.unreadBelow = 0;
+    }
+    if (!batch) updateJumpBottomBtn();
+  }
+
+  function formatLightboxMeta(att, width, height) {
+    const parts = [];
+    if (width > 0 && height > 0) parts.push(width + "×" + height);
+    if (att.bytes > 0) parts.push(fmtBytes(att.bytes));
+    if (att.by) parts.push(att.by === "user" ? "나" : participantLabel(att.by));
+    return parts.join(" · ");
+  }
+
+  function openLightbox(att, url) {
+    const dlg = $("#dlg-lightbox");
+    if (!dlg || !att) return;
+    const nameEl = $("#lightbox-name");
+    const metaEl = $("#lightbox-meta");
+    const dlEl = $("#lightbox-download");
+    const imgEl = $("#lightbox-img");
+    if (nameEl) nameEl.textContent = att.name;
+    if (metaEl) metaEl.textContent = formatLightboxMeta(att, att.width, att.height);
+    if (dlEl) {
+      dlEl.href = url;
+      dlEl.setAttribute("download", att.name);
+    }
+    if (imgEl) {
+      imgEl.onload = () => {
+        if (!(att.width > 0 && att.height > 0) && imgEl.naturalWidth > 0 && imgEl.naturalHeight > 0 && metaEl) {
+          metaEl.textContent = formatLightboxMeta(att, imgEl.naturalWidth, imgEl.naturalHeight);
+        }
+      };
+      imgEl.src = url;
+      imgEl.alt = att.name;
+    }
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function closeLightbox() {
+    const dlg = $("#dlg-lightbox");
+    if (dlg && dlg.open) dlg.close();
+  }
+
+  function renderMessageAttachments(slot, m) {
+    if (!slot) return;
+    const atts = Array.isArray(m.attachments) ? m.attachments : [];
+    if (!atts.length || !state.roomId) {
+      slot.hidden = true;
+      slot.replaceChildren();
+      delete slot.dataset.sig;
+      return;
+    }
+    const sig = JSON.stringify(
+      atts.map((a) => [
+        a.id,
+        a.name,
+        a.mime,
+        a.bytes,
+        a.width,
+        a.height,
+        a.by,
+        a.by && a.by !== "user" ? participantLabel(a.by) : "",
+        a.by && a.by !== "user" ? seatClass(a.by) : "",
+      ])
+    );
+    slot.hidden = false;
+    if (slot.dataset.sig === sig) return;
+    slot.dataset.sig = sig;
+    slot.replaceChildren();
+
+    const grid = el("div", "att-grid");
+    for (const att of atts) {
+      const isAgentAtt = Boolean(att.by && att.by !== "user");
+      const sCls = isAgentAtt ? seatClass(att.by) : "";
+      const btn = el("button", "att-thumb" + (isAgentAtt ? " agent-att" + sCls : " user-att"));
+      btn.type = "button";
+      const url = "/api/rooms/" + encodeURIComponent(state.roomId) + "/attachments/" + encodeURIComponent(att.id);
+
+      const img = document.createElement("img");
+      img.className = "att-img";
+      img.loading = "lazy";
+      img.src = url;
+      img.alt = att.name;
+      if (att.width > 0 && att.height > 0) {
+        img.width = att.width;
+        img.height = att.height;
+      }
+      img.addEventListener("load", onTimelineImageLoad);
+      btn.appendChild(img);
+
+      const cap = el("span", "att-caption");
+      cap.appendChild(el("span", "att-caption-name", att.name));
+      if (att.width > 0 && att.height > 0) {
+        cap.appendChild(el("span", "mono", att.width + "×" + att.height));
+      }
+      btn.appendChild(cap);
+
+      const dimTxt = att.width > 0 && att.height > 0 ? " (" + att.width + "×" + att.height + ")" : "";
+      const byTxt = isAgentAtt ? " · " + participantLabel(att.by) : "";
+      btn.title = att.name + dimTxt + byTxt + " · 클릭하여 원본 보기";
+      btn.setAttribute("aria-label", att.name + dimTxt + " 라이트박스 열기");
+      btn.onclick = () => openLightbox(att, url);
+      grid.appendChild(btn);
+    }
+    slot.appendChild(grid);
+  }
+
+  function collectMessageRequests(m) {
+    if (!m) return [];
+    const ids = [];
+    const seen = new Set();
+    if (Array.isArray(m.requests)) {
+      for (const rid of m.requests) {
+        if (rid && !seen.has(rid)) {
+          seen.add(rid);
+          ids.push(rid);
+        }
+      }
+    }
+    for (const req of state.requests.values()) {
+      if (req && req.source_msg === m.id && !seen.has(req.id)) {
+        seen.add(req.id);
+        ids.push(req.id);
+      }
+    }
+    const list = [];
+    for (const rid of ids) {
+      const req = state.requests.get(rid);
+      if (req) list.push(req);
+    }
+    return list;
+  }
+
+  function buildSeatRouteChip(seatId) {
+    return el(
+      "span",
+      "seat-chip" + seatClass(seatId) + " " + authorProvider(seatId),
+      participantLabel(seatId)
+    );
+  }
+
+  function buildMessageRequestCard(req) {
+    const card = el("div", "req-card" + seatClass(req.to) + " status-" + req.status);
+    card.dataset.reqId = req.id;
+
+    const head = el("div", "req-card-head");
+    const route = el("div", "req-route");
+    route.appendChild(buildSeatRouteChip(req.from));
+    route.appendChild(el("span", "req-arrow muted", "→"));
+    route.appendChild(buildSeatRouteChip(req.to));
+    const stBadge = el("span", "badge req-status-badge status-" + req.status, requestStatusLabel(req.status));
+    route.appendChild(stBadge);
+    head.appendChild(route);
+
+    const actions = el("div", "req-card-actions");
+    if (req.result_msg) {
+      const jumpBtn = el("button", "ghost req-jump-btn", "결과 메시지로 이동");
+      jumpBtn.type = "button";
+      jumpBtn.onclick = () => focusTimelineMessage(req.result_msg);
+      actions.appendChild(jumpBtn);
+    }
+    if (isIncompleteRequest(req.status)) {
+      const cancelBtn = el("button", "danger ghost req-cancel-btn", "취소");
+      cancelBtn.type = "button";
+      cancelBtn.onclick = () => cancelRequest(req.id, cancelBtn);
+      actions.appendChild(cancelBtn);
+    }
+    if (actions.childNodes.length > 0) {
+      head.appendChild(actions);
+    }
+    card.appendChild(head);
+
+    if (req.text) {
+      card.appendChild(el("div", "req-card-text", rewriteProseMentions(req.text, visibleMentions)));
+    }
+    if (req.status === "rejected" && req.reason) {
+      const reasonEl = el("div", "req-card-reason", "거절 사유: " + req.reason);
+      card.appendChild(reasonEl);
+    }
+    return card;
+  }
+
+  function renderMessageRequests(slot, m) {
+    if (!slot) return;
+    const reqs = collectMessageRequests(m);
+    if (!reqs.length) {
+      slot.hidden = true;
+      slot.replaceChildren();
+      delete slot.dataset.sig;
+      return;
+    }
+    const sig = JSON.stringify(
+      reqs.map((r) => [
+        r.id,
+        r.from,
+        r.to,
+        r.text,
+        r.status,
+        r.result_msg,
+        r.reason,
+        participantLabel(r.from),
+        participantLabel(r.to),
+        seatClass(r.from),
+        seatClass(r.to),
+      ])
+    );
+    slot.hidden = false;
+    if (slot.dataset.sig === sig) return;
+    slot.dataset.sig = sig;
+    slot.replaceChildren();
+    for (const req of reqs) {
+      slot.appendChild(buildMessageRequestCard(req));
     }
   }
 
@@ -1672,18 +2589,27 @@
         cacheTrace(id, [...events.slice(-TRACE_EVENT_LIMIT), ...later.map(([, event]) => event)], total);
         state.messages.get(id).trace = Math.max(state.messages.get(id).trace || 0, total);
         state.traceErrors.delete(id);
+        renderTrace(id);
+        updateTraceCount(id);
       } catch (err) {
         if (controller.signal.aborted) return;
         if (state.roomId !== roomId || openSeq !== sequence) return;
         state.traceErrors.set(id, err.message);
-        renderTraceError(id); updateTraceCount(id); return;
+        renderTraceError(id);
+        updateTraceCount(id);
       } finally {
         if (state.traceControllers.get(id) === controller) {
-          state.traceFetching.delete(id); state.tracePending.delete(id); state.traceControllers.delete(id);
+          state.traceFetching.delete(id);
+          state.tracePending.delete(id);
+          state.traceControllers.delete(id);
+          syncPendingScrollRestore();
         }
       }
+      return;
     }
-    renderTrace(id); updateTraceCount(id);
+    renderTrace(id);
+    updateTraceCount(id);
+    syncPendingScrollRestore();
   }
 
   function renderTraceError(id) {
@@ -1737,6 +2663,7 @@
   function renderTrace(id) {
     const box = $("#t-" + id);
     if (!box) return;
+    const shouldPinBottom = !state.browsingHistory && state.stickToBottom;
     box.hidden = false;
     const events = state.traces.get(id) || [];
     const metadata = state.traceMeta.get(id);
@@ -1821,6 +2748,10 @@
       if (!box.querySelector(".trace-empty")) {
         box.appendChild(el("div", "muted trace-empty", "표시할 도구 기록 없음"));
       }
+      if (shouldPinBottom) {
+        const tl = $("#timeline");
+        if (tl) tl.scrollTop = tl.scrollHeight;
+      }
       return;
     }
     const emptyEl = box.querySelector(".trace-empty");
@@ -1842,6 +2773,10 @@
       } else {
         patchTraceItemElement(existing, it);
       }
+    }
+    if (shouldPinBottom) {
+      const tl = $("#timeline");
+      if (tl) tl.scrollTop = tl.scrollHeight;
     }
   }
 
@@ -2471,6 +3406,138 @@
     }
   }
 
+  function upsertRequest(req) {
+    if (!req || !req.id) return;
+    if (activeSyncUpdatedReqIds) activeSyncUpdatedReqIds.add(req.id);
+    state.requests.set(req.id, req);
+    if (req.source_msg) {
+      const srcMsg = state.messages.get(req.source_msg);
+      if (srcMsg) {
+        if (!Array.isArray(srcMsg.requests)) {
+          srcMsg.requests = [req.id];
+        } else if (!srcMsg.requests.includes(req.id)) {
+          srcMsg.requests.push(req.id);
+        }
+        if (!document.hidden) renderMessage(req.source_msg, false);
+      }
+    }
+    for (const id of state.order.slice(state.winStart, state.winEnd)) {
+      if (id === req.source_msg) continue;
+      const m = state.messages.get(id);
+      if (m && Array.isArray(m.requests) && m.requests.includes(req.id)) {
+        if (!document.hidden) renderMessage(id, false);
+      }
+    }
+    if (!document.hidden) renderRequests();
+  }
+
+  async function cancelRequest(reqId, btn) {
+    if (!state.roomId || !reqId) return;
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    if (btn) btn.disabled = true;
+    try {
+      const updated = await api("POST", "/api/rooms/" + roomId + "/requests/" + encodeURIComponent(reqId) + "/cancel");
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (updated && updated.id) {
+        upsertRequest(updated);
+      } else {
+        const cur = state.requests.get(reqId);
+        if (cur) upsertRequest({ ...cur, status: "cancelled" });
+      }
+      announce("요청이 취소되었습니다.");
+    } catch (e) {
+      if (state.roomId === roomId && openSeq === sequence) alert(e.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function renderRequests() {
+    const ul = $("#requests");
+    const cnt = $("#requests-count");
+    const sorted = sortRequests(state.requests.values());
+    const activeCount = sorted.filter((r) => isIncompleteRequest(r.status)).length;
+    if (cnt) {
+      cnt.textContent = String(sorted.length);
+      cnt.className = "badge" + (activeCount > 0 ? " warn" : "");
+      cnt.title = activeCount > 0 ? "미완료 " + activeCount + "건 / 전체 " + sorted.length + "건" : "전체 " + sorted.length + "건";
+    }
+    if (!ul) return;
+    const sig = JSON.stringify(
+      sorted.map((r) => [
+        r.id,
+        r.from,
+        r.to,
+        r.text,
+        r.source_msg,
+        r.status,
+        r.result_msg,
+        r.reason,
+        r.at,
+        participantLabel(r.from),
+        participantLabel(r.to),
+        seatClass(r.from),
+        seatClass(r.to),
+      ])
+    );
+    if (ul.dataset.sig === sig) return;
+    ul.dataset.sig = sig;
+    ul.replaceChildren();
+    if (!sorted.length) {
+      ul.appendChild(el("li", "muted", "진행 중인 요청 없음"));
+      return;
+    }
+    for (const req of sorted) {
+      const li = el("li", "req-item status-" + req.status);
+      li.dataset.reqId = req.id;
+
+      const top = el("div", "req-item-top");
+      const route = el("div", "req-route");
+      route.appendChild(buildSeatRouteChip(req.from));
+      route.appendChild(el("span", "req-arrow muted", "→"));
+      route.appendChild(buildSeatRouteChip(req.to));
+      top.appendChild(route);
+      top.appendChild(el("span", "badge req-status-badge status-" + req.status, requestStatusLabel(req.status)));
+      li.appendChild(top);
+
+      if (req.text) {
+        li.appendChild(el("div", "req-item-body", rewriteProseMentions(req.text, visibleMentions)));
+      }
+      if (req.status === "rejected" && req.reason) {
+        li.appendChild(el("div", "req-item-reason", "거절 사유: " + req.reason));
+      }
+
+      const actions = el("div", "req-item-actions");
+      if (req.source_msg) {
+        const srcBtn = el("button", "ghost", "요청 이동");
+        srcBtn.type = "button";
+        srcBtn.onclick = () => focusTimelineMessage(req.source_msg);
+        actions.appendChild(srcBtn);
+      }
+      if (req.result_msg) {
+        const resBtn = el("button", "ghost", "결과 이동");
+        resBtn.type = "button";
+        resBtn.onclick = () => focusTimelineMessage(req.result_msg);
+        actions.appendChild(resBtn);
+      }
+      if (isIncompleteRequest(req.status)) {
+        const cancelBtn = el("button", "danger", "취소");
+        cancelBtn.type = "button";
+        cancelBtn.setAttribute(
+          "aria-label",
+          participantLabel(req.from) + " → " + participantLabel(req.to) + " 요청 취소"
+        );
+        cancelBtn.onclick = () => cancelRequest(req.id, cancelBtn);
+        actions.appendChild(cancelBtn);
+      }
+      if (actions.childNodes.length > 0) {
+        li.appendChild(actions);
+      }
+      ul.appendChild(li);
+    }
+  }
+
   function renderQueue() {
     const ul = $("#queue");
     const cnt = $("#queue-count");
@@ -2484,7 +3551,14 @@
     for (const t of state.queue) {
       const li = el("li", t.status);
       const reasonTxt =
-        { mention: "@호출", broadcast: "전체", discussion: "토론 " + t.round + "R" }[t.reason] || t.reason;
+        {
+          mention: "@호출",
+          request: "요청",
+          broadcast: "전체",
+          discussion: "토론 " + t.round + "R",
+          part: "파트" + (t.part ? " " + t.part : ""),
+          review: "리뷰" + (t.part ? " " + t.part : ""),
+        }[t.reason] || t.reason;
       li.appendChild(
         el("span", "", (t.status === "running" ? "실행 · " : "대기 · ") + participantLabel(t.agent) + " · " + reasonTxt)
       );
@@ -2522,6 +3596,1129 @@
       }
     }
     bar.appendChild(sigWrap);
+  }
+
+  // ---------- Work division, adversarial review & merge UI ----------
+  const shortSHA = (sha) => (sha ? String(sha).slice(0, 8) : "");
+
+  const REVIEW_STEP_LABELS = {
+    findings: "지적 (findings)",
+    author_reply: "작성자 응답 (author_reply)",
+    rebuttal: "반박 검토 (rebuttal)",
+    recheck: "수정 확인 (recheck)",
+  };
+  const REVIEW_STEP_ORDER = {
+    findings: 1,
+    author_reply: 2,
+    rebuttal: 3,
+    recheck: 4,
+  };
+  function reviewStepLabel(step) {
+    return REVIEW_STEP_LABELS[step] || step;
+  }
+
+  const PART_STATE_LABELS = {
+    working: "작업 중 (working)",
+    reviewing: "리뷰 중 (reviewing)",
+    fixing: "수정 중 (fixing)",
+    queued: "병합 대기 (queued)",
+    awaiting_approval: "승인 대기 (awaiting_approval)",
+    merging: "병합 중 (merging)",
+    merged: "병합 완료 (merged)",
+    blocked: "차단됨 (blocked)",
+    abandoned: "포기됨 (abandoned)",
+  };
+
+  function findWorkPart(pid) {
+    if (!state.work || !state.work.parts) return null;
+    return state.work.parts.find((p) => p.id === pid) || null;
+  }
+
+  function isPartErrorResolved(m) {
+    if (!m || m.status !== "error" || (!m.part && !m.review_step)) return false;
+    const part = m.part ? findWorkPart(m.part) : null;
+    if (part && part.state === "merged") {
+      return true;
+    }
+    const baseStepOrder = m.review_step ? REVIEW_STEP_ORDER[m.review_step] || 0 : 0;
+    const mIdx = state.order.indexOf(m.id);
+    for (let i = 0; i < state.order.length; i++) {
+      const cand = state.messages.get(state.order[i]);
+      if (!cand || cand.id === m.id) continue;
+      const isAfter = m.seq != null && cand.seq != null ? cand.seq > m.seq : mIdx >= 0 && i > mIdx;
+      if (!isAfter) continue;
+      if (m.part && cand.part !== m.part) continue;
+      if (cand.status !== "done") continue;
+      if (m.review_step) {
+        const candStepOrder = cand.review_step ? REVIEW_STEP_ORDER[cand.review_step] || 0 : 0;
+        if (candStepOrder > 0 && candStepOrder >= baseStepOrder) return true;
+      } else if (m.part && cand.part === m.part) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isPartErrorAbandoned(m) {
+    if (!m || m.status !== "error" || (!m.part && !m.review_step)) return false;
+    if (isPartErrorResolved(m)) return false;
+    const part = m.part ? findWorkPart(m.part) : null;
+    return !!(part && part.state === "abandoned");
+  }
+
+  function refreshPartErrorMessages(partId = "") {
+    for (let i = state.winStart; i < state.winEnd; i++) {
+      const id = state.order[i];
+      const msg = state.messages.get(id);
+      if (!msg || msg.status !== "error") continue;
+      if (!msg.part && !msg.review_step) continue;
+      if (partId && msg.part && msg.part !== partId) continue;
+      renderMessage(id, false);
+    }
+  }
+
+  function focusWorkPartCard(partId) {
+    if (!state.work) {
+      announce("현재 활성화된 파트 보드가 없습니다.");
+      return;
+    }
+    if (state.workBoardCollapsed) {
+      state.workBoardCollapsed = false;
+      renderWorkHeadBar();
+      renderWork();
+    }
+    const board = $("#work-board");
+    if (!board) return;
+    let card = null;
+    if (partId) {
+      card = Array.from(board.querySelectorAll(".part-card")).find((elNode) => elNode.dataset.partId === partId) || null;
+    }
+    const target = card || board;
+    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (card) {
+      card.classList.remove("part-card-flash");
+      void card.offsetWidth;
+      card.classList.add("part-card-flash");
+      setTimeout(() => {
+        card.classList.remove("part-card-flash");
+      }, 1600);
+      const retryBtn = Array.from(card.querySelectorAll(".part-actions button")).find(
+        (b) => !b.disabled && (b.textContent === "재시도" || b.textContent.includes("라운드 1회 추가"))
+      );
+      if (retryBtn) retryBtn.focus({ preventScroll: true });
+    }
+    announce((partId ? partId + " " : "") + "파트 보드 카드로 이동했습니다.");
+  }
+
+  async function patchMergeMode(nextMode, btn) {
+    if (!state.roomId || !state.work) return;
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    const workRev = state.workRevision;
+    if (btn) btn.disabled = true;
+    try {
+      const updated = await api("PATCH", "/api/rooms/" + roomId + "/work", { merge_mode: nextMode });
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (state.workRevision === workRev && state.work) {
+        state.workRevision++;
+        if (updated && updated.merge_mode) state.work = updated;
+        else state.work.merge_mode = nextMode;
+      }
+      renderWorkHeadBar();
+      renderWork();
+      announce("병합 모드를 " + (nextMode === "auto" ? "자동(auto)" : "확인(confirm)") + "으로 변경했습니다.");
+    } catch (err) {
+      if (state.roomId === roomId && openSeq === sequence) alert(err.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function renderWorkHeadBar() {
+    const bar = $("#work-head-bar");
+    if (!bar) return;
+    const w = state.work;
+    if (!w) {
+      bar.hidden = true;
+      bar.replaceChildren();
+      delete bar.dataset.sig;
+      return;
+    }
+    const partsCount = w.parts ? w.parts.length : 0;
+    const sig = JSON.stringify([
+      w.goal,
+      w.base_sha,
+      w.integration_branch,
+      w.integration_sha,
+      w.merge_mode,
+      w.review_rounds,
+      w.queue,
+      w.merging,
+      state.workBoardCollapsed,
+      partsCount,
+    ]);
+    bar.hidden = false;
+    if (bar.dataset.sig === sig) return;
+    bar.dataset.sig = sig;
+    bar.replaceChildren();
+
+    const info = el("div", "work-head-info");
+    const goalSpan = el("span", "work-goal", "🎯 " + w.goal);
+    goalSpan.title = "작업 목표: " + w.goal;
+    info.appendChild(goalSpan);
+
+    const branchBadge = el("span", "badge mono work-branch-badge", "🌿 " + w.integration_branch);
+    branchBadge.title = "통합 branch: " + w.integration_branch;
+    info.appendChild(branchBadge);
+
+    const shaBadge = el("span", "badge mono work-sha-badge", "통합 SHA: " + shortSHA(w.integration_sha));
+    shaBadge.title = "통합 branch 현재 커밋 SHA: " + w.integration_sha;
+    info.appendChild(shaBadge);
+
+    if (w.base_sha) {
+      const baseBadge = el("span", "badge mono", "base: " + shortSHA(w.base_sha));
+      baseBadge.title = "기준 커밋 SHA: " + w.base_sha;
+      info.appendChild(baseBadge);
+    }
+
+    if (w.queue && w.queue.length > 0) {
+      const qBadge = el("span", "badge warn", "병합 대기열: " + w.queue.join(" → "));
+      qBadge.title = "FIFO 병합 대기열";
+      info.appendChild(qBadge);
+    }
+
+    if (w.merging) {
+      const mBadge = el("span", "badge ok mono", "병합 중: " + w.merging.part_id + " (" + shortSHA(w.merging.merge_sha) + ")");
+      mBadge.title = "before: " + w.merging.before_sha + " → merge: " + w.merging.merge_sha;
+      info.appendChild(mBadge);
+    }
+    bar.appendChild(info);
+
+    const controls = el("div", "work-head-controls");
+    const modeGroup = el("div", "merge-mode-toggle");
+    modeGroup.setAttribute("role", "group");
+    modeGroup.setAttribute("aria-label", "병합 모드 전환");
+    modeGroup.appendChild(el("span", "muted small-note", "병합:"));
+
+    for (const [mode, labelTxt] of [
+      ["confirm", "확인 (confirm)"],
+      ["auto", "자동 (auto)"],
+    ]) {
+      const active = w.merge_mode === mode;
+      const b = el("button", "merge-mode-btn" + (active ? " active" : ""), labelTxt);
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(active));
+      b.title =
+        mode === "confirm"
+          ? "확인 모드: 리뷰 통과 후 사람이 승인 버튼을 눌러야 병합합니다"
+          : "자동 모드: 리뷰·검증 통과 시 사람 승인 없이 자동 병합합니다";
+      b.onclick = () => {
+        if (w.merge_mode !== mode) patchMergeMode(mode, b);
+      };
+      modeGroup.appendChild(b);
+    }
+    controls.appendChild(modeGroup);
+
+    const foldBtn = el(
+      "button",
+      "ghost work-fold-btn",
+      state.workBoardCollapsed ? "파트 보드 펼치기 (" + partsCount + ") ▾" : "파트 보드 접기 ▴"
+    );
+    foldBtn.type = "button";
+    foldBtn.setAttribute("aria-expanded", String(!state.workBoardCollapsed));
+    foldBtn.onclick = () => {
+      state.workBoardCollapsed = !state.workBoardCollapsed;
+      renderWorkHeadBar();
+      renderWork();
+    };
+    controls.appendChild(foldBtn);
+    bar.appendChild(controls);
+  }
+
+  function buildBlockElement(block, isHalted) {
+    const box = el("div", isHalted ? "halted-box" : "part-block-box");
+    const head = el("div", "block-head");
+    head.appendChild(el("strong", "", isHalted ? "⛔ 병합 대기열 정지 (Halted)" : "⛔ 파트 차단 (Blocked)"));
+    head.appendChild(el("span", "badge block-kind", block.kind));
+    if (block.from) {
+      head.appendChild(el("span", "muted small-note", "이전 상태: " + block.from));
+    }
+    if (block.at) {
+      head.appendChild(el("span", "muted small-note", fmtTime(block.at)));
+    }
+    box.appendChild(head);
+
+    if (block.message) {
+      box.appendChild(el("div", "block-msg", block.message));
+    }
+
+    if (block.result) {
+      const res = block.result;
+      if (res.conflicts && res.conflicts.length > 0) {
+        const confWrap = el("div", "block-conflicts");
+        confWrap.appendChild(el("span", "block-label", "충돌 파일 (" + res.conflicts.length + "): "));
+        for (const f of res.conflicts) {
+          confWrap.appendChild(el("code", "file-path mono", f));
+        }
+        box.appendChild(confWrap);
+      }
+      if (res.name || (res.argv && res.argv.length > 0)) {
+        const cmdLine = el("div", "block-cmd mono");
+        const argvTxt = res.argv ? res.argv.join(" ") : "";
+        cmdLine.textContent =
+          "명령: " +
+          res.name +
+          (argvTxt ? " [" + argvTxt + "]" : "") +
+          " · exit code: " +
+          res.exit_code +
+          (res.timed_out ? " · ⏱ 시간 초과" : "");
+        box.appendChild(cmdLine);
+      }
+      if (res.output) {
+        const det = el("details", "block-output-details");
+        det.appendChild(el("summary", "", "명령 출력 보기 (Output)"));
+        const preEl = el("pre", "mono", res.output);
+        det.appendChild(preEl);
+        box.appendChild(det);
+      }
+    }
+    return box;
+  }
+
+  async function partAction(part, action, btn) {
+    if (!state.roomId || !state.work) return;
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    const workRev = state.workRevision;
+    const url = "/api/rooms/" + roomId + "/work/parts/" + encodeURIComponent(part.id) + "/" + action;
+    const body =
+      action === "approve"
+        ? {
+            submit_sha: part.submit_sha,
+            integration_sha: state.work.integration_sha,
+          }
+        : undefined;
+    if (btn) btn.disabled = true;
+    state.partNotices.delete(part.id);
+    try {
+      const res = await api("POST", url, body);
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (state.workRevision === workRev && res && res.parts) {
+        state.workRevision++;
+        state.work = res;
+      }
+      renderWorkHeadBar();
+      renderWork();
+      refreshPartErrorMessages(part.id);
+      announce(part.id + " 파트 " + action + " 요청 완료");
+    } catch (err) {
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if ((action === "approve" || action === "resolve") && err.status === 409) {
+        state.partNotices.set(part.id, "변경됨, 다시 확인");
+        announce("변경됨, 다시 확인");
+        delete $("#work-board").dataset.sig;
+        renderWork();
+        openRoom(roomId, true);
+        return;
+      }
+      alert(err.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function buildReviewSection(part) {
+    const rev = part.review;
+    const det = el("details", "part-review-section");
+    const savedOpen = state.partReviewOpen.get(part.id);
+    det.open = savedOpen !== undefined ? savedOpen : true;
+    det.ontoggle = () => {
+      state.partReviewOpen.set(part.id, det.open);
+    };
+
+    const totalItems = rev.rounds.reduce((acc, r) => acc + (r.items ? r.items.length : 0), 0);
+    const ovSuffix = rev.resolution
+      ? " · 사람 판정으로 통과 · " + rev.resolution.item_ids.length + "건"
+      : "";
+    const sum = el(
+      "summary",
+      "",
+      "교차 리뷰 상세 (" +
+        rev.rounds.length +
+        " / " +
+        rev.max_rounds +
+        " 라운드 · 총 지적 " +
+        totalItems +
+        "건 · 미해결 " +
+        rev.summary.unresolved +
+        "건" +
+        ovSuffix +
+        ")"
+    );
+    det.appendChild(sum);
+
+    for (const round of rev.rounds) {
+      const roundWrap = el("div", "review-round-block");
+      const rHead = el(
+        "div",
+        "review-round-head mono",
+        "라운드 " +
+          round.ref.round +
+          " · base " +
+          shortSHA(round.ref.base_sha) +
+          " .. head " +
+          shortSHA(round.ref.head_sha)
+      );
+      rHead.title = round.ref.base_sha + ".." + round.ref.head_sha;
+      roundWrap.appendChild(rHead);
+
+      const tblWrap = el("div", "review-table-wrap");
+      const tbl = el("table", "review-table");
+      const thead = el("thead");
+      const htr = el("tr");
+      for (const col of ["번호", "심각도", "파일:줄", "재현 시나리오", "확신도", "작성자", "리뷰어", "상태"]) {
+        htr.appendChild(el("th", "", col));
+      }
+      thead.appendChild(htr);
+      tbl.appendChild(thead);
+
+      const tbody = el("tbody");
+      if (!round.items || !round.items.length) {
+        const tr = el("tr");
+        const td = el("td", "muted", "지적 사항 없음 (0건)");
+        td.colSpan = 8;
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+      } else {
+        for (const item of round.items) {
+          const f = item.finding;
+          const tr = el("tr", "review-row status-" + item.status);
+          tr.appendChild(el("td", "mono", f.id));
+
+          const sevTd = el("td");
+          sevTd.appendChild(el("span", "badge sev-" + f.severity, f.severity));
+          tr.appendChild(sevTd);
+
+          const locTxt = (f.side ? f.side + ":" : "") + f.file + ":" + f.line;
+          tr.appendChild(el("td", "mono file-loc", locTxt));
+
+          tr.appendChild(el("td", "scenario-cell", f.scenario));
+
+          const confTd = el("td");
+          confTd.appendChild(el("span", "badge conf-" + f.confidence, f.confidence));
+          tr.appendChild(confTd);
+
+          const authTd = el("td", "reply-cell");
+          if (item.author) {
+            authTd.appendChild(el("span", "badge reply-action action-" + item.author.action, item.author.action));
+            if (item.author.reason) {
+              authTd.appendChild(el("span", "reply-reason", " " + item.author.reason));
+            }
+          } else {
+            authTd.textContent = "-";
+            authTd.classList.add("muted");
+          }
+          tr.appendChild(authTd);
+
+          const revTd = el("td", "reply-cell");
+          if (item.reviewer) {
+            revTd.appendChild(el("span", "badge reply-action action-" + item.reviewer.action, item.reviewer.action));
+            if (item.reviewer.reason) {
+              revTd.appendChild(el("span", "reply-reason", " " + item.reviewer.reason));
+            }
+          } else {
+            revTd.textContent = "-";
+            revTd.classList.add("muted");
+          }
+          tr.appendChild(revTd);
+
+          const stTd = el("td");
+          stTd.appendChild(el("span", "badge item-status status-" + item.status, item.status));
+          tr.appendChild(stTd);
+
+          tbody.appendChild(tr);
+        }
+      }
+      tbl.appendChild(tbody);
+      tblWrap.appendChild(tbl);
+      roundWrap.appendChild(tblWrap);
+      det.appendChild(roundWrap);
+    }
+    return det;
+  }
+
+  function renderWork() {
+    const haltedBanner = $("#work-halted-banner");
+    const board = $("#work-board");
+    const w = state.work;
+    const shouldPinBottom = !state.browsingHistory && state.stickToBottom;
+    const syncBottomPin = () => {
+      if (shouldPinBottom) {
+        const tl = $("#timeline");
+        if (tl) tl.scrollTop = tl.scrollHeight;
+      }
+    };
+
+    if (haltedBanner) {
+      if (!w || !w.halted) {
+        haltedBanner.hidden = true;
+        haltedBanner.replaceChildren();
+        delete haltedBanner.dataset.sig;
+      } else {
+        const hSig = JSON.stringify(w.halted);
+        haltedBanner.hidden = false;
+        if (haltedBanner.dataset.sig !== hSig) {
+          const wasOpen = !!haltedBanner.querySelector(".block-output-details[open]");
+          haltedBanner.dataset.sig = hSig;
+          haltedBanner.replaceChildren(buildBlockElement(w.halted, true));
+          if (wasOpen) {
+            const det = haltedBanner.querySelector(".block-output-details");
+            if (det) det.open = true;
+          }
+        }
+      }
+    }
+
+    if (!board) {
+      syncBottomPin();
+      return;
+    }
+    if (!w) {
+      board.hidden = true;
+      board.replaceChildren();
+      delete board.dataset.sig;
+      syncBottomPin();
+      return;
+    }
+    board.hidden = state.workBoardCollapsed;
+    if (state.workBoardCollapsed) {
+      syncBottomPin();
+      return;
+    }
+
+    const participantsKey = state.room ? state.room.participants.map((p) => [p.id, p.label, p.provider]) : [];
+    const sig = JSON.stringify([w, [...state.partNotices.entries()], participantsKey]);
+    if (board.dataset.sig === sig) {
+      syncBottomPin();
+      return;
+    }
+    board.dataset.sig = sig;
+    board.replaceChildren();
+
+    if (!w.parts) return;
+    for (const part of w.parts) {
+      const card = el("article", "part-card" + seatClass(part.seat) + " state-" + part.state);
+      card.dataset.partId = part.id;
+
+      const top = el("div", "part-top");
+      const titleGroup = el("div", "part-title-group");
+      titleGroup.appendChild(el("span", "badge mono part-id-badge", part.id));
+      titleGroup.appendChild(el("strong", "part-title", part.title));
+      const stBadge = el("span", "badge part-state-badge state-" + part.state, PART_STATE_LABELS[part.state] || part.state);
+      titleGroup.appendChild(stBadge);
+
+      if (part.branch) {
+        const br = el("span", "badge mono", "🌿 " + part.branch);
+        br.title = "파트 branch: " + part.branch + (part.worktree ? " (" + part.worktree + ")" : "");
+        titleGroup.appendChild(br);
+      }
+      if (part.submit_sha) {
+        const subSha = el("span", "badge mono", "제출 SHA: " + shortSHA(part.submit_sha));
+        subSha.title = "SubmitSHA: " + part.submit_sha;
+        titleGroup.appendChild(subSha);
+      }
+      if (part.ready_mode) {
+        titleGroup.appendChild(el("span", "badge", "ReadyMode: " + part.ready_mode));
+      }
+      if (part.merged_sha) {
+        const mSha = el("span", "badge mono ok", "병합됨: " + shortSHA(part.merged_sha));
+        mSha.title = "MergedSHA: " + part.merged_sha;
+        titleGroup.appendChild(mSha);
+      }
+      top.appendChild(titleGroup);
+
+      const rev = part.review;
+      const unresolved = rev && rev.summary ? rev.summary.unresolved : 0;
+      const isReviewEscalated =
+        part.state === "blocked" &&
+        !!part.block &&
+        part.block.kind === "review" &&
+        !!rev &&
+        (rev.phase === "disputed" || rev.phase === "limit");
+
+      const actions = el("div", "part-actions");
+      const btnSubmit = el("button", "", part.state === "fixing" ? "재제출" : "제출");
+      btnSubmit.type = "button";
+      btnSubmit.disabled = part.state !== "working" && part.state !== "fixing";
+      btnSubmit.title = "파트 작업 커밋을 교차 리뷰에 제출합니다";
+      btnSubmit.onclick = () => partAction(part, "submit", btnSubmit);
+      actions.appendChild(btnSubmit);
+
+      const btnApprove = el("button", "primary", "승인");
+      btnApprove.type = "button";
+      btnApprove.disabled = part.state !== "awaiting_approval";
+      btnApprove.title =
+        "현재 제출 SHA(" +
+        shortSHA(part.submit_sha) +
+        ")와 통합 SHA(" +
+        shortSHA(w.integration_sha) +
+        ")를 확인하여 병합을 승인합니다";
+      btnApprove.onclick = () => partAction(part, "approve", btnApprove);
+      actions.appendChild(btnApprove);
+
+      const btnRetry = el("button", "", isReviewEscalated ? "라운드 1회 추가 후 수정" : "재시도");
+      btnRetry.type = "button";
+      btnRetry.disabled = part.state !== "blocked";
+      btnRetry.title = isReviewEscalated
+        ? "작성자가 고쳐 다시 제출하면 재리뷰합니다"
+        : "차단(blocked)을 해제하고 이전 상태에서 다시 시도합니다";
+      btnRetry.onclick = () => partAction(part, "retry", btnRetry);
+      actions.appendChild(btnRetry);
+
+      if (isReviewEscalated) {
+        const btnResolve = el("button", "primary", "사람 판정");
+        btnResolve.type = "button";
+        btnResolve.title = "미해결 " + unresolved + "건을 넘기고 병합 대기열로 보냅니다";
+        btnResolve.onclick = () => {
+          if (!confirm("미해결 " + unresolved + "건을 넘기고 병합 대기열로 보냅니다")) return;
+          partAction(part, "resolve", btnResolve);
+        };
+        actions.appendChild(btnResolve);
+      }
+
+      const btnAbandon = el("button", "danger ghost", "포기");
+      btnAbandon.type = "button";
+      btnAbandon.disabled = part.state === "merged" || part.state === "abandoned" || part.state === "merging";
+      btnAbandon.title = "이 파트를 포기(abandoned) 상태로 전환합니다";
+      btnAbandon.onclick = () => partAction(part, "abandon", btnAbandon);
+      actions.appendChild(btnAbandon);
+
+      const btnDiff = el("button", "ghost", "Diff 보기");
+      btnDiff.type = "button";
+      btnDiff.title = "이 파트의 변경 파일 목록과 패치를 서랍에서 봅니다";
+      btnDiff.onclick = () => openDiffDrawer(part.id);
+      actions.appendChild(btnDiff);
+
+      top.appendChild(actions);
+      card.appendChild(top);
+
+      const meta = el("div", "part-meta");
+      const authorChip = el(
+        "span",
+        "seat-chip" + seatClass(part.seat) + " " + authorProvider(part.seat),
+        "담당: " + participantLabel(part.seat)
+      );
+      meta.appendChild(authorChip);
+
+      const reviewerChip = el(
+        "span",
+        "seat-chip" + seatClass(part.reviewer) + " " + authorProvider(part.reviewer),
+        "리뷰어: " + participantLabel(part.reviewer)
+      );
+      meta.appendChild(reviewerChip);
+
+      const curRound = rev && rev.rounds && rev.rounds.length ? rev.rounds[rev.rounds.length - 1].ref.round : 0;
+      const maxRounds = rev && rev.max_rounds ? rev.max_rounds : w.review_rounds;
+      const revBadgeCls =
+        "badge review-summary-badge" +
+        (unresolved > 0 && !(rev && rev.resolution) ? " warn" : rev && ((rev.summary && rev.summary.passed) || rev.resolution) ? " ok" : "");
+      const revSummaryTxt =
+        "리뷰 " +
+        curRound +
+        "/" +
+        maxRounds +
+        "R · 미해결 " +
+        unresolved +
+        "건" +
+        (rev && rev.resolution
+          ? " · 사람 판정으로 통과 · " + rev.resolution.item_ids.length + "건"
+          : "");
+      meta.appendChild(el("span", revBadgeCls, revSummaryTxt));
+      if (rev && rev.phase) {
+        meta.appendChild(el("span", "badge", "단계: " + rev.phase));
+      }
+      if (rev && rev.pending) {
+        meta.appendChild(el("span", "badge", "차례: " + rev.pending.who + " · " + rev.pending.kind));
+      }
+
+      if (part.scope && part.scope.length > 0) {
+        const scopeWrap = el("span", "part-scope");
+        scopeWrap.appendChild(el("span", "muted small-note", "범위: "));
+        for (const s of part.scope) {
+          scopeWrap.appendChild(el("code", "file-path mono", s));
+        }
+        meta.appendChild(scopeWrap);
+      }
+      card.appendChild(meta);
+
+      if (part.brief) {
+        const briefEl = el("div", "part-brief");
+        briefEl.appendChild(el("span", "muted", "완료 조건: "));
+        briefEl.appendChild(el("span", "", part.brief));
+        card.appendChild(briefEl);
+      }
+
+      if (state.partNotices.has(part.id)) {
+        const noticeBox = el("div", "part-notice", "⚠ " + state.partNotices.get(part.id));
+        noticeBox.setAttribute("role", "alert");
+        card.appendChild(noticeBox);
+      }
+
+      if (part.block) {
+        card.appendChild(buildBlockElement(part.block, false));
+      }
+
+      if (rev && rev.rounds && rev.rounds.length > 0) {
+        card.appendChild(buildReviewSection(part));
+      }
+
+      board.appendChild(card);
+    }
+    syncBottomPin();
+  }
+
+  // ---------- Diff Drawer (lazy loaded via GET /api/rooms/{id}/work/parts/{pid}/diff) ----------
+  function closeDiffDrawer() {
+    if (state.diffController) {
+      state.diffController.abort();
+      state.diffController = null;
+    }
+    state.diffPartId = null;
+    state.diffData = null;
+    state.diffLoading = false;
+    state.diffError = "";
+    const drawer = $("#diff-drawer");
+    if (drawer) {
+      drawer.hidden = true;
+      drawer.replaceChildren();
+    }
+  }
+
+  async function openDiffDrawer(partId) {
+    if (!state.roomId) return;
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    if (state.diffController) {
+      state.diffController.abort();
+    }
+    const controller = new AbortController();
+    state.diffController = controller;
+    state.diffPartId = partId;
+    state.diffData = null;
+    state.diffLoading = true;
+    state.diffError = "";
+    renderDiffDrawer();
+
+    try {
+      const diff = await api(
+        "GET",
+        "/api/rooms/" + roomId + "/work/parts/" + encodeURIComponent(partId) + "/diff",
+        undefined,
+        controller.signal
+      );
+      if (state.roomId !== roomId || openSeq !== sequence || state.diffPartId !== partId) return;
+      state.diffData = diff;
+      state.diffLoading = false;
+      renderDiffDrawer();
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      if (state.roomId !== roomId || openSeq !== sequence || state.diffPartId !== partId) return;
+      state.diffLoading = false;
+      state.diffError = err.message;
+      renderDiffDrawer();
+    } finally {
+      if (state.diffController === controller) {
+        state.diffController = null;
+      }
+    }
+  }
+
+  function renderPatchPre(patchText) {
+    const preEl = el("pre", "diff-patch mono");
+    if (!patchText) {
+      preEl.textContent = "(패치 내용 없음)";
+      return preEl;
+    }
+    const lines = String(patchText).split("\n");
+    for (const line of lines) {
+      let cls = "diff-line";
+      if (line.startsWith("+++") || line.startsWith("---")) cls += " diff-meta";
+      else if (line.startsWith("+")) cls += " diff-add";
+      else if (line.startsWith("-")) cls += " diff-del";
+      else if (line.startsWith("@@")) cls += " diff-hunk";
+      preEl.appendChild(el("div", cls, line));
+    }
+    return preEl;
+  }
+
+  function renderDiffDrawer() {
+    const drawer = $("#diff-drawer");
+    if (!drawer) return;
+    if (!state.diffPartId) {
+      drawer.hidden = true;
+      drawer.replaceChildren();
+      return;
+    }
+    drawer.hidden = false;
+    drawer.replaceChildren();
+
+    const part = findWorkPart(state.diffPartId);
+    const head = el("div", "diff-drawer-head");
+    const titleWrap = el("div", "diff-drawer-title");
+    titleWrap.appendChild(el("strong", "", "Diff · " + state.diffPartId + (part ? " (" + part.title + ")" : "")));
+    if (state.diffData) {
+      const d = state.diffData;
+      const rangeSpan = el("span", "badge mono", shortSHA(d.base_sha) + ".." + shortSHA(d.head_sha));
+      rangeSpan.title = d.base_sha + ".." + d.head_sha;
+      titleWrap.appendChild(rangeSpan);
+      titleWrap.appendChild(el("span", "badge diff-stat-add mono", "+" + d.added));
+      titleWrap.appendChild(el("span", "badge diff-stat-del mono", "-" + d.deleted));
+      if (d.truncated) {
+        titleWrap.appendChild(el("span", "badge warn", "⚠ 일부 생략됨 (truncated)"));
+      }
+    }
+    head.appendChild(titleWrap);
+
+    const headBtns = el("div", "diff-drawer-actions");
+    const refreshBtn = el("button", "ghost", "새로고침");
+    refreshBtn.type = "button";
+    refreshBtn.disabled = state.diffLoading;
+    refreshBtn.onclick = () => openDiffDrawer(state.diffPartId);
+    headBtns.appendChild(refreshBtn);
+
+    const closeBtn = el("button", "icon-btn", "✕");
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Diff 서랍 닫기");
+    closeBtn.onclick = closeDiffDrawer;
+    headBtns.appendChild(closeBtn);
+    head.appendChild(headBtns);
+    drawer.appendChild(head);
+
+    const body = el("div", "diff-drawer-body");
+    if (state.diffLoading) {
+      body.appendChild(el("p", "muted", "Diff 불러오는 중…"));
+      drawer.appendChild(body);
+      return;
+    }
+    if (state.diffError) {
+      const errBox = el("div", "err-box");
+      errBox.appendChild(el("span", "", "⚠ Diff 조회 실패: " + state.diffError));
+      body.appendChild(errBox);
+      drawer.appendChild(body);
+      return;
+    }
+    const d = state.diffData;
+    if (!d) {
+      drawer.appendChild(body);
+      return;
+    }
+
+    if (!d.files || !d.files.length) {
+      body.appendChild(el("p", "muted", "변경된 파일이 없습니다."));
+      drawer.appendChild(body);
+      return;
+    }
+    const files = d.files;
+
+    const fileList = el("ul", "diff-file-list");
+    files.forEach((f, idx) => {
+      const li = el("li", "diff-file-item");
+      const jumpBtn = el("button", "diff-file-jump");
+      jumpBtn.type = "button";
+      jumpBtn.appendChild(el("span", "badge diff-status status-" + f.status, f.status));
+      jumpBtn.appendChild(el("span", "mono diff-path", f.path));
+      const statSpan = el("span", "diff-counts mono");
+      statSpan.appendChild(el("span", "diff-stat-add", "+" + f.added));
+      statSpan.appendChild(el("span", "diff-stat-del", " -" + f.deleted));
+      jumpBtn.appendChild(statSpan);
+      jumpBtn.onclick = () => {
+        const target = $("#diff-patch-" + idx, body);
+        if (target) {
+          target.open = true;
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      };
+      li.appendChild(jumpBtn);
+      fileList.appendChild(li);
+    });
+    body.appendChild(fileList);
+
+    files.forEach((f, idx) => {
+      const det = el("details", "diff-file-card");
+      det.id = "diff-patch-" + idx;
+      det.open = true;
+      const sum = el("summary", "diff-file-summary");
+      sum.appendChild(el("span", "badge diff-status status-" + f.status, f.status));
+      sum.appendChild(el("span", "mono diff-path", f.path));
+      const counts = el("span", "diff-counts mono");
+      counts.appendChild(el("span", "diff-stat-add", "+" + f.added));
+      counts.appendChild(el("span", "diff-stat-del", " -" + f.deleted));
+      sum.appendChild(counts);
+      det.appendChild(sum);
+      det.appendChild(renderPatchPre(f.patch));
+      body.appendChild(det);
+    });
+
+    drawer.appendChild(body);
+  }
+
+  // ---------- Work Plan Dialog (POST /api/rooms/{id}/work) ----------
+  function syncReviewerSelect(seatSel, revSel, preferredReviewer = "") {
+    const enabledSeats = activeParticipants().filter((p) => p.enabled);
+    const author = enabledSeats.find((p) => p.id === seatSel.value);
+    const prevValue = preferredReviewer || revSel.value;
+    const validReviewers = author ? enabledSeats.filter((p) => p.provider !== author.provider) : [];
+    revSel.replaceChildren();
+    if (!validReviewers.length) {
+      const opt = el("option", "", "다른 공급사 활성 좌석 없음");
+      opt.value = "";
+      revSel.appendChild(opt);
+      revSel.disabled = true;
+      return;
+    }
+    revSel.disabled = false;
+    for (const r of validReviewers) {
+      const opt = el(
+        "option",
+        "",
+        participantLabel(r.id) + " (" + (LABEL[r.provider] || r.provider) + ")"
+      );
+      opt.value = r.id;
+      revSel.appendChild(opt);
+    }
+    if (validReviewers.some((r) => r.id === prevValue)) {
+      revSel.value = prevValue;
+    } else {
+      revSel.value = validReviewers[0].id;
+    }
+  }
+
+  function addVerifyRow(container, initial = null) {
+    const row = el("div", "work-verify-row");
+    const nameLabel = el("label", "", "이름");
+    const nameInput = el("input", "verify-name");
+    nameInput.placeholder = "예: test";
+    if (initial && initial.name) nameInput.value = initial.name;
+    nameLabel.appendChild(nameInput);
+    row.appendChild(nameLabel);
+
+    const argvLabel = el("label", "verify-argv-label", "실행 인자 (argv, 한 줄에 인자 1개)");
+    const argvInput = el("textarea", "verify-argv mono");
+    argvInput.rows = 3;
+    argvInput.placeholder = "예:\ngo\ntest\n./...";
+    if (initial && Array.isArray(initial.argv)) argvInput.value = initial.argv.join("\n");
+    argvLabel.appendChild(argvInput);
+    row.appendChild(argvLabel);
+
+    const timeoutLabel = el("label", "", "제한 시간(초)");
+    const timeoutInput = el("input", "verify-timeout");
+    timeoutInput.type = "number";
+    timeoutInput.min = "1";
+    timeoutInput.value = initial && initial.timeout_sec ? String(initial.timeout_sec) : "600";
+    timeoutLabel.appendChild(timeoutInput);
+    row.appendChild(timeoutLabel);
+
+    const removeBtn = el("button", "ghost remove-row-btn", "삭제");
+    removeBtn.type = "button";
+    removeBtn.onclick = () => row.remove();
+    row.appendChild(removeBtn);
+
+    container.appendChild(row);
+  }
+
+  function addPartRow(container, removable = true) {
+    const row = el("div", "work-part-row");
+    const enabledSeats = activeParticipants().filter((p) => p.enabled);
+
+    const titleLabel = el("label", "", "파트 제목");
+    const titleInput = el("input", "part-title-input");
+    titleInput.required = true;
+    titleInput.placeholder = "예: P1 리뷰 프로토콜";
+    titleLabel.appendChild(titleInput);
+    row.appendChild(titleLabel);
+
+    const scopeLabel = el("label", "", "범위 경로 (쉼표 구분)");
+    const scopeInput = el("input", "part-scope-input mono");
+    scopeInput.required = true;
+    scopeInput.placeholder = "예: internal/room/review.go, internal/room/review_test.go";
+    scopeLabel.appendChild(scopeInput);
+    row.appendChild(scopeLabel);
+
+    const briefLabel = el("label", "part-brief-label", "완료 조건 (Brief)");
+    const briefInput = el("input", "part-brief-input");
+    briefInput.required = true;
+    briefInput.placeholder = "예: review_types.go 메서드 및 단위 테스트 통과";
+    briefLabel.appendChild(briefInput);
+    row.appendChild(briefLabel);
+
+    const seatLabel = el("label", "", "담당 좌석");
+    const seatSel = el("select", "part-seat-select");
+    seatSel.required = true;
+    if (!enabledSeats.length) {
+      const opt = el("option", "", "활성 좌석 없음");
+      opt.value = "";
+      seatSel.appendChild(opt);
+      seatSel.disabled = true;
+    } else {
+      for (const s of enabledSeats) {
+        const opt = el(
+          "option",
+          "",
+          participantLabel(s.id) + " (" + (LABEL[s.provider] || s.provider) + ")"
+        );
+        opt.value = s.id;
+        seatSel.appendChild(opt);
+      }
+    }
+    seatLabel.appendChild(seatSel);
+    row.appendChild(seatLabel);
+
+    const revLabel = el("label", "", "리뷰어 좌석 (다른 공급사)");
+    const revSel = el("select", "part-reviewer-select");
+    revSel.required = true;
+    revLabel.appendChild(revSel);
+    row.appendChild(revLabel);
+
+    seatSel.onchange = () => syncReviewerSelect(seatSel, revSel);
+    syncReviewerSelect(seatSel, revSel);
+
+    if (removable) {
+      const removeBtn = el("button", "ghost remove-row-btn", "파트 삭제");
+      removeBtn.type = "button";
+      removeBtn.onclick = () => row.remove();
+      row.appendChild(removeBtn);
+    }
+
+    container.appendChild(row);
+  }
+
+  function openWorkPlanDialog() {
+    if (!state.room || state.room.mode !== "write") return;
+    const dlg = $("#dlg-work");
+    const f = $("#form-work");
+    const errBox = $("#work-form-error");
+    if (!dlg || !f) return;
+    errBox.hidden = true;
+    errBox.textContent = "";
+    f.goal.value = "";
+    f.merge_mode.value = "confirm";
+    f.review_rounds.value = "3";
+
+    const verifyBox = $("#work-verify-rows");
+    verifyBox.replaceChildren();
+    addVerifyRow(verifyBox);
+
+    const partBox = $("#work-part-rows");
+    partBox.replaceChildren();
+    addPartRow(partBox, false);
+
+    dlg.showModal();
+  }
+
+  async function onWorkPlanSubmit(e) {
+    e.preventDefault();
+    if (!state.roomId) return;
+    const f = e.target;
+    const errBox = $("#work-form-error");
+    const submitBtn = $("#dlg-work-ok");
+    errBox.hidden = true;
+    errBox.textContent = "";
+
+    const showErr = (msg) => {
+      errBox.hidden = false;
+      errBox.textContent = msg;
+    };
+
+    const goal = f.goal.value.trim();
+    if (!goal) return showErr("목표(Goal)를 입력하세요.");
+    const merge_mode = f.merge_mode.value;
+    const review_rounds = Number(f.review_rounds.value);
+    if (!Number.isInteger(review_rounds) || review_rounds < 1) {
+      return showErr("리뷰 라운드 상한은 1 이상의 정수여야 합니다.");
+    }
+
+    const verify = [];
+    for (const row of $$(".work-verify-row", $("#work-verify-rows"))) {
+      const name = $(".verify-name", row).value.trim();
+      const argvRaw = $(".verify-argv", row).value.replace(/\r\n/g, "\n");
+      const timeout_sec = Number($(".verify-timeout", row).value);
+      if (!name && argvRaw === "") continue;
+      if (!name || argvRaw === "") {
+        return showErr("검증 명령의 이름과 실행 인자(argv)를 모두 입력하세요.");
+      }
+      const argv = argvRaw.split("\n");
+      if (!argv[0].trim()) {
+        return showErr("검증 명령의 첫 번째 인자(실행 파일)는 비워둘 수 없습니다.");
+      }
+      if (!Number.isFinite(timeout_sec) || timeout_sec < 1) {
+        return showErr("검증 명령 제한 시간은 1초 이상이어야 합니다.");
+      }
+      verify.push({ name, argv, timeout_sec: Math.floor(timeout_sec) });
+    }
+
+    const partRows = $$(".work-part-row", $("#work-part-rows"));
+    if (!partRows.length) {
+      return showErr("최소 1개 이상의 파트를 추가하세요.");
+    }
+
+    const parts = [];
+    const enabledSeats = activeParticipants().filter((p) => p.enabled);
+    for (const row of partRows) {
+      const title = $(".part-title-input", row).value.trim();
+      const brief = $(".part-brief-input", row).value.trim();
+      const scopeRaw = $(".part-scope-input", row).value.trim();
+      const seat = $(".part-seat-select", row).value;
+      const reviewer = $(".part-reviewer-select", row).value;
+      if (!title || !brief) {
+        return showErr("모든 파트의 제목과 완료 조건을 입력하세요.");
+      }
+      const scope = scopeRaw
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (!scope.length) {
+        return showErr("파트 '" + title + "'의 범위 경로(scope)를 1개 이상 입력하세요.");
+      }
+      const authorSeat = enabledSeats.find((p) => p.id === seat);
+      const reviewerSeat = enabledSeats.find((p) => p.id === reviewer);
+      if (!authorSeat || !reviewerSeat) {
+        return showErr("파트 '" + title + "'의 담당 좌석과 리뷰어 좌석을 선택하세요.");
+      }
+      if (authorSeat.provider === reviewerSeat.provider) {
+        return showErr("파트 '" + title + "'의 리뷰어는 담당과 다른 공급사 좌석이어야 합니다.");
+      }
+      parts.push({ title, brief, scope, seat, reviewer });
+    }
+
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    const workRev = state.workRevision;
+    submitBtn.disabled = true;
+    try {
+      const plan = await api("POST", "/api/rooms/" + roomId + "/work", {
+        goal,
+        merge_mode,
+        review_rounds,
+        verify,
+        parts,
+      });
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (state.workRevision === workRev) {
+        state.workRevision++;
+        state.work = plan;
+      }
+      state.workBoardCollapsed = false;
+      $("#dlg-work").close();
+      renderRoomHead();
+      renderWork();
+      announce("작업 계획이 확정되었습니다.");
+    } catch (err) {
+      if (state.roomId === roomId && openSeq === sequence) {
+        showErr(err.message);
+      }
+    } finally {
+      submitBtn.disabled = false;
+    }
   }
 
   // ---------- composer, mentions, warnings & shortcuts ----------
@@ -2571,6 +4768,46 @@
       $("#usage-title").focus();
     };
     $("#btn-latest-history").onclick = jumpToLatestMessages;
+    const jumpBottomBtn = $("#btn-jump-bottom");
+    if (jumpBottomBtn) {
+      jumpBottomBtn.onclick = () => scrollToTimelineBottom();
+    }
+    const timelineEl = $("#timeline");
+    if (timelineEl) {
+      const cancelPendingScrollRestore = () => {
+        pendingRestoreScrollTop = null;
+        suppressScrollStick = false;
+      };
+      timelineEl.addEventListener("wheel", cancelPendingScrollRestore, { passive: true });
+      timelineEl.addEventListener("touchmove", cancelPendingScrollRestore, { passive: true });
+      timelineEl.addEventListener("pointerdown", cancelPendingScrollRestore, { passive: true });
+      timelineEl.addEventListener("keydown", cancelPendingScrollRestore);
+      timelineEl.addEventListener("load", onTimelineImageLoad, true);
+      timelineEl.addEventListener(
+        "scroll",
+        () => {
+          if (isRenderingTimeline || suppressScrollStick || pendingRestoreScrollTop !== null || document.hidden) return;
+          if (!state.browsingHistory && state.stickToBottom) {
+            const heightGrew = timelineEl.scrollHeight > lastTimelineScrollHeight;
+            const scrolledUp = timelineEl.scrollTop < lastTimelineScrollTop - 4;
+            if (heightGrew && !scrolledUp) {
+              suppressScrollStick = true;
+              timelineEl.scrollTop = timelineEl.scrollHeight;
+              recordTimelineScrollMetrics(timelineEl);
+              suppressScrollStick = false;
+              updateJumpBottomBtn();
+              return;
+            }
+          }
+          const atBottom = !state.browsingHistory && isTimelineAtBottom(timelineEl);
+          state.stickToBottom = atBottom;
+          if (atBottom) state.unreadBelow = 0;
+          recordTimelineScrollMetrics(timelineEl);
+          updateJumpBottomBtn();
+        },
+        { passive: true }
+      );
+    }
     $("#btn-theme").onclick = toggleTheme;
     $("#btn-new-room").onclick = () => openRoomDialog();
     const onbNew = $("#btn-onboard-new");
@@ -2600,6 +4837,28 @@
     $("#dlg-room-cancel").onclick = () => $("#dlg-room").close();
     $("#form-room").onsubmit = onRoomSubmit;
     $("#btn-add-seat-spec").onclick = () => addSeatSpec($("#room-seat-specs"));
+    $("#btn-copy-room-seats").onclick = () => {
+      const box = $("#room-seat-specs");
+      box.replaceChildren();
+      for (const p of state.room.participants) addSeatSpec(box, p.provider, true, p);
+    };
+
+    const btnWorkPlan = $("#btn-work-plan");
+    if (btnWorkPlan) {
+      btnWorkPlan.onclick = () => {
+        closeMoreMenu();
+        openWorkPlanDialog();
+      };
+    }
+    const dlgWorkCancel = $("#dlg-work-cancel");
+    if (dlgWorkCancel) dlgWorkCancel.onclick = () => $("#dlg-work").close();
+    const btnAddVerify = $("#btn-add-verify");
+    if (btnAddVerify) btnAddVerify.onclick = () => addVerifyRow($("#work-verify-rows"));
+    const btnAddPart = $("#btn-add-part");
+    if (btnAddPart) btnAddPart.onclick = () => addPartRow($("#work-part-rows"), true);
+    const formWork = $("#form-work");
+    if (formWork) formWork.onsubmit = onWorkPlanSubmit;
+
     $("#btn-add-participant").onclick = () => {
       participantDialogSequence++;
       $("#participant-spec").replaceChildren();
@@ -2633,12 +4892,80 @@
       }
     };
 
-    $("#composer").onsubmit = (e) => {
-      e.preventDefault();
-      send();
-    };
+    const lightboxCloseBtn = $("#lightbox-close");
+    if (lightboxCloseBtn) {
+      lightboxCloseBtn.onclick = () => closeLightbox();
+    }
+    const dlgLightbox = $("#dlg-lightbox");
+    if (dlgLightbox) {
+      dlgLightbox.addEventListener("click", (e) => {
+        if (e.target === dlgLightbox) closeLightbox();
+      });
+      dlgLightbox.addEventListener("close", () => {
+        const img = $("#lightbox-img");
+        if (img) img.removeAttribute("src");
+      });
+    }
+
+    const btnAttach = $("#btn-attach");
+    const fileInput = $("#file-input");
+    if (btnAttach && fileInput) {
+      btnAttach.onclick = () => {
+        if (!state.roomId) return;
+        fileInput.click();
+      };
+      fileInput.addEventListener("change", () => {
+        if (fileInput.files && fileInput.files.length > 0) {
+          addAttachmentFiles(fileInput.files);
+        }
+        fileInput.value = "";
+      });
+    }
+
+    const composerEl = $("#composer");
+    if (composerEl) {
+      composerEl.onsubmit = (e) => {
+        e.preventDefault();
+        send();
+      };
+      let dragDepth = 0;
+      const hasFiles = (dt) => dt && dt.types && Array.from(dt.types).includes("Files");
+      composerEl.addEventListener("dragenter", (e) => {
+        if (!hasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        dragDepth++;
+        composerEl.classList.add("drag-over");
+      });
+      composerEl.addEventListener("dragover", (e) => {
+        if (!hasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        composerEl.classList.add("drag-over");
+      });
+      composerEl.addEventListener("dragleave", (e) => {
+        if (!hasFiles(e.dataTransfer)) return;
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0) composerEl.classList.remove("drag-over");
+      });
+      composerEl.addEventListener("drop", (e) => {
+        if (!hasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        dragDepth = 0;
+        composerEl.classList.remove("drag-over");
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          addAttachmentFiles(e.dataTransfer.files);
+        }
+      });
+    }
 
     const input = $("#input");
+    input.addEventListener("paste", (e) => {
+      const files = extractClipboardImageFiles(e.clipboardData);
+      if (files.length > 0) {
+        e.preventDefault();
+        addAttachmentFiles(files);
+      }
+    });
     input.addEventListener("keydown", (e) => {
       const pop = $("#mention-pop");
       if (pop && !pop.hidden && state.mentionCands.length > 0) {
@@ -2752,7 +5079,13 @@
       await api("DELETE", "/api/rooms/" + state.roomId);
       state.roomId = null;
       state.room = null;
+      state.work = null;
+      state.requests.clear();
+      closeLightbox();
+      clearDraftAttachments();
+      closeDiffDrawer();
       renderUsagePanel();
+      renderRequests();
       $("#btn-add-participant").disabled = true;
       $("#participants").replaceChildren();
       localStorage.removeItem("rt.room");
@@ -2782,6 +5115,11 @@
         const more = $("#more-actions");
         if (more && more.open) {
           more.open = false;
+          return;
+        }
+        const diffDrawer = $("#diff-drawer");
+        if (diffDrawer && !diffDrawer.hidden) {
+          closeDiffDrawer();
           return;
         }
         if (document.body.classList.contains("show-left") || document.body.classList.contains("show-right")) {
@@ -2939,36 +5277,373 @@
     updateHint();
   }
 
+  let draftAttachmentSeq = 0;
+
+  function showComposerError(msg) {
+    const error = $("#composer-error");
+    if (!error) return;
+    error.hidden = false;
+    error.textContent = msg;
+    const input = $("#input");
+    if (input) input.setAttribute("aria-invalid", "true");
+  }
+
   function clearComposerError() {
     const error = $("#composer-error");
+    if (!error) return;
     error.hidden = true;
     error.textContent = "";
-    $("#input").removeAttribute("aria-invalid");
+    const input = $("#input");
+    if (input) input.removeAttribute("aria-invalid");
+  }
+
+  function hasAttachmentError() {
+    return state.draftAttachments.some((item) => item.status === "error");
+  }
+
+  function activeDraftAttachmentCount() {
+    return state.draftAttachments.filter((item) => item.status === "uploading" || item.status === "ready").length;
+  }
+
+  function clearDraftAttachments() {
+    for (const item of state.draftAttachments) {
+      item.cancelled = true;
+      item.sending = false;
+      if (item.previewUrl) {
+        URL.revokeObjectURL(item.previewUrl);
+        item.previewUrl = "";
+      }
+    }
+    state.draftAttachments = [];
+    renderDraftAttachments();
+  }
+
+  function removeDraftAttachmentsByIds(localIds) {
+    if (!localIds || !localIds.size) return;
+    const kept = [];
+    for (const item of state.draftAttachments) {
+      if (localIds.has(item.localId)) {
+        item.cancelled = true;
+        item.sending = false;
+        if (item.previewUrl) {
+          URL.revokeObjectURL(item.previewUrl);
+          item.previewUrl = "";
+        }
+      } else {
+        kept.push(item);
+      }
+    }
+    state.draftAttachments = kept;
+    promoteWaitingCountAttachments();
+    if (!hasAttachmentError()) {
+      clearComposerError();
+    }
+    renderDraftAttachments();
+  }
+
+  function removeDraftAttachment(localId) {
+    if (isSendingMessage) return;
+    const idx = state.draftAttachments.findIndex((item) => item.localId === localId);
+    if (idx < 0) return;
+    if (state.draftAttachments[idx].sending) return;
+    const [removed] = state.draftAttachments.splice(idx, 1);
+    removed.cancelled = true;
+    if (removed.previewUrl) {
+      URL.revokeObjectURL(removed.previewUrl);
+      removed.previewUrl = "";
+    }
+    promoteWaitingCountAttachments();
+    if (!hasAttachmentError()) {
+      clearComposerError();
+    }
+    renderDraftAttachments();
+  }
+
+  function promoteWaitingCountAttachments() {
+    if (!state.roomId) return;
+    for (const item of state.draftAttachments) {
+      if (activeDraftAttachmentCount() >= MAX_ATTACHMENTS) break;
+      if (item.status === "error" && item.errorCode === "count" && item.file) {
+        const canSlice = typeof item.file.slice === "function";
+        const check = validateAttachmentCandidate({
+          mime: canSlice ? "" : item.file.type,
+          size: item.size,
+          activeCount: activeDraftAttachmentCount(),
+        });
+        if (check.ok) {
+          item.status = "uploading";
+          item.error = "";
+          item.errorCode = "";
+          item.uploadPromise = verifyAndUploadAttachment(item);
+        } else {
+          item.error = check.reason;
+          item.errorCode = check.code;
+        }
+      }
+    }
+  }
+
+  function renderDraftAttachments() {
+    const box = $("#composer-attachments");
+    if (!box) return;
+    if (!state.draftAttachments.length) {
+      box.hidden = true;
+      box.replaceChildren();
+      return;
+    }
+    box.hidden = false;
+    const nodes = state.draftAttachments.map((item) => {
+      let cls = "att-chip";
+      if (item.status === "uploading") cls += " uploading";
+      else if (item.status === "error") cls += " error";
+      const chip = el("div", cls);
+      chip.dataset.localId = item.localId;
+
+      if (item.previewUrl) {
+        const thumb = document.createElement("img");
+        thumb.className = "att-chip-thumb";
+        thumb.src = item.previewUrl;
+        thumb.alt = item.name;
+        chip.appendChild(thumb);
+      } else {
+        const placeholder = el("div", "att-chip-thumb", "🖼");
+        placeholder.style.display = "flex";
+        placeholder.style.alignItems = "center";
+        placeholder.style.justifyContent = "center";
+        chip.appendChild(placeholder);
+      }
+
+      const info = el("div", "att-chip-info");
+      const nameEl = el("div", "att-chip-name", item.name);
+      nameEl.title = item.name;
+      info.appendChild(nameEl);
+
+      const sizeText = fmtBytes(item.uploaded ? item.uploaded.bytes : item.size);
+      const statusSuffix = item.status === "uploading" ? " · 업로드 중…" : "";
+      info.appendChild(el("div", "att-chip-meta", sizeText + statusSuffix));
+
+      if (item.status === "error" && item.error) {
+        const errEl = el("div", "att-chip-err", item.error);
+        errEl.title = item.error;
+        info.appendChild(errEl);
+      }
+      chip.appendChild(info);
+
+      const rmBtn = el("button", "att-chip-remove", "✕");
+      rmBtn.type = "button";
+      rmBtn.title = "첨부 제거";
+      rmBtn.setAttribute("aria-label", item.name + " 첨부 제거");
+      rmBtn.disabled = isSendingMessage || Boolean(item.sending);
+      rmBtn.onclick = () => removeDraftAttachment(item.localId);
+      chip.appendChild(rmBtn);
+      return chip;
+    });
+    box.replaceChildren(...nodes);
+  }
+
+  function extractClipboardImageFiles(clipboardData) {
+    if (!clipboardData) return [];
+    const out = [];
+    if (clipboardData.items && clipboardData.items.length) {
+      for (const item of Array.from(clipboardData.items)) {
+        if (item.kind === "file") {
+          const f = item.getAsFile();
+          if (f) out.push(f);
+        }
+      }
+    }
+    if (!out.length && clipboardData.files && clipboardData.files.length) {
+      for (const f of Array.from(clipboardData.files)) {
+        out.push(f);
+      }
+    }
+    return out;
+  }
+
+  function addAttachmentFiles(fileList) {
+    if (isSendingMessage || !state.roomId || !fileList) return;
+    const files = Array.from(fileList);
+    if (!files.length) return;
+
+    for (const file of files) {
+      const localId = "draft-att-" + ++draftAttachmentSeq;
+      const name = file.name ? file.name : "clipboard-image.png";
+      const size = typeof file.size === "number" ? file.size : 0;
+      const activeCount = activeDraftAttachmentCount();
+      const canSlice = Boolean(file && typeof file.slice === "function");
+      const check = validateAttachmentCandidate({
+        mime: canSlice ? "" : file.type,
+        size,
+        activeCount,
+      });
+
+      let previewUrl = "";
+      if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function" && size > 0) {
+        try {
+          previewUrl = URL.createObjectURL(file);
+        } catch (_) {
+          previewUrl = "";
+        }
+      }
+
+      const item = {
+        localId,
+        roomId: state.roomId,
+        file,
+        name,
+        size,
+        previewUrl,
+        status: check.ok ? "uploading" : "error",
+        error: check.ok ? "" : check.reason,
+        errorCode: check.ok ? "" : check.code,
+        uploaded: null,
+        uploadPromise: null,
+        cancelled: false,
+        sending: false,
+      };
+      state.draftAttachments.push(item);
+      if (check.ok) {
+        item.uploadPromise = verifyAndUploadAttachment(item);
+      }
+    }
+    renderDraftAttachments();
+  }
+
+  async function verifyAndUploadAttachment(item) {
+    const roomId = item.roomId;
+    try {
+      if (item.file && typeof item.file.slice === "function") {
+        const slice = item.file.slice(0, 12);
+        if (typeof slice.arrayBuffer === "function") {
+          const buf = await slice.arrayBuffer();
+          if (item.cancelled || state.roomId !== roomId) return null;
+          const magicMime = detectImageMimeFromBytes(new Uint8Array(buf));
+          const magicCheck = validateAttachmentCandidate({
+            mime: item.file.type,
+            magicMime,
+            size: item.size,
+            activeCount: 0,
+          });
+          if (!magicCheck.ok) {
+            item.status = "error";
+            item.error = magicCheck.reason;
+            item.errorCode = magicCheck.code;
+            promoteWaitingCountAttachments();
+            renderDraftAttachments();
+            return null;
+          }
+        }
+      }
+
+      const fd = new FormData();
+      fd.append("file", item.file, item.name);
+      const res = await fetch("/api/rooms/" + encodeURIComponent(roomId) + "/attachments", {
+        method: "POST",
+        body: fd,
+      });
+      if (item.cancelled || state.roomId !== roomId) return null;
+      const raw = await res.text();
+      let data = null;
+      if (raw) {
+        try {
+          data = JSON.parse(raw);
+        } catch (_) {
+          data = null;
+        }
+      }
+      if (!res.ok) {
+        const reason = data && data.error ? data.error : raw ? raw.trim() : res.statusText;
+        throw new Error(reason);
+      }
+      if (!data || !data.id) {
+        throw new Error("서버 응답에 첨부 ID가 없습니다.");
+      }
+      item.uploaded = data;
+      item.status = "ready";
+      item.error = "";
+      item.errorCode = "";
+      renderDraftAttachments();
+      return data;
+    } catch (err) {
+      if (item.cancelled || state.roomId !== roomId) return null;
+      item.status = "error";
+      item.error = "업로드 실패: " + (err && err.message ? err.message : "알 수 없는 오류");
+      item.errorCode = "upload";
+      promoteWaitingCountAttachments();
+      renderDraftAttachments();
+      return null;
+    }
+  }
+
+  let isSendingMessage = false;
+
+  function setComposerBusy(busy) {
+    isSendingMessage = busy;
+    $("#input").readOnly = busy;
+    $("#btn-send").disabled = busy;
+    $("#btn-attach").disabled = busy;
+    $("#file-input").disabled = busy;
+    renderDraftAttachments();
   }
 
   async function send() {
+    if (isSendingMessage || !state.roomId) return;
     const input = $("#input");
-    const draft = input.value.trim();
+    const rawInput = input.value;
+    const draft = rawInput.trim();
     let text;
     try { text = encodedMentions(draft); }
     catch (err) {
-      const error = $("#composer-error");
-      error.hidden = false;
-      error.textContent = err.message;
-      input.setAttribute("aria-invalid", "true");
+      showComposerError(err.message);
       input.focus();
       return;
     }
+    if (hasAttachmentError()) {
+      showComposerError("오류가 있는 첨부 칩을 제거한 뒤 전송하세요.");
+      return;
+    }
     clearComposerError();
-    if (!text || !state.roomId) return;
+    const sendingItems = state.draftAttachments.filter(
+      (item) => !item.cancelled && (item.status === "uploading" || item.status === "ready")
+    );
+    if (!text && sendingItems.length === 0) return;
+
+    const sendingIds = new Set(sendingItems.map((item) => item.localId));
+    for (const item of sendingItems) item.sending = true;
+
     const roomId = state.roomId;
     const sequence = openSeq;
     const target = state.target;
-    input.value = "";
     closeMentionPop();
+    setComposerBusy(true);
+
     try {
-      await api("POST", "/api/rooms/" + roomId + "/messages", { text, target });
+      const pendingUploads = sendingItems
+        .filter((item) => item.status === "uploading" && item.uploadPromise)
+        .map((item) => item.uploadPromise);
+
+      if (pendingUploads.length > 0) {
+        await Promise.all(pendingUploads);
+        if (state.roomId !== roomId || openSeq !== sequence) return;
+      }
+
+      if (sendingItems.some((item) => item.status === "error" || !item.uploaded || !item.uploaded.id)) {
+        showComposerError("이미지 업로드에 실패했습니다. 오류 칩을 확인하세요.");
+        return;
+      }
+
+      const attachmentIds = sendingItems.map((item) => item.uploaded.id);
+      if (input.value === rawInput) {
+        input.value = "";
+      }
+
+      const payload = { text, target };
+      if (attachmentIds.length > 0) {
+        payload.attachments = attachmentIds;
+      }
+      await api("POST", "/api/rooms/" + roomId + "/messages", payload);
       if (state.roomId !== roomId || openSeq !== sequence) return;
+      removeDraftAttachmentsByIds(sendingIds);
       if (!input.value) state.draftMentions.clear();
       if (target) {
         setTarget("", false);
@@ -2978,13 +5653,20 @@
     } catch (e) {
       if (state.roomId !== roomId || openSeq !== sequence) return;
       alert(e.message);
-      if (!input.value) input.value = draft;
+      if (!input.value) {
+        input.value = rawInput;
+      } else if (input.value !== rawInput) {
+        input.value = rawInput + "\n" + input.value;
+      }
       updateHint();
+    } finally {
+      for (const item of sendingItems) item.sending = false;
+      setComposerBusy(false);
     }
   }
 
   // ---------- room dialog ----------
-  function addSeatSpec(box, providerId = "", removable = true) {
+  function addSeatSpec(box, providerId = "", removable = true, seed = null) {
     const row = el("div", "seat-spec");
     function field(text, control) {
       const label = el("label", "", text);
@@ -3072,6 +5754,14 @@
     model.onchange = syncModel;
     custom.oninput = syncEffort;
     provider.onchange();
+    if (seed) {
+      const known = [...model.options].some((o) => o.value === seed.model);
+      model.value = known ? seed.model : "__custom__";
+      custom.value = known ? "" : seed.model;
+      syncModel();
+      effort.value = seed.effort;
+      label.value = seed.label;
+    }
     if (removable) {
       const remove = el("button", "ghost", "구성 제거");
       remove.type = "button";
@@ -3106,6 +5796,7 @@
     f.persona.checked = room ? !!room.persona : false;
     $("#room-seats-fieldset").hidden = !!room;
     $("#room-seat-specs").replaceChildren();
+    $("#btn-copy-room-seats").hidden = !!room || !state.room;
     if (!room) {
       addSeatSpec($("#room-seat-specs"));
     }
@@ -3152,7 +5843,27 @@
     }
   }
 
-  boot().catch((e) => {
-    document.body.innerHTML = "<pre style='padding:20px'>시작 실패: " + esc(e.message) + "</pre>";
-  });
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      fmtBytes,
+      detectImageMimeFromBytes,
+      validateAttachmentCandidate,
+      requestStatusLabel,
+      isIncompleteRequest,
+      sortRequests,
+      mergeSnapshotRequests,
+      formatLightboxMeta,
+      classifyAgentMarkerLine,
+      prepareAgentMessageText,
+      formatAgentMessageText,
+      applyRejectedMarkerChips,
+      md,
+    };
+  }
+
+  if (typeof document !== "undefined") {
+    boot().catch((e) => {
+      document.body.innerHTML = "<pre style='padding:20px'>시작 실패: " + esc(e.message) + "</pre>";
+    });
+  }
 })();

@@ -3,6 +3,7 @@ package room
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var mentionRe = regexp.MustCompile(`(?:^|[^\p{L}\p{N}_@/.-])@([\p{L}\p{N}_-]+)`)
@@ -20,8 +21,11 @@ func ParseMentions(text string, ids []string) []string {
 	return ParseParticipantMentions(text, participants)
 }
 
-// ParseParticipantMentions accepts stable seat IDs and provider-wide groups.
+// ParseParticipantMentions accepts stable seat IDs, provider-wide groups and
+// display labels ("@Astra"); a label shared by several seats calls all of them.
 // Provider aliases expand even when a legacy seat has the same ID as its provider.
+// IDs and providers take precedence over labels. Labels cannot contain whitespace
+// and accept only the explicit Korean particles in labelMatches.
 func ParseParticipantMentions(text string, participants []*Participant) []string {
 	src := fenceRe.ReplaceAllStringFunc(text, func(s string) string { return strings.Repeat(" ", len(s)) })
 	src = inlineCodeRe.ReplaceAllStringFunc(src, func(s string) string { return strings.Repeat(" ", len(s)) })
@@ -43,13 +47,42 @@ func ParseParticipantMentions(text string, participants []*Participant) []string
 			}
 			continue
 		}
+		identityMatched := false
 		for _, p := range participants {
 			if tokenMatches(token, strings.ToLower(p.ID)) || (p.Provider != "" && tokenMatches(token, strings.ToLower(p.Provider))) {
+				identityMatched = true
+				add(p.ID)
+			}
+		}
+		if identityMatched {
+			continue
+		}
+		for _, p := range participants {
+			if labelMatches(token, strings.ToLower(p.Label)) {
 				add(p.ID)
 			}
 		}
 	}
 	return out
+}
+
+func labelMatches(token, label string) bool {
+	if label == "" || strings.IndexFunc(label, unicode.IsSpace) >= 0 || !strings.HasPrefix(token, label) {
+		return false
+	}
+	switch token[len(label):] {
+	case "", "야", "아", "님", "에게", "한테", "께", "이", "가", "은", "는", "을", "를", "도", "의", "와", "과", "랑", "이랑":
+		return true
+	}
+	return false
+}
+
+// Messages written before mention snapshots were introduced have no field.
+func (m *Message) mentionIDs(participants []*Participant) []string {
+	if m.Mentions != nil {
+		return *m.Mentions
+	}
+	return ParseParticipantMentions(ordinaryMentionText(m.Text), participants)
 }
 
 func tokenMatches(token, alias string) bool {
