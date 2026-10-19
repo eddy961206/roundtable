@@ -632,18 +632,25 @@ func (rs *roomState) broadcast(typ string, payload any) {
 }
 
 func (h *Hub) ReadTrace(id, msgID string) ([]agent.Event, error) {
+	if err := h.checkTraceMessage(id, msgID); err != nil {
+		return nil, err
+	}
+	return h.store.ReadTrace(id, msgID)
+}
+
+func (h *Hub) checkTraceMessage(id, msgID string) error {
 	h.mu.Lock()
 	rs, ok := h.rooms[id]
 	if !ok {
 		h.mu.Unlock()
-		return nil, fmt.Errorf("방 없음: %s", id)
+		return fmt.Errorf("방 없음: %s", id)
 	}
 	found := slices.ContainsFunc(rs.msgs, func(message *Message) bool { return message.ID == msgID })
 	h.mu.Unlock()
 	if !found {
-		return nil, fmt.Errorf("메시지 없음: %s", msgID)
+		return fmt.Errorf("메시지 없음: %s", msgID)
 	}
-	return h.store.ReadTrace(id, msgID)
+	return nil
 }
 
 // Trace keeps the original in-process API; storage failures remain visible as
