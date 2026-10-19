@@ -223,7 +223,7 @@ func TestDiscussionEndsOnAgreement(t *testing.T) {
 		}
 		return "동의\n[[DISCUSSION:AGREE]]"
 	}
-	if err := hub.StartDiscussion(r.ID, 3); err != nil {
+	if err := hub.StartDiscussion(r.ID, 3, sequentialFirst); err != nil {
 		t.Fatal(err)
 	}
 	waitIdle(t, hub, r.ID)

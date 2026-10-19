@@ -671,7 +671,7 @@ export function renderQueue() {
         mention: "@호출",
         request: "요청",
         broadcast: "전체",
-        discussion: "토론 " + t.round + "R",
+        discussion: "토론 " + t.round + "R" + (t.blind ? " · 블라인드" : ""),
         part: "파트" + (t.part ? " " + t.part : ""),
         review: "리뷰" + (t.part ? " " + t.part : ""),
       }[t.reason] || t.reason;
@@ -702,13 +702,20 @@ export function renderDiscussion() {
   btn.disabled = true;
   bar.innerHTML = "";
   bar.appendChild(el("b", "", "🗣 토론 진행 중 · " + d.round + " / " + d.total + " 라운드"));
+  if (d.blind && d.round === 1) {
+    bar.appendChild(el("span", "badge disc-blind", "블라인드 · 서로의 1라운드 답은 2라운드에 공개"));
+  } else if (d.blind && d.round === 2) {
+    bar.appendChild(el("span", "badge disc-blind", "1라운드 답 공개됨 · 갈린 쟁점 중심"));
+  }
   const sigWrap = el("div", "disc-signals");
   const entries = Object.entries(d.signals || {});
   if (!entries.length) {
     sigWrap.appendChild(el("span", "muted", "발언 및 신호 대기 중…"));
   } else {
     for (const [k, v] of entries) {
-      sigWrap.appendChild(el("span", "signal " + v, participantLabel(k) + ": " + v));
+      const sig = el("span", "signal " + v, participantLabel(k) + ": " + v);
+      if (v === "AGREE") sig.title = "AGREE는 의견 일치일 뿐 검증이 아닙니다";
+      sigWrap.appendChild(sig);
     }
   }
   bar.appendChild(sigWrap);

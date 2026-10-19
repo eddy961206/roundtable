@@ -163,7 +163,7 @@ func TestQueueReviewOrdinaryWaitsForDiscussion(t *testing.T) {
 	for _, route := range []string{"broadcast", "mention", "target"} {
 		t.Run(route, func(t *testing.T) {
 			hub, r, ps := controlledHub(t, "claude", "codex", "agy")
-			if err := hub.StartDiscussion(r.ID, 1); err != nil {
+			if err := hub.StartDiscussion(r.ID, 1, sequentialFirst); err != nil {
 				t.Fatal(err)
 			}
 			claude := nextCall(t, ps[0])
@@ -219,7 +219,7 @@ func TestQueueReviewOrdinaryWaitsForDiscussion(t *testing.T) {
 
 func TestQueueReviewCancelRetainsQueuedStatus(t *testing.T) {
 	hub, r, _ := controlledHub(t, "claude", "codex")
-	if err := hub.StartDiscussion(r.ID, 1); err != nil {
+	if err := hub.StartDiscussion(r.ID, 1, sequentialFirst); err != nil {
 		t.Fatal(err)
 	}
 	m := postQueueMessage(t, hub, r.ID, "@codex later question", "")
@@ -362,7 +362,7 @@ func TestQueueReviewStopPersistsUndeliveredLiveWithoutRestart(t *testing.T) {
 func TestQueueReviewLiveSteerStillAllowedDuringDiscussion(t *testing.T) {
 	hub, r, ps := controlledHub(t, "claude", "codex")
 	ps[0].steer = true
-	if err := hub.StartDiscussion(r.ID, 1); err != nil {
+	if err := hub.StartDiscussion(r.ID, 1, sequentialFirst); err != nil {
 		t.Fatal(err)
 	}
 	claude := nextCall(t, ps[0])

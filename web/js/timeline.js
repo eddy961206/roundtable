@@ -7,6 +7,7 @@ import { applyRejectedMarkerChips, md, prepareAgentMessageText, rewriteProseMent
 import { closeDrawers } from "./layout.js";
 import { messageInputTokens } from "./usage.js";
 import { renderMessageAttachments, renderMessageRequests } from "./attachments.js";
+import { renderMessageDecisions } from "./decisions.js";
 import { updateHint } from "./composer.js";
 import { findWorkPart, focusWorkPartCard, isPartErrorAbandoned, isPartErrorResolved, reviewStepLabel } from "./work.js";
 import { buildSessionActions, updateSessionActions } from "./participants.js";
@@ -532,7 +533,8 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
       }
     }
     if (m.signal) {
-      meta.push('<span class="signal ' + esc(m.signal) + '">' + esc(m.signal) + "</span>");
+      const signalTitle = m.signal === "AGREE" ? ' title="AGREE는 의견 일치일 뿐 검증이 아닙니다"' : "";
+      meta.push('<span class="signal ' + esc(m.signal) + '"' + signalTitle + ">" + esc(m.signal) + "</span>");
     }
 
     const live = m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim() ? state.live.get(m.id) : null;
@@ -570,6 +572,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
         '<div class="body"></div>' +
         '<div class="msg-attachments" hidden></div>' +
         '<div class="msg-requests" hidden></div>' +
+        '<div class="msg-decisions" hidden></div>' +
         '<div class="err-slot"></div>' +
         '<div class="foot"></div>' +
         '<div class="trace" id="t-' +
@@ -623,6 +626,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
 
     renderMessageAttachments(bubble.querySelector(".msg-attachments"), m);
     renderMessageRequests(bubble.querySelector(".msg-requests"), m);
+    renderMessageDecisions(bubble.querySelector(".msg-decisions"), m);
 
     const errSlot = bubble.querySelector(".err-slot");
     errSlot.innerHTML = "";

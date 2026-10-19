@@ -135,7 +135,7 @@ func TestQ1ReviewDiscussionCompletesSeveralRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.mu.Unlock()
-	if err := h.StartDiscussion(r.ID, 1); err != nil {
+	if err := h.StartDiscussion(r.ID, 1, sequentialFirst); err != nil {
 		t.Fatal(err)
 	}
 	call := nextCall(t, ps[0])

@@ -23,7 +23,7 @@ func TestStandingBriefRolesAndPriority(t *testing.T) {
 		},
 	}
 	me := r.Participants[0]
-	brief := standingBrief(r, me)
+	brief := standingBrief(r, me, nil)
 	for _, want := range []string{
 		"당신의 역할:\n큰 그림과 UX를 먼저 깊게 본다.",
 		"강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.",
@@ -46,7 +46,7 @@ func TestStandingBriefRolesAndPriority(t *testing.T) {
 	keyWithRoles := briefKey(brief)
 	r.Participants[0].Role = ""
 	r.Participants[1].Role = "   "
-	emptyBrief := standingBrief(r, me)
+	emptyBrief := standingBrief(r, me, nil)
 	if strings.Contains(emptyBrief, "당신의 역할") || strings.Contains(emptyBrief, "다른 참가자들의 역할") {
 		t.Fatalf("empty roles must be omitted:\n%s", emptyBrief)
 	}

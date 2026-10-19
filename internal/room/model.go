@@ -49,7 +49,9 @@ type Room struct {
 	DiscussionRounds int            `json:"discussion_rounds"` // default rounds for 토론 mode
 	Seq              int64          `json:"seq"`
 	Persona          bool           `json:"persona"` // allow light banter between agents
-	Work             *WorkPlan      `json:"-"`       // stored in room.json "work"; clients get Snapshot.work and "work" events
+	// BlindFirstDefault is the 토론 시작 default: round 1 answers independently from one cap.
+	BlindFirstDefault bool      `json:"blind_first_default"`
+	Work              *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {
@@ -77,7 +79,8 @@ type Message struct {
 	NoticeDelivered  bool           `json:"notice_delivered,omitempty"`
 	Attachments      []Attachment   `json:"attachments,omitempty"`
 	Requests         []string       `json:"requests,omitempty"`
-	Mentions         *[]string      `json:"mentions,omitempty"` // nil: legacy; empty list: resolved without ordinary mentions
+	Decisions        []string       `json:"decisions,omitempty"` // decision cards recorded by this reply's markers
+	Mentions         *[]string      `json:"mentions,omitempty"`  // nil: legacy; empty list: resolved without ordinary mentions
 	ID               string         `json:"id"`
 	Seq              int64          `json:"seq"`
 	TS               int64          `json:"ts"`
@@ -118,7 +121,8 @@ type Turn struct {
 	Round    int    `json:"round,omitempty"`
 	Status   string `json:"status"` // queued | running
 	Created  int64  `json:"created"`
-	Part     string `json:"part,omitempty"` // work part this turn runs for (D9, review)
+	Part     string `json:"part,omitempty"`  // work part this turn runs for (D9, review)
+	Blind    bool   `json:"blind,omitempty"` // blind first discussion round: runs concurrently and reads only up to Cap
 	parallel bool   // broadcast prompt instructions survive independent start times
 	priority bool   // targeted user messages precede ordinary waiting turns
 	prompt   string // hub-built part or review instruction

@@ -182,6 +182,18 @@ function classifyAgentMarkerLine(line, msg) {
       });
     return { action: matched ? "hide" : "chip", raw: trimmed };
   }
+  if (trimmed.startsWith("[[DECISION")) {
+    // 서버와 같은 형식 검사를 통과한 줄은 메시지 아래 결정 카드로 보이고, 거절된 줄은 칩으로 남긴다.
+    const decMatch = trimmed.match(/^\[\[DECISION:\s*(.*?)\s*\|\s*근거:\s*(.*?)\s*\|\s*반대:\s*(.*?)\s*\|\s*미확인:\s*(.*?)\s*\]\]$/);
+    const recorded =
+      !!decMatch &&
+      decMatch.slice(1).every((v) => v !== "") &&
+      Array.from(decMatch[1]).length <= 300 &&
+      !!msg &&
+      Array.isArray(msg.decisions) &&
+      msg.decisions.length > 0;
+    return { action: recorded ? "hide" : "chip", raw: trimmed };
+  }
   const attMatch = trimmed.match(/^\[\[ATTACH:([^\]]+)\]\]$/);
   if (attMatch) {
     // 첨부는 이름으로만 대조, 거절 사유는 system 메시지로 보임

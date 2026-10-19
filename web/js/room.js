@@ -8,6 +8,7 @@ import { renderTargetControls, updateHint } from "./composer.js";
 import { closeDiffDrawer, refreshPartErrorMessages, renderWork } from "./work.js";
 import { renderRoomHead, renderRoomList } from "./rooms.js";
 import { renderDiscussion, renderParticipants, renderQueue } from "./participants.js";
+import { mergeSnapshotDecisions, renderDecisions, upsertDecision } from "./decisions.js";
 import { boundedTraceEvent, cacheTrace, expandTrace, liveFeed, seedLive, updateTraceCount } from "./trace.js";
 import { cancelPendingScrollRestore, pruneMessageCaches, renderMessage, renderTimeline, scheduleRender, scheduleTraceRender, updateJumpBottomBtn, updateTimelineBanners } from "./timeline.js";
 
@@ -17,7 +18,7 @@ export function schedulePanels() {
   panelTimer = setTimeout(() => {
     panelTimer = null;
     if (!state.room || document.hidden) return;
-    renderParticipants(); renderTargetControls(); renderUsagePanel(); renderRequests(); renderQueue(); renderDiscussion(); renderWork(); updateHint();
+    renderParticipants(); renderTargetControls(); renderUsagePanel(); renderDecisions(); renderRequests(); renderQueue(); renderDiscussion(); renderWork(); updateHint();
   }, STREAM_THROTTLE_MS);
 }
 
@@ -37,6 +38,7 @@ export async function openRoom(id, resync, latest = false) {
     state.work = null;
     state.workRevision = 0;
     state.requests.clear();
+    state.decisions.clear();
     state.partNotices.clear();
     state.partReviewOpen.clear();
     state.workBoardCollapsed = false;
@@ -88,6 +90,7 @@ export async function openRoom(id, resync, latest = false) {
     state.work = snap.work;
   }
   state.requests = mergeSnapshotRequests(state.requests, snap.requests, updatedReqIds);
+  state.decisions = mergeSnapshotDecisions(state.decisions, snap.decisions);
   state.history = snap.history;
   state.browsingHistory = preserveHistory;
   state.historyLoading = false;
@@ -132,6 +135,7 @@ export async function openRoom(id, resync, latest = false) {
   pruneMessageCaches();
   renderTimeline(shouldScrollBottom, priorTop);
   renderParticipants();
+  renderDecisions();
   renderRequests();
   renderQueue();
   renderDiscussion();
@@ -180,6 +184,9 @@ function handle(type, data) {
       break;
     case "request":
       upsertRequest(data);
+      break;
+    case "decision":
+      upsertDecision(data);
       break;
     case "delta": {
       const m = state.messages.get(data.id);
@@ -259,6 +266,7 @@ function handle(type, data) {
       renderRoomHead();
       renderWork();
       renderParticipants();
+      renderDecisions();
       renderRequests();
       renderQueue();
       renderDiscussion();

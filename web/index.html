@@ -81,7 +81,11 @@
           </div>
           <div class="onboard-card" role="listitem">
             <h3>3. 구조화된 라운드 토론</h3>
-            <p>상단 <strong>토론 시작</strong>을 누르면 N라운드 동안 순서대로 발언하며 <code>CONTINUE</code> · <code>AGREE</code> · <code>PASS</code> · <code>CONCLUDE</code> 신호를 남깁니다. 전원 동의/패스하거나 결론이 나면 자동 종료됩니다.</p>
+            <p>상단 <strong>토론 시작</strong>을 누르면 N라운드 동안 발언하며 <code>CONTINUE</code> · <code>AGREE</code> · <code>PASS</code> · <code>CONCLUDE</code> 신호를 남깁니다. <strong>블라인드 1R</strong>을 켜면 1라운드는 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개해 순서대로 갈린 쟁점을 다룹니다. 전원 동의/패스하거나 결론이 나면 자동 종료됩니다. <code>AGREE</code>는 의견 일치일 뿐 검증이 아닙니다.</p>
+          </div>
+          <div class="onboard-card" role="listitem">
+            <h3>10. 결정 카드</h3>
+            <p>정해진 결정은 오른쪽 <strong>결정</strong> 목록에 근거·남은 반대·미확인 항목과 함께 남습니다. 에이전트는 <code>[[DECISION: 결정 | 근거: … | 반대: … | 미확인: …]]</code> 한 줄로 기록하고, 사람은 직접 추가·수정·폐기합니다. 유효한 결정 문장은 다음 턴부터 모든 참가자의 안내문에 들어갑니다.</p>
           </div>
           <div class="onboard-card" role="listitem">
             <h3>4. 방 단위 권한 모드</h3>
@@ -146,7 +150,8 @@
           </div>
           <div class="actions">
             <label class="rounds" for="rounds">라운드 <input id="rounds" type="number" min="1" max="10" value="3" aria-label="토론 라운드 수"></label>
-            <button type="button" id="btn-discuss" title="활성 참가자들이 라운드별로 순서대로 토론합니다">토론 시작</button>
+            <button type="button" id="btn-discuss" title="활성 참가자들이 라운드별로 토론합니다">토론 시작</button>
+            <label class="blind-toggle" for="chk-blind-first" title="켜면 1라운드는 모든 참가자가 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개해 순서대로 토론합니다. 이 방의 기본값으로 저장됩니다."><input type="checkbox" id="chk-blind-first"> 블라인드 1R</label>
             <button type="button" id="btn-stop" class="danger" title="실행 중인 모든 턴을 끊고 대기열과 토론을 비웁니다 (Ctrl+.)">모두 중지</button>
             <button type="button" id="btn-usage" class="mobile-only" aria-label="남은 사용량 열기" aria-controls="provider-panel">사용량</button>
             <button type="button" id="btn-right" class="tablet-only" aria-label="참가자 및 대기열 서랍 열기/닫기" title="참가자·대기열 패널 보이기/숨기기">참가자</button>
@@ -220,6 +225,12 @@
       <button type="button" id="btn-close-right" class="icon-btn tablet-only" aria-label="참가자 패널 닫기" title="닫기">✕</button>
     </div>
     <div id="participants"></div>
+    <div class="decisions-head">
+      <h2>결정</h2>
+      <span id="decisions-count" class="badge">0</span>
+      <button type="button" id="btn-add-decision" disabled>+ 추가</button>
+    </div>
+    <ul id="decisions" aria-label="결정 카드 목록"></ul>
     <div class="requests-head">
       <h2>요청</h2>
       <span id="requests-count" class="badge">0</span>
@@ -259,10 +270,34 @@
       <label>연쇄 호출 한도 <input name="max_chain" type="number" min="1" max="20" value="4"></label>
       <label>기본 토론 라운드 <input name="discussion_rounds" type="number" min="1" max="10" value="3"></label>
       <label class="inline"><input type="checkbox" name="persona"> 에이전트끼리 가벼운 티격태격 허용</label>
+      <label class="inline" title="1라운드는 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개합니다"><input type="checkbox" name="blind_first_default"> 토론 1라운드 블라인드</label>
     </div>
     <menu>
       <button value="cancel" type="button" id="dlg-room-cancel">취소</button>
       <button value="ok" type="submit" class="primary" id="dlg-room-ok">만들기</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-decision" aria-labelledby="dlg-decision-title">
+  <form id="form-decision">
+    <h3 id="dlg-decision-title">결정 추가</h3>
+    <p class="muted small-note">유효한 결정 문장은 다음 턴부터 모든 참가자의 안내문에 들어갑니다. 근거·반대·미확인은 화면에만 남습니다.</p>
+    <label>결정 (한 줄) <input name="text" required maxlength="300" placeholder="예: 세션 만료는 30분으로 한다"></label>
+    <label>근거 <input name="evidence" placeholder="URL·파일·메시지"></label>
+    <label>남은 반대 의견 <input name="dissent" placeholder="없음"></label>
+    <label>확인하지 못한 것 <input name="unverified" placeholder="없음"></label>
+    <label id="decision-status-row">상태
+      <select name="status">
+        <option value="active">유효 (active)</option>
+        <option value="superseded">대체됨 (superseded)</option>
+        <option value="dropped">폐기됨 (dropped)</option>
+      </select>
+    </label>
+    <div id="decision-form-error" class="composer-error" role="alert" hidden></div>
+    <menu>
+      <button type="button" id="dlg-decision-cancel">취소</button>
+      <button type="submit" id="dlg-decision-ok" class="primary">저장</button>
     </menu>
   </form>
 </dialog>

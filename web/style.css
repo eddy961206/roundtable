@@ -2509,6 +2509,150 @@ dialog.dlg-lightbox[open] {
   flex-wrap: wrap;
 }
 
+/* Decision cards: right panel "결정" section and cards under the source message */
+.decisions-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.decisions-head h2 {
+  flex: 1;
+}
+.decisions-head button {
+  padding: 2px 8px;
+  min-height: 24px;
+  font-size: 11px;
+}
+#decisions {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#decisions li.muted {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+}
+#decisions li.dec-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ok);
+  border-radius: 8px;
+  background: var(--panel2);
+}
+#decisions li.dec-item.status-superseded,
+#decisions li.dec-item.status-dropped {
+  border-left-color: var(--border);
+  opacity: 0.8;
+}
+#decisions li.dec-item.status-dropped .dec-item-text {
+  text-decoration: line-through;
+}
+.dec-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+}
+.dec-item-text {
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-weight: 600;
+}
+.dec-item-meta {
+  font-size: 11px;
+}
+.dec-details summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+}
+.dec-detail-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 3px;
+  line-height: 1.4;
+}
+.dec-detail-label {
+  flex: 0 0 3.5em;
+}
+.dec-detail-value {
+  overflow-wrap: anywhere;
+}
+.dec-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.dec-item-actions button {
+  padding: 2px 8px;
+  min-height: 24px;
+  font-size: 11px;
+}
+.dec-status-badge {
+  flex: none;
+}
+.dec-status-badge.status-active {
+  color: var(--ok);
+  border-color: var(--ok);
+  background: var(--ok-bg);
+}
+.dec-status-badge.status-superseded,
+.dec-status-badge.status-dropped {
+  color: var(--muted);
+  border-color: var(--border);
+}
+.msg-decisions {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.msg-decision {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ok);
+  border-radius: 8px;
+  background: var(--panel2);
+  font-size: 12.5px;
+}
+.msg-decision.status-superseded,
+.msg-decision.status-dropped {
+  border-left-color: var(--border);
+}
+.msg-decision-label {
+  font-weight: 700;
+}
+.msg-decision-text {
+  overflow-wrap: anywhere;
+}
+.actions .blind-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.disc-blind {
+  margin-left: 8px;
+}
+
 .body code.marker-chip {
   display: inline-block;
   padding: 1px 6px;
