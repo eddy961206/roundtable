@@ -32,6 +32,7 @@ type Hub struct {
 	reg             *agent.Registry
 	scratch         string
 	rooms           map[string]*roomState
+	listSubs        map[chan []byte]struct{} // room-list feed; every roomState shares this map
 	limits          map[string]agent.Limits
 	usageStates     map[string]UsageSource
 	usageFlights    map[string]chan struct{}
@@ -53,6 +54,8 @@ type roomState struct {
 	queue    []*Turn
 	running  map[string]*running
 	subs     map[chan []byte]struct{}
+	listSubs map[chan []byte]struct{} // Hub.listSubs; nil once the room is deleted
+	listed   RoomSummary              // sidebar values last announced on the room-list feed
 	disc     *discussion
 	deleted  bool // late invocation callbacks must not recreate a deleted room
 	stopGen  int  // prevents a stopped turn from scheduling follow-up work
@@ -88,7 +91,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 	if err != nil {
 		return nil, fmt.Errorf("worktree 폴더: %w", err)
 	}
-	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]string{}, workRoot: workRoot, Log: logger}
+	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, listSubs: map[chan []byte]struct{}{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]string{}, workRoot: workRoot, Log: logger}
 	rooms, msgs, err := store.LoadRooms()
 	if err != nil {
 		return nil, err
@@ -106,7 +109,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 				return nil, fmt.Errorf("방 %s 작업 폴더: %w", r.ID, err)
 			}
 		}
-		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, workBusy: map[string]bool{}}
+		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
 		rs.requests, err = store.loadRequests(r.ID)
 		if err != nil {
 			return nil, err
@@ -136,6 +139,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 				return nil, err
 			}
 		}
+		rs.listed = rs.summary()
 		h.rooms[r.ID] = rs
 	}
 	if err := h.resumeRecoveredWork(); err != nil {
@@ -259,7 +263,10 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	if err := h.store.SaveRoom(r); err != nil {
 		return nil, err
 	}
-	h.rooms[r.ID] = &roomState{room: r, running: map[string]*running{}, subs: map[chan []byte]struct{}{}, workBusy: map[string]bool{}}
+	rs := &roomState{room: r, running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
+	rs.listed = rs.summary()
+	h.rooms[r.ID] = rs
+	signalRooms(h.listSubs)
 	return r, nil
 }
 
@@ -278,10 +285,14 @@ func (h *Hub) Rooms() []RoomSummary {
 	defer h.mu.Unlock()
 	var out []RoomSummary
 	for _, rs := range h.rooms {
-		out = append(out, RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0})
+		out = append(out, rs.summary())
 	}
 	sortSummaries(out)
 	return out
+}
+
+func (rs *roomState) summary() RoomSummary {
+	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0}
 }
 
 func sortSummaries(s []RoomSummary) {
@@ -583,6 +594,8 @@ func (h *Hub) DeleteRoom(id string) error {
 		close(ch)
 	}
 	rs.subs = map[chan []byte]struct{}{} // late broadcasts from a finishing turn find nobody
+	rs.listSubs = nil
+	signalRooms(h.listSubs)
 	h.mu.Unlock()
 	return h.store.DeleteRoom(id)
 }
@@ -611,7 +624,44 @@ func (h *Hub) Subscribe(id string) (<-chan []byte, func(), error) {
 	}, nil
 }
 
+// SubscribeRooms feeds a signal whenever a value of GET /api/rooms changes. The
+// signal carries no room data. A channel holds one pending signal, so a burst of
+// changes made before the client reads reaches it once.
+func (h *Hub) SubscribeRooms() (<-chan []byte, func(), error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing {
+		return nil, nil, fmt.Errorf("서버가 종료 중이야")
+	}
+	ch := make(chan []byte, 1)
+	h.listSubs[ch] = struct{}{}
+	return ch, func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if _, still := h.listSubs[ch]; still {
+			delete(h.listSubs, ch)
+			close(ch)
+		}
+	}, nil
+}
+
+var roomsEvent = []byte(`{"type":"rooms"}`)
+
+func signalRooms(subs map[chan []byte]struct{}) {
+	for ch := range subs {
+		select {
+		case ch <- roomsEvent:
+		default: // the pending signal already makes the client read the new list
+		}
+	}
+}
+
 func (rs *roomState) broadcast(typ string, payload any) {
+	// Room events follow every change to this room's sidebar values.
+	if summary := rs.summary(); summary != rs.listed {
+		rs.listed = summary
+		signalRooms(rs.listSubs)
+	}
 	if len(rs.subs) == 0 {
 		return
 	}

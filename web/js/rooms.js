@@ -16,10 +16,30 @@ export function scheduleRoomList() {
   if (!roomsTimer) roomsTimer = setTimeout(() => { roomsTimer = null; loadRooms().catch((err) => announce("방 목록 갱신 실패: " + err.message)); }, 500);
 }
 
+// The room-list feed only signals; the list itself always comes from GET /api/rooms.
+let roomsFeedSeen = false;
+export function connectRoomsFeed() {
+  const es = new EventSource("/api/stream");
+  state.roomsEs = es;
+  es.onmessage = () => scheduleRoomList();
+  // A later hello is a reconnection: read the changes made while the feed was down.
+  es.addEventListener("hello", () => {
+    if (roomsFeedSeen) scheduleRoomList();
+    roomsFeedSeen = true;
+  });
+}
+
 export async function loadRooms() {
   if (roomsLoading) { roomsRefreshPending = true; return roomsLoading; }
   roomsRefreshPending = false;
-  roomsLoading = api("GET", "/api/rooms").then((rooms) => { state.rooms = rooms || []; renderRoomList(); }).finally(() => {
+  roomsLoading = api("GET", "/api/rooms").then((rooms) => {
+    state.rooms = rooms || [];
+    if (state.roomId && !state.rooms.some((r) => r.id === state.roomId)) {
+      announce("이 방은 다른 곳에서 삭제됨");
+      hooks.closeRoom("이 방은 다른 곳에서 삭제됨");
+    }
+    renderRoomList();
+  }).finally(() => {
     roomsLoading = null;
     if (roomsRefreshPending) scheduleRoomList();
   });

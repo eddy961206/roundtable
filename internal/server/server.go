@@ -70,6 +70,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/config", s.config)
 	s.mux.HandleFunc("GET /api/providers", s.providers)
 	s.mux.HandleFunc("GET /api/usage", s.usage)
+	s.mux.HandleFunc("GET /api/stream", s.streamRooms)
 	s.mux.HandleFunc("POST /api/usage/refresh", s.refreshUsage)
 	s.mux.HandleFunc("GET /api/rooms", s.listRooms)
 	s.mux.HandleFunc("POST /api/rooms", s.createRoom)
@@ -422,6 +423,24 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer unsub()
+	serveSSE(w, r, ch)
+}
+
+// streamRooms is the SSE feed of room-list changes. Its events are signals only;
+// the client reads GET /api/rooms after each one.
+func (s *Server) streamRooms(w http.ResponseWriter, r *http.Request) {
+	ch, unsub, err := s.hub.SubscribeRooms()
+	if err != nil {
+		writeErr(w, 503, err)
+		return
+	}
+	defer unsub()
+	serveSSE(w, r, ch)
+}
+
+// serveSSE sends hello, then each event of ch, with a ping every 20 seconds. It
+// returns when the client leaves, a write fails or the hub closes ch.
+func serveSSE(w http.ResponseWriter, r *http.Request, ch <-chan []byte) {
 	controller := http.NewResponseController(w)
 	defer controller.SetWriteDeadline(time.Time{})
 	send := func(format string, args ...any) bool {

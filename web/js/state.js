@@ -58,6 +58,7 @@ export const state = {
   mentionCands: [],
   mentionIdx: 0,
   es: null,
+  roomsEs: null,
   renderTimers: new Map(),
   traceTimers: new Map(),
   lastEvent: 0,

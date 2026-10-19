@@ -6,7 +6,7 @@ import { refreshLimits, renderUsagePanel } from "./usage.js";
 import { clearComposerError, clearDraftAttachments, closeLightbox, collectMessageRequests, mergeSnapshotRequests, renderRequests } from "./attachments.js";
 import { renderTargetControls, updateHint } from "./composer.js";
 import { closeDiffDrawer, refreshPartErrorMessages, renderWork } from "./work.js";
-import { renderRoomHead, renderRoomList, scheduleRoomList } from "./rooms.js";
+import { renderRoomHead, renderRoomList } from "./rooms.js";
 import { renderDiscussion, renderParticipants, renderQueue } from "./participants.js";
 import { boundedTraceEvent, cacheTrace, expandTrace, liveFeed, seedLive, updateTraceCount } from "./trace.js";
 import { cancelPendingScrollRestore, pruneMessageCaches, renderMessage, renderTimeline, scheduleRender, scheduleTraceRender, updateJumpBottomBtn, updateTimelineBanners } from "./timeline.js";
@@ -236,7 +236,6 @@ function handle(type, data) {
       state.roomStateRevision++;
       state.queue = data || [];
       schedulePanels();
-      scheduleRoomList();
       break;
     case "discussion":
       state.discussion = data;
@@ -265,7 +264,6 @@ function handle(type, data) {
       renderDiscussion();
       for (const id of state.order.slice(state.winStart, state.winEnd)) scheduleRender(id);
       updateHint();
-      scheduleRoomList();
       break;
   }
 }
@@ -285,7 +283,6 @@ function upsertMessage(m) {
     if (isNewSequence) state.pendingMessages++;
     updateTimelineBanners();
     updateJumpBottomBtn();
-    scheduleRoomList();
     return;
   }
   if (!existed && isNewSequence && m.kind !== "user" && !atBottomNow) {
@@ -313,7 +310,6 @@ function upsertMessage(m) {
     refreshPartErrorMessages(m.part || "");
   }
   if (state.room) schedulePanels();
-  if (!existed || prev.status !== m.status) scheduleRoomList();
 
   if (m.kind === "system" && !existed) {
     announce("시스템 알림: " + m.text);

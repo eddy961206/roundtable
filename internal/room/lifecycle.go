@@ -15,6 +15,10 @@ func (h *Hub) Shutdown(ctx context.Context) error {
 			}
 			rs.subs = map[chan []byte]struct{}{}
 		}
+		for ch := range h.listSubs {
+			delete(h.listSubs, ch)
+			close(ch)
+		}
 	}
 	h.mu.Unlock()
 	done := make(chan struct{})
