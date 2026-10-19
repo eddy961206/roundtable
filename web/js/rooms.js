@@ -397,6 +397,7 @@ export function renderRoomHead() {
   $("#btn-work-plan-head").hidden = r.mode !== "write" || !!state.work;
 
   $("#rounds").value = r.discussion_rounds || 3;
+  $("#chk-blind-first").checked = r.blind_first_default === true;
   $("#btn-export").href = "/api/rooms/" + r.id + "/export.md";
 
   renderWorkHeadBar();

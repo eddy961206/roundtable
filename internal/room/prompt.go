@@ -21,9 +21,11 @@ type turnContext struct {
 	Parallel    bool   // broadcast delivered to several agents at once
 	Round       int
 	TotalRounds int
-	FirstTurn   bool  // no resumable session: the whole transcript is included
-	Briefed     bool  // the resumed session already holds the current standing brief
-	Part        *Part // the seat's working/fixing part (D9)
+	FirstTurn   bool     // no resumable session: the whole transcript is included
+	Briefed     bool     // the resumed session already holds the current standing brief
+	Part        *Part    // the seat's working/fixing part (D9)
+	BlindFirst  bool     // the discussion started with a blind round 1
+	Decisions   []string // active decision texts, newest first (standing brief)
 }
 
 var signalRe = regexp.MustCompile(`^\[\[DISCUSSION:(CONTINUE|AGREE|PASS|CONCLUDE)\]\]$`)
@@ -75,9 +77,10 @@ func oneLineRole(role string) string {
 	return strings.Join(strings.Fields(role), " ")
 }
 
-// standingBrief is the part of a prompt that only changes with room settings.
-// A resumed session that already holds the same brief gets a one-line reminder.
-func standingBrief(r *Room, me *Participant) string {
+// standingBrief is the part of a prompt that only changes with room settings
+// and active decisions. A resumed session that already holds the same brief
+// gets a one-line reminder; a changed decision changes the key and re-sends it.
+func standingBrief(r *Room, me *Participant, decisions []string) string {
 	var b strings.Builder
 	others := make([]string, 0)
 	otherRoles := make([]string, 0)
@@ -100,6 +103,12 @@ func standingBrief(r *Room, me *Participant) string {
 	}
 	if len(otherRoles) > 0 {
 		fmt.Fprintf(&b, "\n다른 참가자들의 역할:\n%s\n", strings.Join(otherRoles, "\n"))
+	}
+	if len(decisions) > 0 {
+		b.WriteString("\n현재 결정(최신순):\n")
+		for _, text := range decisions {
+			fmt.Fprintf(&b, "- %s\n", text)
+		}
 	}
 	b.WriteString("\n규칙:\n")
 	b.WriteString("- 아래 대화의 마지막 메시지에 이어 자연스럽게 답하세요. 출력 전체가 채팅 메시지 하나로 그대로 전송됩니다. \"[@" + me.ID + "]\" 같은 접두어나 서명을 붙이지 마세요.\n")
@@ -142,7 +151,7 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 		}
 		b.WriteString("(응답 끝 신호 블록: 요청 결과 [[REQUEST_DONE:요청ID]]/[[REQUEST_REJECT:요청ID]] 이유, 토론 [[DISCUSSION:...]], 파트 완료 WORK:DONE 중 이번 턴에 해당하는 신호만 응답 맨 끝에 빈 줄 없이 한 줄씩 모으세요.)\n")
 	} else {
-		b.WriteString(standingBrief(r, me))
+		b.WriteString(standingBrief(r, me, tc.Decisions))
 	}
 	if tc.Parallel || tc.Reason == "discussion" || tc.Part != nil {
 		b.WriteString("\n이번 턴:\n")
@@ -160,9 +169,17 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 		if len(r.enabled()) > 1 {
 			b.WriteString("- 이번 턴에는 다른 참가자를 추가로 호출할 수 없습니다. 언급은 @ 없이 이름만 쓰세요.\n")
 		}
-		fmt.Fprintf(&b, "- 지금은 자율 토론 %d/%d 라운드입니다. 앞선 답변을 검토해 새 근거가 있을 때만 기여하고, 이미 나온 말은 반복하지 마세요.\n", tc.Round, tc.TotalRounds)
+		switch {
+		case tc.BlindFirst && tc.Round == 1:
+			fmt.Fprintf(&b, "- 지금은 자율 토론 %d/%d 라운드이고, 1라운드는 블라인드입니다. 모든 참가자가 토론 시작 시점까지의 대화만 보고 동시에 답하며, 서로의 1라운드 답은 2라운드에 공개됩니다. 다른 참가자의 의견을 짐작해 맞추지 말고 독립적으로 판단하세요.\n", tc.Round, tc.TotalRounds)
+		case tc.BlindFirst && tc.Round == 2:
+			fmt.Fprintf(&b, "- 지금은 자율 토론 %d/%d 라운드입니다. 1라운드 답들이 공개됐습니다. 합의된 점은 반복하지 말고, 갈린 쟁점과 새 근거에만 답하세요.\n", tc.Round, tc.TotalRounds)
+		default:
+			fmt.Fprintf(&b, "- 지금은 자율 토론 %d/%d 라운드입니다. 앞선 답변을 검토해 새 근거가 있을 때만 기여하고, 이미 나온 말은 반복하지 마세요.\n", tc.Round, tc.TotalRounds)
+		}
 		b.WriteString("- 응답 끝 신호 블록에 다음 중 하나를 한 줄로 붙이세요: [[DISCUSSION:CONTINUE]] [[DISCUSSION:AGREE]] [[DISCUSSION:PASS]] [[DISCUSSION:CONCLUDE]]\n")
 		b.WriteString("  새 기여가 있으면 CONTINUE, 새 내용 없이 동의하면 AGREE, 할 말이 없으면 PASS, 충분한 최종 결론을 제시했으면 CONCLUDE.\n")
+		b.WriteString("- CONCLUDE나 AGREE를 낼 때는 신호 블록 위에 \"확인한 근거: …\"와 \"확인하지 못한 주장: …\"을 한 줄씩 쓰세요. AGREE는 의견이 같다는 뜻일 뿐 검증이 아닙니다.\n")
 	}
 	if tc.FirstTurn {
 		b.WriteString("\n=== 지금까지의 대화 ===\n")

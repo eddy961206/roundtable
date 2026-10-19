@@ -129,11 +129,7 @@ func (h *Hub) beginRequests(rs *roomState, pr *prepared) {
 	if pr.part != nil || pr.bootstrap || pr.t.Reason == "review" {
 		return
 	}
-	cap := pr.t.Cap
-	if pr.t.Reason == "discussion" {
-		cap = rs.room.Seq
-	}
-	for _, r := range rs.pendingRequests(pr.p.ID, cap) {
+	for _, r := range rs.pendingRequests(pr.p.ID, rs.historyCap(pr.t)) {
 		r.Status = "in_progress"
 		if err := h.saveRequest(rs, r); err != nil {
 			pr.inputErr = err
@@ -256,6 +252,18 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 				}
 			case strings.HasPrefix(line, "[[REQUEST"):
 				reject(line, "요청 마커 형식 오류: [[REQUEST:@좌석ID]] 내용 또는 [[REQUEST_DONE:요청ID]] / [[REQUEST_REJECT:요청ID]] 이유")
+			case strings.HasPrefix(line, "[[DECISION"):
+				d, err := parseDecisionMarker(line)
+				if err != nil {
+					reject(line, err.Error())
+					continue
+				}
+				d.ID, d.By, d.SourceMsg, d.At = newID(), pr.p.ID, msg.ID, nowMs()
+				if err := h.saveDecision(rs, d); err != nil {
+					processingErr = err
+					continue
+				}
+				msg.Decisions = append(msg.Decisions, d.ID)
 			}
 		}
 	}
@@ -275,7 +283,7 @@ func ordinaryMentionText(text string) string {
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "[[REQUEST") && !strings.HasPrefix(trimmed, "[[ATTACH") {
+		if !strings.HasPrefix(trimmed, "[[REQUEST") && !strings.HasPrefix(trimmed, "[[ATTACH") && !strings.HasPrefix(trimmed, "[[DECISION") {
 			lines = append(lines, line)
 		}
 	}
@@ -283,7 +291,7 @@ func ordinaryMentionText(text string) string {
 }
 
 func markerBrief(mode string) string {
-	text := "- 참가자에게 요청: [[REQUEST:@좌석ID 또는 @이름]] 확인할 내용 한 줄 (discussion·review 턴에서는 금지)\n- 받은 요청 완료(응답 끝 신호 블록): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 끝 신호 블록): [[REQUEST_REJECT:요청ID]] 거절 이유\n- 응답 끝 신호(요청 결과, 토론 신호, 파트 완료 신호)가 여럿이면 빈 줄 없이 한 줄씩 모으세요. 순서는 자유입니다. 이번 턴에 해당하는 신호만 쓰세요.\n- 끝나지 않은 파트를 맡은 좌석에는 요청할 수 없습니다. 파트가 끝난 뒤 다시 요청하거나 사용자에게 알리세요.\n"
+	text := "- 참가자에게 요청: [[REQUEST:@좌석ID 또는 @이름]] 확인할 내용 한 줄 (discussion·review 턴에서는 금지)\n- 받은 요청 완료(응답 끝 신호 블록): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 끝 신호 블록): [[REQUEST_REJECT:요청ID]] 거절 이유\n- 응답 끝 신호(요청 결과, 토론 신호, 파트 완료 신호)가 여럿이면 빈 줄 없이 한 줄씩 모으세요. 순서는 자유입니다. 이번 턴에 해당하는 신호만 쓰세요.\n- 끝나지 않은 파트를 맡은 좌석에는 요청할 수 없습니다. 파트가 끝난 뒤 다시 요청하거나 사용자에게 알리세요.\n- 결정 기록(한 줄, 결정이 정해졌을 때만):" + decisionMarkerForm + "\n"
 	if mode != agent.ModeChat {
 		text += "- 기존 이미지 공유(한 줄): [[ATTACH:이미지.png]] — 작업 폴더 또는 서버 scratch 안의 PNG·JPEG·WEBP, 파일당 10MB, 메시지당 4장.\n"
 		if mode == agent.ModeWrite {

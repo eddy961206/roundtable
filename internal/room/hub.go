@@ -48,18 +48,19 @@ type Hub struct {
 }
 
 type roomState struct {
-	requests []Request
-	room     *Room
-	msgs     []*Message
-	queue    []*Turn
-	running  map[string]*running
-	subs     map[chan []byte]struct{}
-	listSubs map[chan []byte]struct{} // Hub.listSubs; nil once the room is deleted
-	listed   RoomSummary              // sidebar values last announced on the room-list feed
-	disc     *discussion
-	deleted  bool // late invocation callbacks must not recreate a deleted room
-	stopGen  int  // prevents a stopped turn from scheduling follow-up work
-	resetGen int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
+	requests  []Request
+	decisions []Decision
+	room      *Room
+	msgs      []*Message
+	queue     []*Turn
+	running   map[string]*running
+	subs      map[chan []byte]struct{}
+	listSubs  map[chan []byte]struct{} // Hub.listSubs; nil once the room is deleted
+	listed    RoomSummary              // sidebar values last announced on the room-list feed
+	disc      *discussion
+	deleted   bool // late invocation callbacks must not recreate a deleted room
+	stopGen   int  // prevents a stopped turn from scheduling follow-up work
+	resetGen  int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
 
 	workBusy          map[string]bool   // plan creation, submit checks or cleanup running git outside h.mu
 	participantEvents map[string]string // last serialized seat state sent to subscribers
@@ -81,6 +82,7 @@ type discussion struct {
 	Expected int
 	Done     int
 	Signals  map[string]string
+	Blind    bool // round 1 runs concurrently from the start cap (blind first)
 }
 
 func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logger) (*Hub, error) {
@@ -125,6 +127,10 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		}
 		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
 		rs.requests, err = store.loadRequests(r.ID)
+		if err != nil {
+			return nil, err
+		}
+		rs.decisions, err = store.loadDecisions(r.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -204,6 +210,8 @@ type RoomSpec struct {
 	MaxChain         int               `json:"max_chain"`
 	DiscussionRounds int               `json:"discussion_rounds"`
 	Persona          bool              `json:"persona"`
+	// BlindFirstDefault is nil when omitted; new rooms then start discussions blind.
+	BlindFirstDefault *bool `json:"blind_first_default"`
 }
 
 func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
@@ -223,7 +231,10 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 		}
 		spec.Workspace = absolute
 	}
-	r := &Room{ID: newID(), Title: spec.Title, CreatedAt: nowMs(), UpdatedAt: nowMs(), Workspace: spec.Workspace, Mode: spec.Mode, Note: spec.Note, MaxChain: spec.MaxChain, DiscussionRounds: spec.DiscussionRounds, Persona: spec.Persona}
+	r := &Room{ID: newID(), Title: spec.Title, CreatedAt: nowMs(), UpdatedAt: nowMs(), Workspace: spec.Workspace, Mode: spec.Mode, Note: spec.Note, MaxChain: spec.MaxChain, DiscussionRounds: spec.DiscussionRounds, Persona: spec.Persona, BlindFirstDefault: true}
+	if spec.BlindFirstDefault != nil {
+		r.BlindFirstDefault = *spec.BlindFirstDefault
+	}
 	if r.MaxChain <= 0 {
 		r.MaxChain = defaultMaxChain
 	}
@@ -277,7 +288,7 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	if err := h.store.SaveRoom(r); err != nil {
 		return nil, err
 	}
-	rs := &roomState{room: r, running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
+	rs := &roomState{room: r, decisions: []Decision{}, running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
 	rs.listed = rs.summary()
 	h.rooms[r.ID] = rs
 	signalRooms(h.listSubs)
@@ -320,6 +331,7 @@ func sortSummaries(s []RoomSummary) {
 // Snapshot is everything the page needs to render a room.
 type Snapshot struct {
 	Requests   []Request               `json:"requests"`
+	Decisions  []Decision              `json:"decisions"`
 	Room       *Room                   `json:"room"`
 	Messages   []*Message              `json:"messages"`
 	Queue      []*Turn                 `json:"queue"`
@@ -333,6 +345,7 @@ type DiscussionView struct {
 	Total   int               `json:"total"`
 	Round   int               `json:"round"`
 	Signals map[string]string `json:"signals"`
+	Blind   bool              `json:"blind"` // the discussion started with a blind round 1
 }
 
 func (h *Hub) Snapshot(id string) (*Snapshot, error) {
@@ -378,7 +391,7 @@ func (rs *roomState) discView() *DiscussionView {
 	if rs.disc == nil {
 		return nil
 	}
-	return &DiscussionView{Total: rs.disc.Total, Round: rs.disc.Round, Signals: rs.disc.Signals}
+	return &DiscussionView{Total: rs.disc.Total, Round: rs.disc.Round, Signals: rs.disc.Signals, Blind: rs.disc.Blind}
 }
 
 // ParticipantPatch updates one seat.
@@ -393,14 +406,15 @@ type ParticipantPatch struct {
 
 // RoomPatch is a partial update.
 type RoomPatch struct {
-	Title            *string            `json:"title,omitempty"`
-	Note             *string            `json:"note,omitempty"`
-	Mode             *string            `json:"mode,omitempty"`
-	Workspace        *string            `json:"workspace,omitempty"`
-	MaxChain         *int               `json:"max_chain,omitempty"`
-	DiscussionRounds *int               `json:"discussion_rounds,omitempty"`
-	Persona          *bool              `json:"persona,omitempty"`
-	Participants     []ParticipantPatch `json:"participants,omitempty"`
+	Title             *string            `json:"title,omitempty"`
+	Note              *string            `json:"note,omitempty"`
+	Mode              *string            `json:"mode,omitempty"`
+	Workspace         *string            `json:"workspace,omitempty"`
+	MaxChain          *int               `json:"max_chain,omitempty"`
+	DiscussionRounds  *int               `json:"discussion_rounds,omitempty"`
+	Persona           *bool              `json:"persona,omitempty"`
+	BlindFirstDefault *bool              `json:"blind_first_default,omitempty"`
+	Participants      []ParticipantPatch `json:"participants,omitempty"`
 }
 
 func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
@@ -467,6 +481,9 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	}
 	if patch.Persona != nil {
 		next.Persona = *patch.Persona
+	}
+	if patch.BlindFirstDefault != nil {
+		next.BlindFirstDefault = *patch.BlindFirstDefault
 	}
 	patched := map[string]bool{}
 	for _, pp := range patch.Participants {
@@ -893,8 +910,11 @@ func (rs *roomState) enqueueFront(t *Turn) {
 	rs.broadcast("queue", rs.queueView())
 }
 
-// StartDiscussion runs up to `rounds` sequential rounds over every enabled agent.
-func (h *Hub) StartDiscussion(id string, rounds int) error {
+// StartDiscussion runs up to `rounds` rounds over every enabled agent. With
+// blindFirst (nil: the room's blind_first_default) round 1 runs concurrently
+// from the start cap, so no seat sees another seat's round-1 answer; later
+// rounds are sequential and read the current history.
+func (h *Hub) StartDiscussion(id string, rounds int, blindFirst *bool) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closing {
@@ -914,8 +934,16 @@ func (h *Hub) StartDiscussion(id string, rounds int) error {
 	if len(ids) < 2 {
 		return fmt.Errorf("토론에는 활성 참가자가 2명 이상 필요함")
 	}
-	rs.disc = &discussion{Total: rounds, Round: 1, Signals: map[string]string{}}
-	rs.addSystem(fmt.Sprintf("토론 시작 · 최대 %d라운드 · 참가 %s", rounds, strings.Join(ids, ", ")))
+	blind := rs.room.BlindFirstDefault
+	if blindFirst != nil {
+		blind = *blindFirst
+	}
+	rs.disc = &discussion{Total: rounds, Round: 1, Signals: map[string]string{}, Blind: blind}
+	order := "순서대로 발언"
+	if blind {
+		order = "1라운드 블라인드(동시 답변, 2라운드에 공개)"
+	}
+	rs.addSystem(fmt.Sprintf("토론 시작 · 최대 %d라운드 · %s · 참가 %s", rounds, order, strings.Join(ids, ", ")))
 	rs.enqueueRound(ids)
 	rs.broadcast("discussion", rs.discView())
 	h.pump(rs)
@@ -925,9 +953,26 @@ func (h *Hub) StartDiscussion(id string, rounds int) error {
 func (rs *roomState) enqueueRound(ids []string) {
 	rs.disc.Expected, rs.disc.Done = len(ids), 0
 	rs.disc.Signals = map[string]string{}
+	blind := rs.disc.Blind && rs.disc.Round == 1
+	group := newID()
 	for _, id := range ids {
-		rs.enqueue(&Turn{ID: newID(), Agent: id, Reason: "discussion", Round: rs.disc.Round, Group: newID(), Created: nowMs(), Status: "queued"})
+		t := &Turn{ID: newID(), Agent: id, Reason: "discussion", Round: rs.disc.Round, Group: newID(), Created: nowMs(), Status: "queued"}
+		if blind {
+			// Every round-1 seat shares one cap, like broadcast members.
+			t.Group, t.Cap, t.Blind = group, rs.room.Seq, true
+		}
+		rs.enqueue(t)
 	}
+}
+
+// historyCap is the inclusive message boundary a turn reads. Sequential
+// discussion turns read the current history; blind round-1 turns keep the cap
+// taken when the discussion started.
+func (rs *roomState) historyCap(t *Turn) int64 {
+	if t.Reason == "discussion" && !t.Blind {
+		return rs.room.Seq
+	}
+	return t.Cap
 }
 
 // Stop cancels running turns and empties the queue.
@@ -1072,8 +1117,11 @@ func (h *Hub) pump(rs *roomState) {
 			i++
 			continue
 		}
-		if rs.runningFor(t.Agent) != nil || (t.Reason == "discussion" && discussionBlocked) {
-			if t.Reason == "discussion" {
+		// Sequential discussion turns run one at a time in queue order; blind
+		// round-1 turns only wait for their own seat.
+		sequential := t.Reason == "discussion" && !t.Blind
+		if rs.runningFor(t.Agent) != nil || (sequential && discussionBlocked) {
+			if sequential {
 				discussionBlocked = true
 			}
 			i++
@@ -1086,7 +1134,7 @@ func (h *Hub) pump(rs *roomState) {
 			continue
 		}
 		h.prepareTurn(rs, pr)
-		if t.Reason == "discussion" {
+		if sequential {
 			discussionBlocked = true
 		}
 		h.turnWG.Add(1)
@@ -1142,10 +1190,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		return nil // the part left working/fixing before its turn started
 	}
 	first := p.SessionID == ""
-	cap := t.Cap
-	if t.Reason == "discussion" {
-		cap = rs.room.Seq
-	}
+	cap := rs.historyCap(t)
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
 	if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID, "")) == 0 {
 		// No CLI call is needed to acknowledge own/filtered messages. Keep
@@ -1153,10 +1198,11 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		p.LastSeen, p.Unseen = seen, unseen
 		return nil
 	}
-	brief := briefKey(standingBrief(rs.room, p))
-	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Briefed: !first && p.Brief == brief}
+	decisions := rs.activeDecisionTexts(cap)
+	brief := briefKey(standingBrief(rs.room, p, decisions))
+	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Briefed: !first && p.Brief == brief, Decisions: decisions}
 	if rs.disc != nil && t.Reason == "discussion" {
-		tc.TotalRounds = rs.disc.Total
+		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
@@ -1185,10 +1231,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 	case t.prompt != "":
 		prompt = t.prompt
 	default:
-		cap := t.Cap
-		if t.Reason == "discussion" {
-			cap = rs.room.Seq
-		}
+		cap := rs.historyCap(t)
 		cursor := *p
 		cursor.LastSeen, cursor.Unseen = part.LastSeen, part.Unseen
 		hist, seen, unseen = rs.deltaForContext(&cursor, false, cap, part.ID)
@@ -1196,9 +1239,9 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 			part.LastSeen, part.Unseen = seen, unseen
 			return nil
 		}
-		tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, Part: part}
+		tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, Part: part, Decisions: rs.activeDecisionTexts(cap)}
 		if rs.disc != nil && t.Reason == "discussion" {
-			tc.TotalRounds = rs.disc.Total
+			tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 		}
 		view := *rs.room
 		view.Workspace = part.Worktree
@@ -1628,7 +1671,7 @@ func (h *Hub) discussionStep(rs *roomState, agentID, signal, status string) {
 		rs.addSystem(fmt.Sprintf("토론 종료 · %d라운드에서 결론 제시(CONCLUDE)", d.Round))
 		rs.disc = nil
 	case allAgree:
-		rs.addSystem(fmt.Sprintf("토론 종료 · %d라운드에서 전원 동의/패스", d.Round))
+		rs.addSystem(fmt.Sprintf("토론 종료 · %d라운드에서 전원 동의/패스 (의견 일치일 뿐 검증은 아님)", d.Round))
 		rs.disc = nil
 	case d.Round >= d.Total:
 		rs.addSystem(fmt.Sprintf("토론 종료 · 최대 %d라운드 도달", d.Total))

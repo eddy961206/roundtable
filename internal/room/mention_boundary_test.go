@@ -52,7 +52,7 @@ func TestMentionWhitespaceLabelPolicy(t *testing.T) {
 			t.Errorf("whitespace request label resolved to %s", p.ID)
 		}
 	}
-	brief := standingBrief(&Room{}, &Participant{ID: "seat-a"})
+	brief := standingBrief(&Room{}, &Participant{ID: "seat-a"}, nil)
 	if !strings.Contains(brief, "공백 없는 이름만 @이름으로 부를 수 있고, 확실하게는 @좌석ID") {
 		t.Error("standing brief must explain whitespace and stable IDs")
 	}

@@ -49,7 +49,7 @@ func TestWorkDiscussionContinuesWhilePartInactive(t *testing.T) {
 			part := f.hub.rooms[f.room.ID].room.Work.part("p1")
 			part.State = state
 			f.hub.mu.Unlock()
-			if err := f.hub.StartDiscussion(f.room.ID, 1); err != nil {
+			if err := f.hub.StartDiscussion(f.room.ID, 1, sequentialFirst); err != nil {
 				t.Fatal(err)
 			}
 			first := nextCall(t, author)

@@ -181,7 +181,8 @@ func (s *Store) readRoomSnapshot(id string) (*Room, []*Message, error) {
 	if f != nil {
 		defer f.Close()
 	}
-	var r Room
+	// A room saved before blind_first_default existed has no key and keeps the default.
+	r := Room{BlindFirstDefault: true}
 	file := roomFile{Room: &r}
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, nil, fmt.Errorf("room %s: %w", id, err)

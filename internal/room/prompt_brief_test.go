@@ -35,14 +35,14 @@ func TestBriefKeyFollowsRoomSettings(t *testing.T) {
 	r := &Room{Title: "설계", Mode: "read", Workspace: "ws", Note: "A",
 		Participants: []*Participant{{ID: "claude-a", Provider: "claude", Label: "Opus", Enabled: true}, {ID: "codex-b", Provider: "codex", Label: "Astra", Enabled: true}}}
 	me := r.Participants[0]
-	before := briefKey(standingBrief(r, me))
-	if before != briefKey(standingBrief(r, me)) {
+	before := briefKey(standingBrief(r, me, nil))
+	if before != briefKey(standingBrief(r, me, nil)) {
 		t.Fatal("same settings must give the same key")
 	}
 	r.Note = "B"
-	afterNote := briefKey(standingBrief(r, me))
+	afterNote := briefKey(standingBrief(r, me, nil))
 	r.Participants[1].Enabled = false
-	afterRoster := briefKey(standingBrief(r, me))
+	afterRoster := briefKey(standingBrief(r, me, nil))
 	if afterNote == before || afterRoster == afterNote {
 		t.Fatal("note and roster changes must change the key")
 	}
