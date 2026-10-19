@@ -211,9 +211,9 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 					reject(line, "[[REQUEST:@좌석ID]] 요청 내용 한 줄 형식 필요")
 					continue
 				}
-				to := rs.room.participant(m[1])
-				if to == nil || !to.Enabled || to.Removed || to.ID == pr.p.ID {
-					reject(line, "다른 활성 좌석 ID가 필요함")
+				to, why := rs.requestTarget(m[1])
+				if to == nil || to.ID == pr.p.ID {
+					reject(line, why+" · 다른 활성 좌석의 ID나 고유한 이름이 필요함")
 					continue
 				}
 				if part := rs.seatPart(to.ID); part != nil {
@@ -282,7 +282,7 @@ func ordinaryMentionText(text string) string {
 }
 
 func markerBrief(mode string) string {
-	text := "- 참가자에게 요청: [[REQUEST:@좌석ID]] 확인할 내용 한 줄 (discussion·review 턴에서는 금지)\n- 받은 요청 완료(응답 끝 신호 블록): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 끝 신호 블록): [[REQUEST_REJECT:요청ID]] 거절 이유\n- 여러 요청 결과·WORK:DONE·[[DISCUSSION:AGREE]]는 응답 끝에 빈 줄 없이 한 줄씩 모으세요. 블록 안의 순서는 자유입니다.\n- 끝나지 않은 파트를 맡은 좌석에는 요청할 수 없습니다. 파트가 끝난 뒤 다시 요청하거나 사용자에게 알리세요.\n"
+	text := "- 참가자에게 요청: [[REQUEST:@좌석ID 또는 @이름]] 확인할 내용 한 줄 (discussion·review 턴에서는 금지)\n- 받은 요청 완료(응답 끝 신호 블록): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 끝 신호 블록): [[REQUEST_REJECT:요청ID]] 거절 이유\n- 여러 요청 결과·WORK:DONE·[[DISCUSSION:AGREE]]는 응답 끝에 빈 줄 없이 한 줄씩 모으세요. 블록 안의 순서는 자유입니다.\n- 끝나지 않은 파트를 맡은 좌석에는 요청할 수 없습니다. 파트가 끝난 뒤 다시 요청하거나 사용자에게 알리세요.\n"
 	if mode != agent.ModeChat {
 		text += "- 기존 이미지 공유(한 줄): [[ATTACH:이미지.png]] — 작업 폴더 또는 서버 scratch 안의 PNG·JPEG·WEBP, 파일당 10MB, 메시지당 4장.\n"
 		if mode == agent.ModeWrite {
@@ -292,4 +292,29 @@ func markerBrief(mode string) string {
 		}
 	}
 	return text
+}
+
+// requestTarget resolves a request recipient by seat ID, or by a display label
+// that names exactly one active seat. why explains a failed lookup.
+func (rs *roomState) requestTarget(name string) (*Participant, string) {
+	if p := rs.room.participant(name); p != nil && p.Enabled && !p.Removed {
+		return p, ""
+	}
+	var hits []*Participant
+	for _, p := range rs.room.enabled() {
+		if strings.EqualFold(p.Label, name) {
+			hits = append(hits, p)
+		}
+	}
+	switch len(hits) {
+	case 1:
+		return hits[0], ""
+	case 0:
+		return nil, "@" + name + "와 일치하는 활성 좌석 없음"
+	}
+	ids := make([]string, len(hits))
+	for i, p := range hits {
+		ids[i] = "@" + p.ID
+	}
+	return nil, "이름 @" + name + "이 여러 좌석(" + strings.Join(ids, ", ") + ")과 겹침"
 }

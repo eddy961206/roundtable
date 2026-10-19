@@ -143,7 +143,7 @@ func TestRequestUnknownSeatAndIDFeedback(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := nextCall(t, ps[0])
-	if !strings.Contains(next.opts.Prompt, "다른 활성 좌석 ID") || !strings.Contains(next.opts.Prompt, "진행 중 요청 ID가 아님") {
+	if !strings.Contains(next.opts.Prompt, "일치하는 활성 좌석 없음") || !strings.Contains(next.opts.Prompt, "진행 중 요청 ID가 아님") {
 		t.Fatal(next.opts.Prompt)
 	}
 	next.result <- controlledResult{text: "ok"}
@@ -206,7 +206,7 @@ func TestMarkersOnlyApplyToDoneAndModeBrief(t *testing.T) {
 		r := &Room{Mode: mode}
 		p := &Participant{ID: "codex"}
 		brief := standingBrief(r, p)
-		for _, marker := range []string{"[[REQUEST:@좌석ID]]", "[[REQUEST_DONE:요청ID]]", "[[REQUEST_REJECT:요청ID]]"} {
+		for _, marker := range []string{"[[REQUEST:@좌석ID 또는 @이름]]", "[[REQUEST_DONE:요청ID]]", "[[REQUEST_REJECT:요청ID]]"} {
 			if !strings.Contains(brief, marker) {
 				t.Fatal(brief)
 			}

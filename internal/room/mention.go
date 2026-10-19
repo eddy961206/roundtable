@@ -20,7 +20,8 @@ func ParseMentions(text string, ids []string) []string {
 	return ParseParticipantMentions(text, participants)
 }
 
-// ParseParticipantMentions accepts stable seat IDs and provider-wide groups.
+// ParseParticipantMentions accepts stable seat IDs, provider-wide groups and
+// display labels ("@Astra"); a label shared by several seats calls all of them.
 // Provider aliases expand even when a legacy seat has the same ID as its provider.
 func ParseParticipantMentions(text string, participants []*Participant) []string {
 	src := fenceRe.ReplaceAllStringFunc(text, func(s string) string { return strings.Repeat(" ", len(s)) })
@@ -44,7 +45,7 @@ func ParseParticipantMentions(text string, participants []*Participant) []string
 			continue
 		}
 		for _, p := range participants {
-			if tokenMatches(token, strings.ToLower(p.ID)) || (p.Provider != "" && tokenMatches(token, strings.ToLower(p.Provider))) {
+			if tokenMatches(token, strings.ToLower(p.ID)) || (p.Provider != "" && tokenMatches(token, strings.ToLower(p.Provider))) || (p.Label != "" && tokenMatches(token, strings.ToLower(p.Label))) {
 				add(p.ID)
 			}
 		}
