@@ -13,6 +13,7 @@ type Participant struct {
 	Model         string         `json:"model"`
 	Effort        string         `json:"effort"`
 	SessionID     string         `json:"session_id"`
+	Brief         string         `json:"brief,omitempty"`  // briefKey of the standing brief this session holds
 	LastSeen      int64          `json:"last_seen"`        // highest message seq considered for delivery
 	Unseen        []int64        `json:"unseen,omitempty"` // unfinished replies below LastSeen
 	Status        string         `json:"status"`           // idle | queued | running
