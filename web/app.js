@@ -220,6 +220,8 @@
     expanded: new Set(),
     userCollapsed: new Set(),
     autoTrace: localStorage.getItem("rt.autoTrace") === "1",
+    leftCollapsed: localStorage.getItem("rt.leftCollapsed") === "1",
+    rightCollapsed: localStorage.getItem("rt.rightCollapsed") === "1",
     target: "",
     mentionCands: [],
     mentionIdx: 0,
@@ -2573,7 +2575,41 @@
     }
   }
 
+  // Desktop panel collapse. Narrow screens keep the drawer behaviour, so the
+  // usage panel only moves into the chat area while the sidebar is a grid column.
+  const sidebarColumn = window.matchMedia("(min-width: 761px)");
+  function applyPanelLayout() {
+    document.body.classList.toggle("left-collapsed", state.leftCollapsed);
+    document.body.classList.toggle("right-collapsed", state.rightCollapsed);
+    const panel = $("#provider-panel");
+    const dock = $("#usage-dock");
+    const docked = state.leftCollapsed && sidebarColumn.matches;
+    const home = docked ? dock : $("#sidebar");
+    if (panel.parentElement !== home) home.appendChild(panel);
+    dock.hidden = !docked;
+    $$(".panel-collapse-left, .panel-expand-left").forEach((b) => b.setAttribute("aria-expanded", String(!state.leftCollapsed)));
+    $$(".panel-collapse-right, .panel-expand-right").forEach((b) => b.setAttribute("aria-expanded", String(!state.rightCollapsed)));
+  }
+
+  function setPanelCollapsed(side, collapsed) {
+    const key = side === "left" ? "leftCollapsed" : "rightCollapsed";
+    state[key] = collapsed;
+    localStorage.setItem("rt." + key, collapsed ? "1" : "0");
+    applyPanelLayout();
+    // Keep focus on a visible control for the same panel.
+    const next = collapsed
+      ? $$(".panel-expand-" + side).find((b) => b.offsetParent)
+      : $(side === "left" ? "#btn-collapse-left" : "#btn-collapse-right");
+    if (next && next.offsetParent) next.focus();
+  }
+
   function bindUI() {
+    $("#btn-collapse-left").onclick = () => setPanelCollapsed("left", true);
+    $("#btn-collapse-right").onclick = () => setPanelCollapsed("right", true);
+    $$(".panel-expand-left").forEach((b) => (b.onclick = () => setPanelCollapsed("left", false)));
+    $$(".panel-expand-right").forEach((b) => (b.onclick = () => setPanelCollapsed("right", false)));
+    sidebarColumn.addEventListener("change", applyPanelLayout);
+    applyPanelLayout();
     let participantDialogSequence = 0;
     $("#btn-refresh-usage").onclick = () => refreshLimits(true);
     $("#btn-usage").onclick = () => {
