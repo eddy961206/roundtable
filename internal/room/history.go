@@ -55,6 +55,8 @@ func (h *Hub) snapshotLocked(rs *roomState, before int64, limit int) *Snapshot {
 	for i, m := range rs.msgs[start:end] {
 		copy := *m
 		copy.Usage = maps.Clone(m.Usage)
+		copy.Attachments = slices.Clone(m.Attachments)
+		copy.Requests = slices.Clone(m.Requests)
 		messages[i] = &copy
 	}
 	queue := rs.queueView()
@@ -70,5 +72,5 @@ func (h *Hub) snapshotLocked(rs *roomState, before int64, limit int) *Snapshot {
 	if history.HasMore {
 		history.BeforeSeq = messages[0].Seq
 	}
-	return &Snapshot{Room: &roomCopy, Messages: messages, Queue: queue, Discussion: discussion, Limits: h.limitsCopy(), History: history, Work: cloneWork(rs.room.Work)}
+	return &Snapshot{Room: &roomCopy, Messages: messages, Queue: queue, Discussion: discussion, Limits: h.limitsCopy(), History: history, Work: cloneWork(rs.room.Work), Requests: append([]Request{}, rs.requests...)}
 }

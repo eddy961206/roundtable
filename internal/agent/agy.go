@@ -110,6 +110,9 @@ func groupAgyModels(lines []string) ([]ModelOption, map[string][]string) {
 // flags created a file. Without it, plan mode refused and wrote a plan instead.
 func agyArgs(o RunOptions) []string {
 	args := []string{"--sandbox", "--output-format", "stream-json", "--input-format", "stream-json"}
+	for _, dir := range imageDirs(o.Images) {
+		args = append(args, "--add-dir", dir)
+	}
 	if o.Mode == ModeWrite {
 		args = append(args, "--disable-slash-commands")
 	}
@@ -149,6 +152,9 @@ func agyInput(prompt string) string {
 }
 
 func (a *Agy) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, error) {
+	if err := validateImages(o.Images); err != nil {
+		return Result{}, err
+	}
 	path, err := resolveCommand(a.cmd)
 	if err != nil {
 		return Result{}, fmt.Errorf("agy CLI를 찾지 못함: %w", err)

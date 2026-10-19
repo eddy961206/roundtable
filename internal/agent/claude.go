@@ -47,6 +47,9 @@ func (c *Claude) Models() []ModelOption {
 
 func claudeArgs(o RunOptions) []string {
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config"}
+	for _, dir := range imageDirs(o.Images) {
+		args = append(args, "--add-dir", dir)
+	}
 	if o.Model != "" {
 		args = append(args, "--model", o.Model)
 	}
@@ -85,6 +88,10 @@ func claudeUserLine(text string) []byte {
 }
 
 func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, error) {
+	input, err := claudeImageLine(o)
+	if err != nil {
+		return Result{}, err
+	}
 	path, err := resolveCommand(c.cmd)
 	if err != nil {
 		return Result{}, fmt.Errorf("claude CLI를 찾지 못함: %w", err)
@@ -104,9 +111,14 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 	steerDone := make(chan struct{})
 	var steered atomic.Int32
 	var finished atomic.Bool
+	var inputErr error // read after steerDone closes
 	go func() {
 		defer close(steerDone)
-		_, _ = stdin.Write(claudeUserLine(o.Prompt))
+		if _, err := stdin.Write(input); err != nil {
+			inputErr = fmt.Errorf("Claude 입력 전달 실패: %w", err)
+			closeStdin()
+			return
+		}
 		for {
 			select {
 			case <-done:
@@ -141,6 +153,9 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 	<-steerDone
 	fin := p.Finish(emit)
 	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr, Steered: int(steered.Load())}
+	if inputErr != nil {
+		return res, inputErr
+	}
 	return res, finishError("claude", fin, runErr, stderr)
 }
 

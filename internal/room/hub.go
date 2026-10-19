@@ -47,6 +47,7 @@ type Hub struct {
 }
 
 type roomState struct {
+	requests []Request
 	room     *Room
 	msgs     []*Message
 	queue    []*Turn
@@ -106,6 +107,21 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 			}
 		}
 		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, workBusy: map[string]bool{}}
+		rs.requests, err = store.loadRequests(r.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, request := range slices.Clone(rs.requests) {
+			if request.Status == "in_progress" {
+				request.Status = "pending"
+				if err := h.saveRequest(rs, request); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if err := store.cleanupAttachments(r.ID, rs.msgs); err != nil {
+			return nil, err
+		}
 		for _, m := range rs.msgs {
 			if m.Kind != "agent" {
 				continue
@@ -264,6 +280,7 @@ func sortSummaries(s []RoomSummary) {
 
 // Snapshot is everything the page needs to render a room.
 type Snapshot struct {
+	Requests   []Request               `json:"requests"`
 	Room       *Room                   `json:"room"`
 	Messages   []*Message              `json:"messages"`
 	Queue      []*Turn                 `json:"queue"`
@@ -652,9 +669,9 @@ func (h *Hub) enabledIDs(rs *roomState) []string {
 // PostUser adds a user message and routes it: mentions, or everyone when none.
 // target addresses one agent; if that agent is running and can steer, the text
 // is injected live, otherwise a priority turn is queued.
-func (h *Hub) PostUser(id, text, target string) (*Message, error) {
+func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Message, error) {
 	text = strings.TrimSpace(text)
-	if text == "" {
+	if text == "" && len(attachmentIDs) == 0 {
 		return nil, fmt.Errorf("빈 메시지")
 	}
 	h.mu.Lock()
@@ -672,10 +689,19 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 			return nil, fmt.Errorf("활성 대상 없음: %s", target)
 		}
 	}
+	attachments, err := h.resolveAttachments(rs, attachmentIDs)
+	if err != nil {
+		return nil, err
+	}
 	m := rs.nextMessage("user", "user", text)
+	m.Attachments = attachments
+	m.Target = target
+	if err := h.store.AppendMessage(id, m); err != nil {
+		rs.msgs = rs.msgs[:len(rs.msgs)-1]
+		return nil, err
+	}
 	if target != "" {
-		m.Target = target
-		if run := rs.runningFor(target); run != nil && run.steer != nil {
+		if run := rs.runningFor(target); run != nil && run.steer != nil && len(attachments) == 0 {
 			select {
 			case run.steer <- text:
 				m.Live = true
@@ -685,7 +711,9 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 			}
 		}
 		rs.broadcast("message", m)
-		_ = h.store.AppendMessage(id, m)
+		if m.Live {
+			_ = h.store.AppendMessage(id, m)
+		}
 		_ = h.store.SaveRoom(rs.room)
 		if !m.Live {
 			rs.enqueueFront(&Turn{ID: newID(), Agent: target, Reason: "mention", Group: m.ID, Cap: m.Seq, Created: nowMs(), Status: "queued"})
@@ -695,7 +723,6 @@ func (h *Hub) PostUser(id, text, target string) (*Message, error) {
 		return &mc, nil
 	}
 	rs.broadcast("message", m)
-	_ = h.store.AppendMessage(id, m)
 	_ = h.store.SaveRoom(rs.room)
 	ids := h.enabledIDs(rs)
 	mentioned := ParseParticipantMentions(text, rs.room.Participants)
@@ -958,6 +985,9 @@ func (h *Hub) pump(rs *roomState) {
 
 // prepared contains a prompt rendered from live messages up to the turn's cap.
 type prepared struct {
+	notices   []*Message
+	requests  []string
+	inputErr  error
 	t         *Turn
 	p         *Participant
 	seen      int64
@@ -1000,7 +1030,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		cap = rs.room.Seq
 	}
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
-	if len(hist) == 0 && t.Reason != "discussion" {
+	if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID, "")) == 0 {
 		// No CLI call is needed to acknowledge own/filtered messages. Keep
 		// unfinished replies as holes for a later cap to deliver exactly once.
 		p.LastSeen, p.Unseen = seen, unseen
@@ -1013,6 +1043,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
+	h.addTurnImages(rs, p, hist, &opts)
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
 }
 
@@ -1023,6 +1054,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 	seen, unseen := part.LastSeen, slices.Clone(part.Unseen)
 	bootstrap := part.SessionID == ""
 	var prompt string
+	var hist []*Message
 	switch {
 	case part.SessionID == "":
 		prompt = BuildPartPrompt(rs.room.Work, part)
@@ -1036,11 +1068,10 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 		if t.Reason == "discussion" {
 			cap = rs.room.Seq
 		}
-		var hist []*Message
 		cursor := *p
 		cursor.LastSeen, cursor.Unseen = part.LastSeen, part.Unseen
 		hist, seen, unseen = rs.deltaForContext(&cursor, false, cap, part.ID)
-		if len(hist) == 0 && t.Reason != "discussion" {
+		if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID, part.ID)) == 0 {
 			part.LastSeen, part.Unseen = seen, unseen
 			return nil
 		}
@@ -1050,9 +1081,11 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 		}
 		view := *rs.room
 		view.Workspace = part.Worktree
+		view.Mode = agent.ModeWrite
 		prompt = BuildPrompt(&view, p, hist, tc)
 	}
 	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
+	h.addTurnImages(rs, p, hist, &opts)
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, bootstrap: bootstrap}
 }
 
@@ -1084,6 +1117,8 @@ func (h *Hub) keepSession(rs *roomState, pr *prepared, id string) {
 
 // prepareTurn reserves one participant and opens its reply. Caller holds h.mu.
 func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
+	rs.addTurnNotices(pr)
+	h.beginRequests(rs, pr)
 	t, p, prov := pr.t, pr.p, pr.prov
 	msg := rs.nextMessage("agent", p.ID, "")
 	msg.Status, msg.TurnID, msg.Reason, msg.Round, msg.Model = "streaming", t.ID, t.Reason, t.Round, p.Model
@@ -1180,6 +1215,12 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	var res agent.Result
 	err := ctx.Err()
 	if err == nil {
+		err = pr.inputErr
+	}
+	if err == nil && len(opts.Images) > 0 && p.Provider != "codex" && p.Provider != "claude" && p.Provider != "agy" {
+		err = fmt.Errorf("%s 공급사의 이미지 전달은 지원하지 않음", p.Provider)
+	}
+	if err == nil {
 		res, err = prov.Run(ctx, opts, emit)
 	}
 	h.mu.Lock()
@@ -1203,6 +1244,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if text == "" {
 		text = strings.TrimSpace(textBuf.String())
 	}
+	rawText := text
 	var signal string
 	if t.Reason == "discussion" {
 		text, signal = ParseSignal(text)
@@ -1271,9 +1313,22 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			}
 		}
 	}
+	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
+		msg.Status, msg.Error = "error", fmt.Sprintf("메시지 저장 실패: %v", err)
+	}
+	if err := h.finishMarkers(rs, pr, rawText); err != nil {
+		msg.Status, msg.Error = "error", fmt.Sprintf("첨부·요청 저장 실패: %v", err)
+	}
 	p.Turns++
 	rs.room.UpdatedAt = nowMs()
-	_ = h.store.AppendMessage(rs.room.ID, msg)
+	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
+		msg.Status, msg.Error = "error", fmt.Sprintf("메시지 저장 실패: %v", err)
+	}
+	if msg.Status == "done" {
+		if err := h.acknowledgeNotices(rs, pr); err != nil {
+			msg.Status, msg.Error = "error", fmt.Sprintf("공지 전달 기록 저장 실패: %v", err)
+		}
+	}
 	rs.broadcast("message", msg)
 	if h.Log != nil {
 		h.Log.Printf("turn %s %s/%s status=%s %dms err=%v", rs.room.ID, p.ID, p.Model, msg.Status, msg.Duration, err)
@@ -1373,6 +1428,9 @@ func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, part
 		if m.Status == "cancelled" && m.Text == "" {
 			continue
 		}
+		if m.NoticeFor == p.ID {
+			continue
+		} // delivered separately, regardless of cap or history trimming
 		out = append(out, m)
 	}
 	return out, seen, unseen
@@ -1385,7 +1443,12 @@ func (h *Hub) chainMentions(rs *roomState, msg *Message, t *Turn) {
 			others = append(others, p)
 		}
 	}
-	targets := ParseParticipantMentions(msg.Text, others)
+	targets := ParseParticipantMentions(ordinaryMentionText(msg.Text), others)
+	for _, id := range msg.Requests {
+		if r := rs.request(id); r != nil && r.Status == "pending" && !slices.Contains(targets, r.To) {
+			targets = append(targets, r.To)
+		}
+	}
 	if len(targets) == 0 {
 		return
 	}

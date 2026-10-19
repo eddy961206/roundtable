@@ -16,6 +16,7 @@ const (
 
 // RunOptions describes one turn of one agent.
 type RunOptions struct {
+	Images     []Image // validated local originals selected by the room delivery cursor
 	Prompt     string
 	SessionID  string // resume when non-empty
 	Model      string
@@ -26,6 +27,11 @@ type RunOptions struct {
 	Timeout    time.Duration
 	Steer      <-chan string // live user messages while the turn runs (providers that CanSteer)
 	MCP        *MCPServer    // extra read-only tool server for this run (nil = none)
+}
+
+type Image struct {
+	Path string
+	Mime string
 }
 
 // MCPServer is a stdio MCP server handed to a CLI for one run. Name becomes the

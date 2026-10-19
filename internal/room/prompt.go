@@ -26,16 +26,36 @@ type turnContext struct {
 	Part        *Part // the seat's working/fixing part (D9)
 }
 
-var signalRe = regexp.MustCompile(`\[\[DISCUSSION:(CONTINUE|AGREE|PASS|CONCLUDE)\]\]\s*$`)
+var signalRe = regexp.MustCompile(`^\[\[DISCUSSION:(CONTINUE|AGREE|PASS|CONCLUDE)\]\]$`)
+
+// trailingSignals is shared by all completion consumers. Only consecutive
+// signal lines at the end count; ordinary text (including a blank line) ends
+// the block. Each consumer removes only its own signals.
+func trailingSignals(text string) (lines []string, start int) {
+	lines = strings.Split(strings.TrimSpace(text), "\n")
+	start = len(lines)
+	for start > 0 {
+		line := strings.TrimSpace(lines[start-1])
+		if line != workDoneSignal && !signalRe.MatchString(line) && !resultMarker.MatchString(line) {
+			break
+		}
+		start--
+	}
+	return lines, start
+}
 
 // ParseSignal extracts the discussion marker and returns the cleaned text.
 func ParseSignal(text string) (clean, signal string) {
-	m := signalRe.FindStringSubmatch(strings.TrimSpace(text))
-	if m == nil {
-		return strings.TrimSpace(text), ""
+	lines, start := trailingSignals(text)
+	var kept []string
+	for i, line := range lines {
+		if m := signalRe.FindStringSubmatch(strings.TrimSpace(line)); i >= start && m != nil {
+			signal = m[1]
+		} else {
+			kept = append(kept, line)
+		}
 	}
-	clean = strings.TrimSpace(signalRe.ReplaceAllString(strings.TrimSpace(text), ""))
-	return clean, m[1]
+	return strings.TrimSpace(strings.Join(kept, "\n")), signal
 }
 
 func speaker(m *Message, r *Room) string {
@@ -86,6 +106,7 @@ func standingBrief(r *Room, me *Participant) string {
 		b.WriteString("- 도구 실행이나 파일 수정 없이 대화로만 답하세요.\n")
 	}
 	b.WriteString("- 대화에서 쓰인 언어로 답하세요. 채팅에 어울리게 간결하되, 판단에 필요한 근거는 생략하지 마세요.\n")
+	b.WriteString(markerBrief(r.Mode))
 	return b.String()
 }
 
@@ -107,7 +128,7 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 		b.WriteString("\n이번 턴:\n")
 	}
 	if tc.Part != nil {
-		fmt.Fprintf(&b, "- 지금은 작업 계획의 파트 %s(%s)를 맡고 있습니다. branch %s 에만 커밋하세요. 파트를 끝냈으면 모든 변경을 커밋한 뒤 응답 마지막 줄에 %s 한 줄만 쓰세요.\n", tc.Part.ID, tc.Part.Title, tc.Part.Branch, workDoneSignal)
+		fmt.Fprintf(&b, "- 지금은 작업 계획의 파트 %s(%s)를 맡고 있습니다. branch %s 에만 커밋하세요. 파트를 끝냈으면 모든 변경을 커밋한 뒤 응답 끝 신호 블록에 %s 한 줄을 쓰세요.\n", tc.Part.ID, tc.Part.Title, tc.Part.Branch, workDoneSignal)
 	}
 	if tc.Parallel {
 		b.WriteString("- 같은 메시지를 다른 참가자들도 동시에 받았습니다. 다른 답변을 기다리지 말고 독립적으로 답하세요.\n")
@@ -117,7 +138,7 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 			b.WriteString("- 이번 턴에는 다른 참가자를 추가로 호출할 수 없습니다. 언급은 @ 없이 이름만 쓰세요.\n")
 		}
 		fmt.Fprintf(&b, "- 지금은 자율 토론 %d/%d 라운드입니다. 앞선 답변을 검토해 새 근거가 있을 때만 기여하고, 이미 나온 말은 반복하지 마세요.\n", tc.Round, tc.TotalRounds)
-		b.WriteString("- 응답 마지막 줄에 반드시 다음 중 하나만 붙이세요: [[DISCUSSION:CONTINUE]] [[DISCUSSION:AGREE]] [[DISCUSSION:PASS]] [[DISCUSSION:CONCLUDE]]\n")
+		b.WriteString("- 응답 끝 신호 블록에 다음 중 하나를 한 줄로 붙이세요: [[DISCUSSION:CONTINUE]] [[DISCUSSION:AGREE]] [[DISCUSSION:PASS]] [[DISCUSSION:CONCLUDE]]\n")
 		b.WriteString("  새 기여가 있으면 CONTINUE, 새 내용 없이 동의하면 AGREE, 할 말이 없으면 PASS, 충분한 최종 결론을 제시했으면 CONCLUDE.\n")
 	}
 	if tc.FirstTurn {
@@ -142,15 +163,16 @@ func BuildPartPrompt(plan *WorkPlan, part *Part) string {
 	b.WriteString("규칙:\n")
 	b.WriteString("- 이 작업 폴더 안에서만 수정하고, 범위 밖의 파일은 바꾸지 마세요.\n")
 	fmt.Fprintf(&b, "- 변경은 branch %s 에 커밋하세요. 커밋하지 않은 변경이나 추적하지 않는 파일이 남아 있으면 제출이 거부됩니다.\n", part.Branch)
-	fmt.Fprintf(&b, "- 파트를 끝냈으면 응답 마지막 줄에 %s 한 줄만 쓰세요. 그러면 다른 공급사 참가자가 diff를 리뷰합니다.\n", workDoneSignal)
+	fmt.Fprintf(&b, "- 파트를 끝냈으면 응답 끝 신호 블록에 %s 한 줄을 쓰세요. 그러면 다른 공급사 참가자가 diff를 리뷰합니다.\n", workDoneSignal)
 	b.WriteString("- 무엇을 바꿨는지 답변에 적으세요.\n")
+	b.WriteString(markerBrief(agent.ModeWrite))
 	return b.String()
 }
 
 // BuildFixPrompt asks the author to fix the review items it accepted.
 func BuildFixPrompt(part *Part) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "파트 %s 리뷰의 수용 항목과 남은 이견 항목을 고치세요. 고친 뒤 branch %s 에 커밋하고 응답 마지막 줄에 %s 한 줄만 쓰세요. 새 커밋으로 다시 리뷰합니다.\n", part.ID, part.Branch, workDoneSignal)
+	fmt.Fprintf(&b, "파트 %s 리뷰의 수용 항목과 남은 이견 항목을 고치세요. 고친 뒤 branch %s 에 커밋하고 응답 끝 신호 블록에 %s 한 줄을 쓰세요. 새 커밋으로 다시 리뷰합니다.\n", part.ID, part.Branch, workDoneSignal)
 	for _, round := range part.Review.Rounds {
 		for _, item := range round.Items {
 			if item.Status != "accepted_pending" && item.Status != "disputed" {
@@ -163,14 +185,19 @@ func BuildFixPrompt(part *Part) string {
 	return b.String()
 }
 
-// ParseWorkDone strips a final WORK:DONE line and reports whether it was there.
+// ParseWorkDone strips WORK:DONE lines from the terminal signal block.
 func ParseWorkDone(text string) (string, bool) {
-	trimmed := strings.TrimSpace(text)
-	cut := strings.LastIndexByte(trimmed, '\n')
-	if strings.TrimSpace(trimmed[cut+1:]) != workDoneSignal {
-		return trimmed, false
+	lines, start := trailingSignals(text)
+	var kept []string
+	done := false
+	for i, line := range lines {
+		if i >= start && strings.TrimSpace(line) == workDoneSignal {
+			done = true
+		} else {
+			kept = append(kept, line)
+		}
 	}
-	return strings.TrimSpace(trimmed[:cut+1]), true
+	return strings.TrimSpace(strings.Join(kept, "\n")), done
 }
 
 func renderHistory(r *Room, history []*Message) string {
