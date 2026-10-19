@@ -46,18 +46,18 @@ type ReviewSummary struct {
 
 // ReviewInput is everything a reviewer may see (D10): no room history.
 type ReviewInput struct {
-	Ref   ReviewRef
-	Goal  string
-	Brief string
-	Scope []string
-	Diff  *PartDiff
+	Ref   ReviewRef `json:"ref"`
+	Goal  string    `json:"goal"`
+	Brief string    `json:"brief"`
+	Scope []string  `json:"scope"`
+	Diff  *PartDiff `json:"diff"`
 }
 
 // ReviewStep is the next turn the hub must run.
 type ReviewStep struct {
 	Who    string `json:"who"`  // reviewer (fresh session) | author (part session)
 	Kind   string `json:"kind"` // findings|author_reply|rebuttal|recheck
-	Prompt string `json:"-"`
+	Prompt string `json:"prompt"`
 }
 
 // ReviewState is stored on Part.Review and drives the review loop.
@@ -67,4 +67,5 @@ type ReviewState struct {
 	Phase     string        `json:"phase"` // findings|author_reply|rebuttal|fix|recheck|passed|disputed|limit
 	Pending   *ReviewStep   `json:"pending,omitempty"`
 	Summary   ReviewSummary `json:"summary"`
+	Input     ReviewInput   `json:"input"` // retained to build subsequent steps after restart
 }
