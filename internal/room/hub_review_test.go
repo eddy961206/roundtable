@@ -41,7 +41,7 @@ func TestCancelQueuedDiscussionTurnEndsRound(t *testing.T) {
 	a := &fakeProvider{id: "claude", delay: 400 * time.Millisecond, reply: func(int, string) string { return "x\n[[DISCUSSION:AGREE]]" }}
 	b := &fakeProvider{id: "codex", reply: func(int, string) string { return "y\n[[DISCUSSION:AGREE]]" }}
 	hub, r := newTestHub(t, a, b)
-	if err := hub.StartDiscussion(r.ID, 3); err != nil {
+	if err := hub.StartDiscussion(r.ID, 3, sequentialFirst); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -111,7 +111,7 @@ func TestDisablingParticipantDropsQueuedTurn(t *testing.T) {
 	a := &fakeProvider{id: "claude", delay: 300 * time.Millisecond}
 	b := &fakeProvider{id: "codex"}
 	hub, r := newTestHub(t, a, b)
-	if err := hub.StartDiscussion(r.ID, 1); err != nil {
+	if err := hub.StartDiscussion(r.ID, 1, sequentialFirst); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(50 * time.Millisecond)

@@ -14,6 +14,7 @@ import { getAgentElapsedMs, loadRolePresets, renderParticipants } from "./partic
 import { ensureAndRenderTrace, expandTrace } from "./trace.js";
 import { bindTimeline, focusTimelineMessage, jumpToLatestMessages, onTimelineImageLoad, renderMessage, renderTimeline, scheduleRender, scrollToTimelineBottom, syncPendingScrollRestore } from "./timeline.js";
 import { connect, openRoom, schedulePanels, upsertRequest } from "./room.js";
+import { bindDecisionControls, renderDecisions } from "./decisions.js";
 import { addPartRow, addSeatSpec, addVerifyRow, onRoomSubmit, onWorkPlanSubmit, openRoomDialog, openWorkPlanDialog, readSeatSpecs } from "./dialogs.js";
 
 // ---------- boot ----------
@@ -141,6 +142,7 @@ function bindUI() {
   }
 
   $("#dlg-room-cancel").onclick = () => $("#dlg-room").close();
+  bindDecisionControls();
   $("#form-room").onsubmit = onRoomSubmit;
   $("#btn-add-seat-spec").onclick = () => addSeatSpec($("#room-seat-specs"));
   $("#btn-copy-room-seats").onclick = () => {
@@ -343,7 +345,22 @@ function bindUI() {
   $("#btn-discuss").onclick = () =>
     api("POST", "/api/rooms/" + state.roomId + "/discussion", {
       rounds: Number($("#rounds").value) || 3,
+      blind_first: $("#chk-blind-first").checked,
     }).catch((e) => alert(e.message));
+  // The toggle is the room's blind_first_default; the room event re-renders it.
+  $("#chk-blind-first").onchange = (e) => {
+    const box = e.target;
+    if (!state.roomId) return;
+    box.disabled = true;
+    api("PATCH", "/api/rooms/" + state.roomId, { blind_first_default: box.checked })
+      .catch((err) => {
+        box.checked = !box.checked;
+        alert(err.message);
+      })
+      .finally(() => {
+        box.disabled = false;
+      });
+  };
   $("#btn-stop").onclick = () =>
     state.roomId && api("POST", "/api/rooms/" + state.roomId + "/stop").catch((e) => alert(e.message));
   $("#btn-reset").onclick = () => {
@@ -446,11 +463,13 @@ function closeRoom(notice) {
   state.room = null;
   state.work = null;
   state.requests.clear();
+  state.decisions.clear();
   closeLightbox();
   clearDraftAttachments();
   closeDiffDrawer();
   renderUsagePanel();
   renderRequests();
+  renderDecisions();
   $("#btn-add-participant").disabled = true;
   $("#participants").replaceChildren();
   localStorage.removeItem("rt.room");

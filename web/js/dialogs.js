@@ -412,6 +412,7 @@ export function openRoomDialog(room, initialPrompt = "") {
   f.max_chain.value = room ? room.max_chain : 4;
   f.discussion_rounds.value = room ? room.discussion_rounds : 3;
   f.persona.checked = room ? !!room.persona : false;
+  f.blind_first_default.checked = room ? room.blind_first_default === true : true;
   $("#room-seats-fieldset").hidden = !!room;
   $("#room-seat-specs").replaceChildren();
   $("#btn-copy-room-seats").hidden = !!room || !state.room;
@@ -435,6 +436,7 @@ export async function onRoomSubmit(e) {
     max_chain: Number(f.max_chain.value),
     discussion_rounds: Number(f.discussion_rounds.value),
     persona: f.persona.checked,
+    blind_first_default: f.blind_first_default.checked,
   };
   try {
     if (f.dataset.editing) {

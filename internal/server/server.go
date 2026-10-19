@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -93,6 +94,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/rooms/{id}/attachments", s.uploadAttachment)
 	s.mux.HandleFunc("GET /api/rooms/{id}/attachments/{aid}", s.getAttachment)
 	s.mux.HandleFunc("POST /api/rooms/{id}/requests/{rid}/cancel", s.cancelRequest)
+	s.mux.HandleFunc("GET /api/rooms/{id}/decisions", s.listDecisions)
+	s.mux.HandleFunc("POST /api/rooms/{id}/decisions", s.addDecision)
+	s.mux.HandleFunc("PATCH /api/rooms/{id}/decisions/{did}", s.patchDecision)
 	s.mux.HandleFunc("POST /api/rooms/{id}/discussion", s.discussion)
 	s.mux.HandleFunc("POST /api/rooms/{id}/stop", s.stop)
 	s.mux.HandleFunc("POST /api/rooms/{id}/reset", s.reset)
@@ -273,10 +277,15 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Rounds int `json:"rounds"`
+		Rounds     int   `json:"rounds"`
+		BlindFirst *bool `json:"blind_first"` // omitted: the room's blind_first_default
 	}
-	_ = decode(r, &body)
-	if err := s.hub.StartDiscussion(r.PathValue("id"), body.Rounds); err != nil {
+	// An empty body starts with the room defaults; a malformed one is rejected.
+	if err := decode(r, &body); err != nil && !errors.Is(err, io.EOF) {
+		writeErr(w, 400, err)
+		return
+	}
+	if err := s.hub.StartDiscussion(r.PathValue("id"), body.Rounds, body.BlindFirst); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
