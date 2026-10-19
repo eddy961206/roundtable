@@ -295,27 +295,13 @@ func TestArgsPerMode(t *testing.T) {
 	}
 	a := agyArgs(RunOptions{Mode: ModeChat, Model: "gemini-3.8-flash-high", Prompt: "hi", SessionID: "cid"})
 	as := strings.Join(a, " ")
-	for _, want := range []string{"--mode plan", "--model gemini-3.8-flash-high", "--conversation cid", "--sandbox", "-p=hi"} {
+	for _, want := range []string{"--mode plan", "--model gemini-3.8-flash-high", "--conversation cid", "--sandbox", "--input-format stream-json"} {
 		if !strings.Contains(as, want) {
 			t.Errorf("agy args missing %q: %s", want, as)
 		}
 	}
-	if a[len(a)-1] != "-p=hi" {
-		t.Error("agy prompt must be the last argument")
-	}
-}
-
-func TestCompactPrompt(t *testing.T) {
-	long := strings.Repeat("가나다라마바사아자차카타파하", 4000)
-	got := compactPrompt(long, agyPromptLimit)
-	if len(got) > agyPromptLimit {
-		t.Fatalf("len %d > limit", len(got))
-	}
-	if !strings.Contains(got, "생략") || !strings.HasPrefix(got, "가나다") || !strings.HasSuffix(got, "파하") {
-		t.Fatalf("compact shape wrong: head=%q tail=%q", got[:12], got[len(got)-12:])
-	}
-	if compactPrompt("short", 100) != "short" {
-		t.Fatal("short prompt must be untouched")
+	if a[len(a)-1] != "-p=" {
+		t.Error("agy prompt must come through stdin, not the command line")
 	}
 }
 

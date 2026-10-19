@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -134,27 +135,20 @@ func TestMCPArgs(t *testing.T) {
 	}
 }
 
-func TestAgyLongPromptGoesThroughAFile(t *testing.T) {
-	scratch := t.TempDir()
-	long := strings.Repeat("가나다라 ", 8000) + "마지막 지시"
-	o := RunOptions{Mode: ModeRead, Workspace: `D:\ws`, ScratchDir: scratch, Prompt: long}
-	file, cleanup, err := writeAgyPromptFile(o)
-	if err != nil {
-		t.Fatal(err)
+func TestAgyPromptGoesThroughStdin(t *testing.T) {
+	long := strings.Repeat("가나다라 \"인용\" ", 8000) + "마지막 지시"
+	args := strings.Join(agyArgs(RunOptions{Mode: ModeRead, Workspace: `D:\ws`, Prompt: long}), " ")
+	if strings.Contains(args, "마지막 지시") || !strings.Contains(args, "--input-format stream-json") || !strings.HasSuffix(args, "-p=") {
+		t.Fatalf("args: %.300s", args)
 	}
-	b, _ := os.ReadFile(file)
-	if string(b) != long {
-		t.Fatal("the file must hold the whole prompt, untouched")
+	var in struct {
+		Event   string `json:"event"`
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
 	}
-	o.Prompt = agyFilePointer(file, len(long))
-	o.ExtraDirs = []string{filepath.Dir(file)}
-	args := agyArgs(o)
-	joined := strings.Join(args, " ")
-	if escapedLen(args[len(args)-1]) > agyPromptLimit || strings.Contains(joined, "생략") || !strings.Contains(joined, "--add-dir "+filepath.Dir(file)) {
-		t.Fatalf("args: %.300s", joined)
-	}
-	cleanup()
-	if _, err := os.Stat(file); !os.IsNotExist(err) {
-		t.Fatal("prompt file must be removed after the turn")
+	line := agyInput(long)
+	if strings.Count(line, "\n") != 1 || json.Unmarshal([]byte(line), &in) != nil || in.Event != "user" || in.Message.Content != long {
+		t.Fatal("stdin must carry the whole prompt as one stream-json user line")
 	}
 }
