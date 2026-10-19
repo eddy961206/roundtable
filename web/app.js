@@ -2287,9 +2287,6 @@
     route.appendChild(buildSeatRouteChip(req.to));
     const stBadge = el("span", "badge req-status-badge status-" + req.status, requestStatusLabel(req.status));
     route.appendChild(stBadge);
-    if (req.status === "pending" && req.wait_reason) {
-      route.appendChild(el("span", "req-wait-reason muted", req.wait_reason));
-    }
     head.appendChild(route);
 
     const actions = el("div", "req-card-actions");
@@ -2336,7 +2333,6 @@
         r.to,
         r.text,
         r.status,
-        r.wait_reason,
         r.result_msg,
         r.reason,
         participantLabel(r.from),
@@ -3304,7 +3300,6 @@
         r.text,
         r.source_msg,
         r.status,
-        r.wait_reason,
         r.result_msg,
         r.reason,
         r.at,
@@ -3331,12 +3326,7 @@
       route.appendChild(el("span", "req-arrow muted", "→"));
       route.appendChild(buildSeatRouteChip(req.to));
       top.appendChild(route);
-      const statusWrap = el("div", "req-status-wrap");
-      statusWrap.appendChild(el("span", "badge req-status-badge status-" + req.status, requestStatusLabel(req.status)));
-      if (req.status === "pending" && req.wait_reason) {
-        statusWrap.appendChild(el("span", "req-wait-reason muted", req.wait_reason));
-      }
-      top.appendChild(statusWrap);
+      top.appendChild(el("span", "badge req-status-badge status-" + req.status, requestStatusLabel(req.status)));
       li.appendChild(top);
 
       if (req.text) {
