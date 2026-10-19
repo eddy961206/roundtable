@@ -211,10 +211,11 @@ type claudeParser struct {
 	toolNames  map[string]string // tool_use id -> name
 	subagents  map[string]bool   // tool_use ids that spawned subagents
 	taskToTool map[string]string // task_id -> tool_use id
+	subModels  map[string]string // subagent tool_use id -> model last reported
 }
 
 func newClaudeParser() *claudeParser {
-	return &claudeParser{toolNames: map[string]string{}, subagents: map[string]bool{}, taskToTool: map[string]string{}}
+	return &claudeParser{toolNames: map[string]string{}, subagents: map[string]bool{}, taskToTool: map[string]string{}, subModels: map[string]string{}}
 }
 
 func (p *claudeParser) Line(line string, emit func(Event)) {
@@ -371,6 +372,15 @@ func (p *claudeParser) assistant(m map[string]any, parent string, emit func(Even
 			}
 		}
 	}
+	// The CLI does not report a subagent's reasoning effort, only its model.
+	// "<synthetic>" marks messages the CLI made up itself (no model ran).
+	if model := str(msg, "model"); parent != "" && model != "" && model != "<synthetic>" && p.subModels[parent] != model {
+		p.subModels[parent] = model
+		x := ev(KindSubagentMeta)
+		x.Parent = parent
+		x.Meta = map[string]any{"model": model}
+		emit(x)
+	}
 	for _, b := range arr(msg, "content") {
 		blk, _ := b.(map[string]any)
 		switch str(blk, "type") {
@@ -411,7 +421,8 @@ func (p *claudeParser) assistant(m map[string]any, parent string, emit func(Even
 					x.Parent = id
 					x.Name = firstNonEmpty(str(input, "subagent_type"), "subagent")
 					x.Input = str(input, "prompt")
-					x.Meta = map[string]any{"description": str(input, "description")}
+					// model is the alias the caller asked for (e.g. "haiku"), if any.
+					x.Meta = map[string]any{"description": str(input, "description"), "model": str(input, "model")}
 					emit(x)
 				}
 				continue

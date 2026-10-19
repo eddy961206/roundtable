@@ -28,6 +28,8 @@ type rolloutFile struct {
 	offset  int64
 	started bool
 	ended   bool
+	model   string // last turn_context model/effort already emitted
+	effort  string
 }
 
 func newRolloutWatcher(root string, since time.Time) *rolloutWatcher {
@@ -169,8 +171,17 @@ func (w *rolloutWatcher) tail(rf *rolloutFile, emit func(Event)) {
 		}
 		rf.offset += int64(len(line))
 		for _, x := range rolloutEvents(rf.id, line) {
-			if x.Kind == KindSubagentEnd {
+			switch x.Kind {
+			case KindSubagentEnd:
 				rf.ended = true
+			case KindSubagentMeta:
+				// Every turn repeats turn_context; only a change is news.
+				model := x.Meta["model"].(string)
+				effort, _ := x.Meta["effort"].(string)
+				if model == rf.model && effort == rf.effort {
+					continue
+				}
+				rf.model, rf.effort = model, effort
 			}
 			emit(x)
 		}
@@ -193,6 +204,19 @@ func rolloutEvents(threadID, line string) []Event {
 			return []Event{x}
 		}
 		return nil
+	case "turn_context":
+		// subagent_meta always names the model; effort only when reported.
+		model := str(p, "model")
+		if model == "" {
+			return nil
+		}
+		x := ev(KindSubagentMeta)
+		x.Parent = threadID
+		x.Meta = map[string]any{"model": model}
+		if effort := str(p, "effort"); effort != "" {
+			x.Meta["effort"] = effort
+		}
+		return []Event{x}
 	case "response_item":
 	default:
 		return nil
