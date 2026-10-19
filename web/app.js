@@ -183,7 +183,11 @@
       signal,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (!res.ok) {
+      const err = new Error(data.error || res.statusText);
+      err.status = res.status;
+      throw err;
+    }
     return data;
   };
 
@@ -195,6 +199,15 @@
     roomSearch: "",
     roomId: null,
     room: null,
+    work: null,
+    partNotices: new Map(),
+    partReviewOpen: new Map(),
+    workBoardCollapsed: false,
+    diffPartId: null,
+    diffData: null,
+    diffLoading: false,
+    diffError: "",
+    diffController: null,
     messages: new Map(),
     order: [],
     winStart: 0,
@@ -519,7 +532,7 @@
     panelTimer = setTimeout(() => {
       panelTimer = null;
       if (!state.room || document.hidden) return;
-      renderParticipants(); renderTargetControls(); renderUsagePanel(); renderQueue(); renderDiscussion(); updateHint();
+      renderParticipants(); renderTargetControls(); renderUsagePanel(); renderQueue(); renderDiscussion(); renderWork(); updateHint();
     }, STREAM_THROTTLE_MS);
   }
   let roomsTimer = null;
@@ -626,6 +639,11 @@
       }
       state.roomId = id;
       state.target = "";
+      state.work = null;
+      state.partNotices.clear();
+      state.partReviewOpen.clear();
+      state.workBoardCollapsed = false;
+      closeDiffDrawer();
       state.draftMentions.clear();
       clearComposerError();
       state.expanded.clear();
@@ -655,6 +673,7 @@
       if (m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim()) seedLive(id, m.id);
     }
     state.room = snap.room;
+    state.work = snap.work;
     state.history = snap.history;
     state.browsingHistory = preserveHistory;
     state.historyLoading = false;
@@ -683,6 +702,7 @@
     roomSec.dataset.mode = state.room.mode || "read";
 
     renderRoomHead();
+    renderWork();
     pruneMessageCaches();
     renderTimeline(!preserveHistory);
     if (preserveHistory) $("#timeline").scrollTop = priorTop;
@@ -790,6 +810,12 @@
         state.discussion = data;
         schedulePanels();
         break;
+      case "work":
+        state.roomStateRevision++;
+        state.work = data;
+        renderRoomHead();
+        renderWork();
+        break;
       case "limits":
         refreshLimits(false, true);
         break;
@@ -798,6 +824,7 @@
         state.room = data;
         if ($("#room")) $("#room").dataset.mode = data.mode || "read";
         renderRoomHead();
+        renderWork();
         renderParticipants();
         renderQueue();
         renderDiscussion();
@@ -882,9 +909,19 @@
       }
     }
 
+    const btnWorkPlan = $("#btn-work-plan");
+    if (btnWorkPlan) {
+      btnWorkPlan.hidden = r.mode !== "write";
+      btnWorkPlan.disabled = !!state.work;
+      btnWorkPlan.title = state.work
+        ? "이미 작업 계획이 확정된 방입니다"
+        : "작업 분배 및 적대적 교차 리뷰 계획을 확정합니다";
+    }
+
     $("#rounds").value = r.discussion_rounds || 3;
     $("#btn-export").href = "/api/rooms/" + r.id + "/export.md";
 
+    renderWorkHeadBar();
     renderTargetControls();
     renderUsagePanel();
   }
@@ -1426,8 +1463,21 @@
       (m.status === "error" ? " error" : "");
 
     if (m.kind === "system") {
+      const sysBadges = [];
+      if (m.part) sysBadges.push('<span class="badge msg-part-badge">🧩 ' + esc(m.part) + "</span> ");
+      if (m.review_step) {
+        sysBadges.push(
+          '<span class="badge msg-review-step-badge ' +
+            esc(m.review_step) +
+            '">' +
+            esc(reviewStepLabel(m.review_step)) +
+            "</span> "
+        );
+      }
       node.innerHTML =
-        '<div class="bubble"><span>ℹ ' +
+        '<div class="bubble">' +
+        sysBadges.join("") +
+        "<span>ℹ " +
         esc(rewriteProseMentions(m.text, visibleMentions)) +
         '</span> <span class="muted">' +
         fmtTime(m.ts) +
@@ -1451,6 +1501,22 @@
       }
       if (m.reason === "discussion") meta.push('<span class="badge">🗣 토론 ' + m.round + "R</span>");
       else if (m.reason === "mention") meta.push('<span class="badge">@호출</span>');
+      else if (m.reason === "part") meta.push('<span class="badge">🔨 파트 작업</span>');
+      else if (m.reason === "review") meta.push('<span class="badge">🔍 교차 리뷰</span>');
+      if (m.part) {
+        const pInfo = findWorkPart(m.part);
+        const pTitleAttr = pInfo ? ' title="' + esc(pInfo.title) + '"' : "";
+        meta.push('<span class="badge msg-part-badge"' + pTitleAttr + ">🧩 " + esc(m.part) + "</span>");
+      }
+      if (m.review_step) {
+        meta.push(
+          '<span class="badge msg-review-step-badge ' +
+            esc(m.review_step) +
+            '">' +
+            esc(reviewStepLabel(m.review_step)) +
+            "</span>"
+        );
+      }
       meta.push('<span class="muted">' + fmtTime(m.ts) + "</span>");
 
       if (m.status === "streaming") {
@@ -2484,7 +2550,13 @@
     for (const t of state.queue) {
       const li = el("li", t.status);
       const reasonTxt =
-        { mention: "@호출", broadcast: "전체", discussion: "토론 " + t.round + "R" }[t.reason] || t.reason;
+        {
+          mention: "@호출",
+          broadcast: "전체",
+          discussion: "토론 " + t.round + "R",
+          part: "파트" + (t.part ? " " + t.part : ""),
+          review: "리뷰" + (t.part ? " " + t.part : ""),
+        }[t.reason] || t.reason;
       li.appendChild(
         el("span", "", (t.status === "running" ? "실행 · " : "대기 · ") + participantLabel(t.agent) + " · " + reasonTxt)
       );
@@ -2522,6 +2594,975 @@
       }
     }
     bar.appendChild(sigWrap);
+  }
+
+  // ---------- Work division, adversarial review & merge UI ----------
+  const shortSHA = (sha) => (sha ? String(sha).slice(0, 8) : "");
+
+  const REVIEW_STEP_LABELS = {
+    findings: "지적 (findings)",
+    author_reply: "작성자 응답 (author_reply)",
+    rebuttal: "반박 검토 (rebuttal)",
+    recheck: "수정 확인 (recheck)",
+  };
+  function reviewStepLabel(step) {
+    return REVIEW_STEP_LABELS[step] || step;
+  }
+
+  const PART_STATE_LABELS = {
+    working: "작업 중 (working)",
+    reviewing: "리뷰 중 (reviewing)",
+    fixing: "수정 중 (fixing)",
+    queued: "병합 대기 (queued)",
+    awaiting_approval: "승인 대기 (awaiting_approval)",
+    merging: "병합 중 (merging)",
+    merged: "병합 완료 (merged)",
+    blocked: "차단됨 (blocked)",
+    abandoned: "포기됨 (abandoned)",
+  };
+
+  function findWorkPart(pid) {
+    if (!state.work || !state.work.parts) return null;
+    return state.work.parts.find((p) => p.id === pid) || null;
+  }
+
+  async function patchMergeMode(nextMode, btn) {
+    if (!state.roomId || !state.work) return;
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    if (btn) btn.disabled = true;
+    try {
+      const updated = await api("PATCH", "/api/rooms/" + roomId + "/work", { merge_mode: nextMode });
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (updated && updated.merge_mode) state.work = updated;
+      else state.work.merge_mode = nextMode;
+      renderWorkHeadBar();
+      renderWork();
+      announce("병합 모드를 " + (nextMode === "auto" ? "자동(auto)" : "확인(confirm)") + "으로 변경했습니다.");
+    } catch (err) {
+      if (state.roomId === roomId && openSeq === sequence) alert(err.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function renderWorkHeadBar() {
+    const bar = $("#work-head-bar");
+    if (!bar) return;
+    const w = state.work;
+    if (!w) {
+      bar.hidden = true;
+      bar.replaceChildren();
+      delete bar.dataset.sig;
+      return;
+    }
+    const partsCount = w.parts ? w.parts.length : 0;
+    const sig = JSON.stringify([
+      w.goal,
+      w.base_sha,
+      w.integration_branch,
+      w.integration_sha,
+      w.merge_mode,
+      w.review_rounds,
+      w.queue,
+      w.merging,
+      state.workBoardCollapsed,
+      partsCount,
+    ]);
+    bar.hidden = false;
+    if (bar.dataset.sig === sig) return;
+    bar.dataset.sig = sig;
+    bar.replaceChildren();
+
+    const info = el("div", "work-head-info");
+    const goalSpan = el("span", "work-goal", "🎯 " + w.goal);
+    goalSpan.title = "작업 목표: " + w.goal;
+    info.appendChild(goalSpan);
+
+    const branchBadge = el("span", "badge mono work-branch-badge", "🌿 " + w.integration_branch);
+    branchBadge.title = "통합 branch: " + w.integration_branch;
+    info.appendChild(branchBadge);
+
+    const shaBadge = el("span", "badge mono work-sha-badge", "통합 SHA: " + shortSHA(w.integration_sha));
+    shaBadge.title = "통합 branch 현재 커밋 SHA: " + w.integration_sha;
+    info.appendChild(shaBadge);
+
+    if (w.base_sha) {
+      const baseBadge = el("span", "badge mono", "base: " + shortSHA(w.base_sha));
+      baseBadge.title = "기준 커밋 SHA: " + w.base_sha;
+      info.appendChild(baseBadge);
+    }
+
+    if (w.queue && w.queue.length > 0) {
+      const qBadge = el("span", "badge warn", "병합 대기열: " + w.queue.join(" → "));
+      qBadge.title = "FIFO 병합 대기열";
+      info.appendChild(qBadge);
+    }
+
+    if (w.merging) {
+      const mBadge = el("span", "badge ok mono", "병합 중: " + w.merging.part_id + " (" + shortSHA(w.merging.merge_sha) + ")");
+      mBadge.title = "before: " + w.merging.before_sha + " → merge: " + w.merging.merge_sha;
+      info.appendChild(mBadge);
+    }
+    bar.appendChild(info);
+
+    const controls = el("div", "work-head-controls");
+    const modeGroup = el("div", "merge-mode-toggle");
+    modeGroup.setAttribute("role", "group");
+    modeGroup.setAttribute("aria-label", "병합 모드 전환");
+    modeGroup.appendChild(el("span", "muted small-note", "병합:"));
+
+    for (const [mode, labelTxt] of [
+      ["confirm", "확인 (confirm)"],
+      ["auto", "자동 (auto)"],
+    ]) {
+      const active = w.merge_mode === mode;
+      const b = el("button", "merge-mode-btn" + (active ? " active" : ""), labelTxt);
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(active));
+      b.title =
+        mode === "confirm"
+          ? "확인 모드: 리뷰 통과 후 사람이 승인 버튼을 눌러야 병합합니다"
+          : "자동 모드: 리뷰·검증 통과 시 사람 승인 없이 자동 병합합니다";
+      b.onclick = () => {
+        if (w.merge_mode !== mode) patchMergeMode(mode, b);
+      };
+      modeGroup.appendChild(b);
+    }
+    controls.appendChild(modeGroup);
+
+    const foldBtn = el(
+      "button",
+      "ghost work-fold-btn",
+      state.workBoardCollapsed ? "파트 보드 펼치기 (" + partsCount + ") ▾" : "파트 보드 접기 ▴"
+    );
+    foldBtn.type = "button";
+    foldBtn.setAttribute("aria-expanded", String(!state.workBoardCollapsed));
+    foldBtn.onclick = () => {
+      state.workBoardCollapsed = !state.workBoardCollapsed;
+      renderWorkHeadBar();
+      renderWork();
+    };
+    controls.appendChild(foldBtn);
+    bar.appendChild(controls);
+  }
+
+  function buildBlockElement(block, isHalted) {
+    const box = el("div", isHalted ? "halted-box" : "part-block-box");
+    const head = el("div", "block-head");
+    head.appendChild(el("strong", "", isHalted ? "⛔ 병합 대기열 정지 (Halted)" : "⛔ 파트 차단 (Blocked)"));
+    head.appendChild(el("span", "badge block-kind", block.kind));
+    if (block.from) {
+      head.appendChild(el("span", "muted small-note", "이전 상태: " + block.from));
+    }
+    if (block.at) {
+      head.appendChild(el("span", "muted small-note", fmtTime(block.at)));
+    }
+    box.appendChild(head);
+
+    if (block.message) {
+      box.appendChild(el("div", "block-msg", block.message));
+    }
+
+    if (block.result) {
+      const res = block.result;
+      if (res.conflicts && res.conflicts.length > 0) {
+        const confWrap = el("div", "block-conflicts");
+        confWrap.appendChild(el("span", "block-label", "충돌 파일 (" + res.conflicts.length + "): "));
+        for (const f of res.conflicts) {
+          confWrap.appendChild(el("code", "file-path mono", f));
+        }
+        box.appendChild(confWrap);
+      }
+      if (res.name || (res.argv && res.argv.length > 0)) {
+        const cmdLine = el("div", "block-cmd mono");
+        const argvTxt = res.argv ? res.argv.join(" ") : "";
+        cmdLine.textContent =
+          "명령: " +
+          res.name +
+          (argvTxt ? " [" + argvTxt + "]" : "") +
+          " · exit code: " +
+          res.exit_code +
+          (res.timed_out ? " · ⏱ 시간 초과" : "");
+        box.appendChild(cmdLine);
+      }
+      if (res.output) {
+        const det = el("details", "block-output-details");
+        det.appendChild(el("summary", "", "명령 출력 보기 (Output)"));
+        const preEl = el("pre", "mono", res.output);
+        det.appendChild(preEl);
+        box.appendChild(det);
+      }
+    }
+    return box;
+  }
+
+  async function partAction(part, action, btn) {
+    if (!state.roomId || !state.work) return;
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    const url = "/api/rooms/" + roomId + "/work/parts/" + encodeURIComponent(part.id) + "/" + action;
+    const body =
+      action === "approve"
+        ? {
+            submit_sha: part.submit_sha,
+            integration_sha: state.work.integration_sha,
+          }
+        : undefined;
+    if (btn) btn.disabled = true;
+    state.partNotices.delete(part.id);
+    try {
+      const res = await api("POST", url, body);
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (res && res.parts) {
+        state.work = res;
+      }
+      renderWorkHeadBar();
+      renderWork();
+      announce(part.id + " 파트 " + action + " 요청 완료");
+    } catch (err) {
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      if (action === "approve" && err.status === 409) {
+        state.partNotices.set(part.id, "변경됨, 다시 확인");
+        announce("변경됨, 다시 확인");
+        delete $("#work-board").dataset.sig;
+        renderWork();
+        openRoom(roomId, true);
+        return;
+      }
+      alert(err.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function buildReviewSection(part) {
+    const rev = part.review;
+    const det = el("details", "part-review-section");
+    const savedOpen = state.partReviewOpen.get(part.id);
+    det.open = savedOpen !== undefined ? savedOpen : true;
+    det.ontoggle = () => {
+      state.partReviewOpen.set(part.id, det.open);
+    };
+
+    const totalItems = rev.rounds.reduce((acc, r) => acc + (r.items ? r.items.length : 0), 0);
+    const sum = el(
+      "summary",
+      "",
+      "교차 리뷰 상세 (" + rev.rounds.length + " / " + rev.max_rounds + " 라운드 · 총 지적 " + totalItems + "건 · 미해결 " + rev.summary.unresolved + "건)"
+    );
+    det.appendChild(sum);
+
+    for (const round of rev.rounds) {
+      const roundWrap = el("div", "review-round-block");
+      const rHead = el(
+        "div",
+        "review-round-head mono",
+        "라운드 " +
+          round.ref.round +
+          " · base " +
+          shortSHA(round.ref.base_sha) +
+          " .. head " +
+          shortSHA(round.ref.head_sha)
+      );
+      rHead.title = round.ref.base_sha + ".." + round.ref.head_sha;
+      roundWrap.appendChild(rHead);
+
+      const tblWrap = el("div", "review-table-wrap");
+      const tbl = el("table", "review-table");
+      const thead = el("thead");
+      const htr = el("tr");
+      for (const col of ["번호", "심각도", "파일:줄", "재현 시나리오", "확신도", "작성자", "리뷰어", "상태"]) {
+        htr.appendChild(el("th", "", col));
+      }
+      thead.appendChild(htr);
+      tbl.appendChild(thead);
+
+      const tbody = el("tbody");
+      if (!round.items || !round.items.length) {
+        const tr = el("tr");
+        const td = el("td", "muted", "지적 사항 없음 (0건)");
+        td.colSpan = 8;
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+      } else {
+        for (const item of round.items) {
+          const f = item.finding;
+          const tr = el("tr", "review-row status-" + item.status);
+          tr.appendChild(el("td", "mono", f.id));
+
+          const sevTd = el("td");
+          sevTd.appendChild(el("span", "badge sev-" + f.severity, f.severity));
+          tr.appendChild(sevTd);
+
+          const locTxt = (f.side ? f.side + ":" : "") + f.file + ":" + f.line;
+          tr.appendChild(el("td", "mono file-loc", locTxt));
+
+          tr.appendChild(el("td", "scenario-cell", f.scenario));
+
+          const confTd = el("td");
+          confTd.appendChild(el("span", "badge conf-" + f.confidence, f.confidence));
+          tr.appendChild(confTd);
+
+          const authTd = el("td", "reply-cell");
+          if (item.author) {
+            authTd.appendChild(el("span", "badge reply-action action-" + item.author.action, item.author.action));
+            if (item.author.reason) {
+              authTd.appendChild(el("span", "reply-reason", " " + item.author.reason));
+            }
+          } else {
+            authTd.textContent = "-";
+            authTd.classList.add("muted");
+          }
+          tr.appendChild(authTd);
+
+          const revTd = el("td", "reply-cell");
+          if (item.reviewer) {
+            revTd.appendChild(el("span", "badge reply-action action-" + item.reviewer.action, item.reviewer.action));
+            if (item.reviewer.reason) {
+              revTd.appendChild(el("span", "reply-reason", " " + item.reviewer.reason));
+            }
+          } else {
+            revTd.textContent = "-";
+            revTd.classList.add("muted");
+          }
+          tr.appendChild(revTd);
+
+          const stTd = el("td");
+          stTd.appendChild(el("span", "badge item-status status-" + item.status, item.status));
+          tr.appendChild(stTd);
+
+          tbody.appendChild(tr);
+        }
+      }
+      tbl.appendChild(tbody);
+      tblWrap.appendChild(tbl);
+      roundWrap.appendChild(tblWrap);
+      det.appendChild(roundWrap);
+    }
+    return det;
+  }
+
+  function renderWork() {
+    const haltedBanner = $("#work-halted-banner");
+    const board = $("#work-board");
+    const w = state.work;
+
+    if (haltedBanner) {
+      if (!w || !w.halted) {
+        haltedBanner.hidden = true;
+        haltedBanner.replaceChildren();
+        delete haltedBanner.dataset.sig;
+      } else {
+        const hSig = JSON.stringify(w.halted);
+        haltedBanner.hidden = false;
+        if (haltedBanner.dataset.sig !== hSig) {
+          const wasOpen = !!haltedBanner.querySelector(".block-output-details[open]");
+          haltedBanner.dataset.sig = hSig;
+          haltedBanner.replaceChildren(buildBlockElement(w.halted, true));
+          if (wasOpen) {
+            const det = haltedBanner.querySelector(".block-output-details");
+            if (det) det.open = true;
+          }
+        }
+      }
+    }
+
+    if (!board) return;
+    if (!w) {
+      board.hidden = true;
+      board.replaceChildren();
+      delete board.dataset.sig;
+      return;
+    }
+    board.hidden = state.workBoardCollapsed;
+    if (state.workBoardCollapsed) return;
+
+    const participantsKey = state.room ? state.room.participants.map((p) => [p.id, p.label, p.provider]) : [];
+    const sig = JSON.stringify([w, [...state.partNotices.entries()], participantsKey]);
+    if (board.dataset.sig === sig) return;
+    board.dataset.sig = sig;
+    board.replaceChildren();
+
+    if (!w.parts) return;
+    for (const part of w.parts) {
+      const card = el("article", "part-card" + seatClass(part.seat) + " state-" + part.state);
+      card.dataset.partId = part.id;
+
+      const top = el("div", "part-top");
+      const titleGroup = el("div", "part-title-group");
+      titleGroup.appendChild(el("span", "badge mono part-id-badge", part.id));
+      titleGroup.appendChild(el("strong", "part-title", part.title));
+      const stBadge = el("span", "badge part-state-badge state-" + part.state, PART_STATE_LABELS[part.state] || part.state);
+      titleGroup.appendChild(stBadge);
+
+      if (part.branch) {
+        const br = el("span", "badge mono", "🌿 " + part.branch);
+        br.title = "파트 branch: " + part.branch + (part.worktree ? " (" + part.worktree + ")" : "");
+        titleGroup.appendChild(br);
+      }
+      if (part.submit_sha) {
+        const subSha = el("span", "badge mono", "제출 SHA: " + shortSHA(part.submit_sha));
+        subSha.title = "SubmitSHA: " + part.submit_sha;
+        titleGroup.appendChild(subSha);
+      }
+      if (part.ready_mode) {
+        titleGroup.appendChild(el("span", "badge", "ReadyMode: " + part.ready_mode));
+      }
+      if (part.merged_sha) {
+        const mSha = el("span", "badge mono ok", "병합됨: " + shortSHA(part.merged_sha));
+        mSha.title = "MergedSHA: " + part.merged_sha;
+        titleGroup.appendChild(mSha);
+      }
+      top.appendChild(titleGroup);
+
+      const actions = el("div", "part-actions");
+      const btnSubmit = el("button", "", part.state === "fixing" ? "재제출" : "제출");
+      btnSubmit.type = "button";
+      btnSubmit.disabled = part.state !== "working" && part.state !== "fixing";
+      btnSubmit.title = "파트 작업 커밋을 교차 리뷰에 제출합니다";
+      btnSubmit.onclick = () => partAction(part, "submit", btnSubmit);
+      actions.appendChild(btnSubmit);
+
+      const btnApprove = el("button", "primary", "승인");
+      btnApprove.type = "button";
+      btnApprove.disabled = part.state !== "awaiting_approval";
+      btnApprove.title =
+        "현재 제출 SHA(" +
+        shortSHA(part.submit_sha) +
+        ")와 통합 SHA(" +
+        shortSHA(w.integration_sha) +
+        ")를 확인하여 병합을 승인합니다";
+      btnApprove.onclick = () => partAction(part, "approve", btnApprove);
+      actions.appendChild(btnApprove);
+
+      const btnRetry = el("button", "", "재시도");
+      btnRetry.type = "button";
+      btnRetry.disabled = part.state !== "blocked";
+      btnRetry.title = "차단(blocked)을 해제하고 이전 상태에서 다시 시도합니다";
+      btnRetry.onclick = () => partAction(part, "retry", btnRetry);
+      actions.appendChild(btnRetry);
+
+      const btnAbandon = el("button", "danger ghost", "포기");
+      btnAbandon.type = "button";
+      btnAbandon.disabled = part.state === "merged" || part.state === "abandoned" || part.state === "merging";
+      btnAbandon.title = "이 파트를 포기(abandoned) 상태로 전환합니다";
+      btnAbandon.onclick = () => partAction(part, "abandon", btnAbandon);
+      actions.appendChild(btnAbandon);
+
+      const btnDiff = el("button", "ghost", "Diff 보기");
+      btnDiff.type = "button";
+      btnDiff.title = "이 파트의 변경 파일 목록과 패치를 서랍에서 봅니다";
+      btnDiff.onclick = () => openDiffDrawer(part.id);
+      actions.appendChild(btnDiff);
+
+      top.appendChild(actions);
+      card.appendChild(top);
+
+      const meta = el("div", "part-meta");
+      const authorChip = el(
+        "span",
+        "seat-chip" + seatClass(part.seat) + " " + authorProvider(part.seat),
+        "담당: " + participantLabel(part.seat)
+      );
+      meta.appendChild(authorChip);
+
+      const reviewerChip = el(
+        "span",
+        "seat-chip" + seatClass(part.reviewer) + " " + authorProvider(part.reviewer),
+        "리뷰어: " + participantLabel(part.reviewer)
+      );
+      meta.appendChild(reviewerChip);
+
+      const rev = part.review;
+      const curRound = rev && rev.rounds && rev.rounds.length ? rev.rounds[rev.rounds.length - 1].ref.round : 0;
+      const maxRounds = rev && rev.max_rounds ? rev.max_rounds : w.review_rounds;
+      const unresolved = rev && rev.summary ? rev.summary.unresolved : 0;
+      const revBadgeCls =
+        "badge review-summary-badge" +
+        (unresolved > 0 ? " warn" : rev && rev.summary && rev.summary.passed ? " ok" : "");
+      meta.appendChild(
+        el("span", revBadgeCls, "리뷰 " + curRound + "/" + maxRounds + "R · 미해결 " + unresolved + "건")
+      );
+      if (rev && rev.phase) {
+        meta.appendChild(el("span", "badge", "단계: " + rev.phase));
+      }
+      if (rev && rev.pending) {
+        meta.appendChild(el("span", "badge", "차례: " + rev.pending.who + " · " + rev.pending.kind));
+      }
+
+      if (part.scope && part.scope.length > 0) {
+        const scopeWrap = el("span", "part-scope");
+        scopeWrap.appendChild(el("span", "muted small-note", "범위: "));
+        for (const s of part.scope) {
+          scopeWrap.appendChild(el("code", "file-path mono", s));
+        }
+        meta.appendChild(scopeWrap);
+      }
+      card.appendChild(meta);
+
+      if (part.brief) {
+        const briefEl = el("div", "part-brief");
+        briefEl.appendChild(el("span", "muted", "완료 조건: "));
+        briefEl.appendChild(el("span", "", part.brief));
+        card.appendChild(briefEl);
+      }
+
+      if (state.partNotices.has(part.id)) {
+        const noticeBox = el("div", "part-notice", "⚠ " + state.partNotices.get(part.id));
+        noticeBox.setAttribute("role", "alert");
+        card.appendChild(noticeBox);
+      }
+
+      if (part.block) {
+        card.appendChild(buildBlockElement(part.block, false));
+      }
+
+      if (rev && rev.rounds && rev.rounds.length > 0) {
+        card.appendChild(buildReviewSection(part));
+      }
+
+      board.appendChild(card);
+    }
+  }
+
+  // ---------- Diff Drawer (lazy loaded via GET /api/rooms/{id}/work/parts/{pid}/diff) ----------
+  function closeDiffDrawer() {
+    if (state.diffController) {
+      state.diffController.abort();
+      state.diffController = null;
+    }
+    state.diffPartId = null;
+    state.diffData = null;
+    state.diffLoading = false;
+    state.diffError = "";
+    const drawer = $("#diff-drawer");
+    if (drawer) {
+      drawer.hidden = true;
+      drawer.replaceChildren();
+    }
+  }
+
+  async function openDiffDrawer(partId) {
+    if (!state.roomId) return;
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    if (state.diffController) {
+      state.diffController.abort();
+    }
+    const controller = new AbortController();
+    state.diffController = controller;
+    state.diffPartId = partId;
+    state.diffData = null;
+    state.diffLoading = true;
+    state.diffError = "";
+    renderDiffDrawer();
+
+    try {
+      const diff = await api(
+        "GET",
+        "/api/rooms/" + roomId + "/work/parts/" + encodeURIComponent(partId) + "/diff",
+        undefined,
+        controller.signal
+      );
+      if (state.roomId !== roomId || openSeq !== sequence || state.diffPartId !== partId) return;
+      state.diffData = diff;
+      state.diffLoading = false;
+      renderDiffDrawer();
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      if (state.roomId !== roomId || openSeq !== sequence || state.diffPartId !== partId) return;
+      state.diffLoading = false;
+      state.diffError = err.message;
+      renderDiffDrawer();
+    } finally {
+      if (state.diffController === controller) {
+        state.diffController = null;
+      }
+    }
+  }
+
+  function renderPatchPre(patchText) {
+    const preEl = el("pre", "diff-patch mono");
+    if (!patchText) {
+      preEl.textContent = "(패치 내용 없음)";
+      return preEl;
+    }
+    const lines = String(patchText).split("\n");
+    for (const line of lines) {
+      let cls = "diff-line";
+      if (line.startsWith("+++") || line.startsWith("---")) cls += " diff-meta";
+      else if (line.startsWith("+")) cls += " diff-add";
+      else if (line.startsWith("-")) cls += " diff-del";
+      else if (line.startsWith("@@")) cls += " diff-hunk";
+      preEl.appendChild(el("div", cls, line));
+    }
+    return preEl;
+  }
+
+  function renderDiffDrawer() {
+    const drawer = $("#diff-drawer");
+    if (!drawer) return;
+    if (!state.diffPartId) {
+      drawer.hidden = true;
+      drawer.replaceChildren();
+      return;
+    }
+    drawer.hidden = false;
+    drawer.replaceChildren();
+
+    const part = findWorkPart(state.diffPartId);
+    const head = el("div", "diff-drawer-head");
+    const titleWrap = el("div", "diff-drawer-title");
+    titleWrap.appendChild(el("strong", "", "Diff · " + state.diffPartId + (part ? " (" + part.title + ")" : "")));
+    if (state.diffData) {
+      const d = state.diffData;
+      const rangeSpan = el("span", "badge mono", shortSHA(d.base_sha) + ".." + shortSHA(d.head_sha));
+      rangeSpan.title = d.base_sha + ".." + d.head_sha;
+      titleWrap.appendChild(rangeSpan);
+      titleWrap.appendChild(el("span", "badge diff-stat-add mono", "+" + d.added));
+      titleWrap.appendChild(el("span", "badge diff-stat-del mono", "-" + d.deleted));
+      if (d.truncated) {
+        titleWrap.appendChild(el("span", "badge warn", "⚠ 일부 생략됨 (truncated)"));
+      }
+    }
+    head.appendChild(titleWrap);
+
+    const headBtns = el("div", "diff-drawer-actions");
+    const refreshBtn = el("button", "ghost", "새로고침");
+    refreshBtn.type = "button";
+    refreshBtn.disabled = state.diffLoading;
+    refreshBtn.onclick = () => openDiffDrawer(state.diffPartId);
+    headBtns.appendChild(refreshBtn);
+
+    const closeBtn = el("button", "icon-btn", "✕");
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Diff 서랍 닫기");
+    closeBtn.onclick = closeDiffDrawer;
+    headBtns.appendChild(closeBtn);
+    head.appendChild(headBtns);
+    drawer.appendChild(head);
+
+    const body = el("div", "diff-drawer-body");
+    if (state.diffLoading) {
+      body.appendChild(el("p", "muted", "Diff 불러오는 중…"));
+      drawer.appendChild(body);
+      return;
+    }
+    if (state.diffError) {
+      const errBox = el("div", "err-box");
+      errBox.appendChild(el("span", "", "⚠ Diff 조회 실패: " + state.diffError));
+      body.appendChild(errBox);
+      drawer.appendChild(body);
+      return;
+    }
+    const d = state.diffData;
+    if (!d) {
+      drawer.appendChild(body);
+      return;
+    }
+
+    if (!d.files || !d.files.length) {
+      body.appendChild(el("p", "muted", "변경된 파일이 없습니다."));
+      drawer.appendChild(body);
+      return;
+    }
+    const files = d.files;
+
+    const fileList = el("ul", "diff-file-list");
+    files.forEach((f, idx) => {
+      const li = el("li", "diff-file-item");
+      const jumpBtn = el("button", "diff-file-jump");
+      jumpBtn.type = "button";
+      jumpBtn.appendChild(el("span", "badge diff-status status-" + f.status, f.status));
+      jumpBtn.appendChild(el("span", "mono diff-path", f.path));
+      const statSpan = el("span", "diff-counts mono");
+      statSpan.appendChild(el("span", "diff-stat-add", "+" + f.added));
+      statSpan.appendChild(el("span", "diff-stat-del", " -" + f.deleted));
+      jumpBtn.appendChild(statSpan);
+      jumpBtn.onclick = () => {
+        const target = $("#diff-patch-" + idx, body);
+        if (target) {
+          target.open = true;
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      };
+      li.appendChild(jumpBtn);
+      fileList.appendChild(li);
+    });
+    body.appendChild(fileList);
+
+    files.forEach((f, idx) => {
+      const det = el("details", "diff-file-card");
+      det.id = "diff-patch-" + idx;
+      det.open = true;
+      const sum = el("summary", "diff-file-summary");
+      sum.appendChild(el("span", "badge diff-status status-" + f.status, f.status));
+      sum.appendChild(el("span", "mono diff-path", f.path));
+      const counts = el("span", "diff-counts mono");
+      counts.appendChild(el("span", "diff-stat-add", "+" + f.added));
+      counts.appendChild(el("span", "diff-stat-del", " -" + f.deleted));
+      sum.appendChild(counts);
+      det.appendChild(sum);
+      det.appendChild(renderPatchPre(f.patch));
+      body.appendChild(det);
+    });
+
+    drawer.appendChild(body);
+  }
+
+  // ---------- Work Plan Dialog (POST /api/rooms/{id}/work) ----------
+  function syncReviewerSelect(seatSel, revSel, preferredReviewer = "") {
+    const enabledSeats = activeParticipants().filter((p) => p.enabled);
+    const author = enabledSeats.find((p) => p.id === seatSel.value);
+    const prevValue = preferredReviewer || revSel.value;
+    const validReviewers = author ? enabledSeats.filter((p) => p.provider !== author.provider) : [];
+    revSel.replaceChildren();
+    if (!validReviewers.length) {
+      const opt = el("option", "", "다른 공급사 활성 좌석 없음");
+      opt.value = "";
+      revSel.appendChild(opt);
+      revSel.disabled = true;
+      return;
+    }
+    revSel.disabled = false;
+    for (const r of validReviewers) {
+      const opt = el(
+        "option",
+        "",
+        participantLabel(r.id) + " (" + (LABEL[r.provider] || r.provider) + ")"
+      );
+      opt.value = r.id;
+      revSel.appendChild(opt);
+    }
+    if (validReviewers.some((r) => r.id === prevValue)) {
+      revSel.value = prevValue;
+    } else {
+      revSel.value = validReviewers[0].id;
+    }
+  }
+
+  function addVerifyRow(container, initial = null) {
+    const row = el("div", "work-verify-row");
+    const nameLabel = el("label", "", "이름");
+    const nameInput = el("input", "verify-name");
+    nameInput.placeholder = "예: test";
+    if (initial && initial.name) nameInput.value = initial.name;
+    nameLabel.appendChild(nameInput);
+    row.appendChild(nameLabel);
+
+    const argvLabel = el("label", "verify-argv-label", "실행 인자 (argv, 공백 구분)");
+    const argvInput = el("input", "verify-argv mono");
+    argvInput.placeholder = "예: go test ./...";
+    if (initial && initial.argv) argvInput.value = initial.argv.join(" ");
+    argvLabel.appendChild(argvInput);
+    row.appendChild(argvLabel);
+
+    const timeoutLabel = el("label", "", "제한 시간(초)");
+    const timeoutInput = el("input", "verify-timeout");
+    timeoutInput.type = "number";
+    timeoutInput.min = "1";
+    timeoutInput.value = initial && initial.timeout_sec ? String(initial.timeout_sec) : "600";
+    timeoutLabel.appendChild(timeoutInput);
+    row.appendChild(timeoutLabel);
+
+    const removeBtn = el("button", "ghost remove-row-btn", "삭제");
+    removeBtn.type = "button";
+    removeBtn.onclick = () => row.remove();
+    row.appendChild(removeBtn);
+
+    container.appendChild(row);
+  }
+
+  function addPartRow(container, removable = true) {
+    const row = el("div", "work-part-row");
+    const enabledSeats = activeParticipants().filter((p) => p.enabled);
+
+    const titleLabel = el("label", "", "파트 제목");
+    const titleInput = el("input", "part-title-input");
+    titleInput.required = true;
+    titleInput.placeholder = "예: P1 리뷰 프로토콜";
+    titleLabel.appendChild(titleInput);
+    row.appendChild(titleLabel);
+
+    const scopeLabel = el("label", "", "범위 경로 (쉼표 구분)");
+    const scopeInput = el("input", "part-scope-input mono");
+    scopeInput.required = true;
+    scopeInput.placeholder = "예: internal/room/review.go, internal/room/review_test.go";
+    scopeLabel.appendChild(scopeInput);
+    row.appendChild(scopeLabel);
+
+    const briefLabel = el("label", "part-brief-label", "완료 조건 (Brief)");
+    const briefInput = el("input", "part-brief-input");
+    briefInput.required = true;
+    briefInput.placeholder = "예: review_types.go 메서드 및 단위 테스트 통과";
+    briefLabel.appendChild(briefInput);
+    row.appendChild(briefLabel);
+
+    const seatLabel = el("label", "", "담당 좌석");
+    const seatSel = el("select", "part-seat-select");
+    seatSel.required = true;
+    if (!enabledSeats.length) {
+      const opt = el("option", "", "활성 좌석 없음");
+      opt.value = "";
+      seatSel.appendChild(opt);
+      seatSel.disabled = true;
+    } else {
+      for (const s of enabledSeats) {
+        const opt = el(
+          "option",
+          "",
+          participantLabel(s.id) + " (" + (LABEL[s.provider] || s.provider) + ")"
+        );
+        opt.value = s.id;
+        seatSel.appendChild(opt);
+      }
+    }
+    seatLabel.appendChild(seatSel);
+    row.appendChild(seatLabel);
+
+    const revLabel = el("label", "", "리뷰어 좌석 (다른 공급사)");
+    const revSel = el("select", "part-reviewer-select");
+    revSel.required = true;
+    revLabel.appendChild(revSel);
+    row.appendChild(revLabel);
+
+    seatSel.onchange = () => syncReviewerSelect(seatSel, revSel);
+    syncReviewerSelect(seatSel, revSel);
+
+    if (removable) {
+      const removeBtn = el("button", "ghost remove-row-btn", "파트 삭제");
+      removeBtn.type = "button";
+      removeBtn.onclick = () => row.remove();
+      row.appendChild(removeBtn);
+    }
+
+    container.appendChild(row);
+  }
+
+  function openWorkPlanDialog() {
+    if (!state.room || state.room.mode !== "write") return;
+    const dlg = $("#dlg-work");
+    const f = $("#form-work");
+    const errBox = $("#work-form-error");
+    if (!dlg || !f) return;
+    errBox.hidden = true;
+    errBox.textContent = "";
+    f.goal.value = "";
+    f.merge_mode.value = "confirm";
+    f.review_rounds.value = "3";
+
+    const verifyBox = $("#work-verify-rows");
+    verifyBox.replaceChildren();
+    addVerifyRow(verifyBox);
+
+    const partBox = $("#work-part-rows");
+    partBox.replaceChildren();
+    addPartRow(partBox, false);
+
+    dlg.showModal();
+  }
+
+  async function onWorkPlanSubmit(e) {
+    e.preventDefault();
+    if (!state.roomId) return;
+    const f = e.target;
+    const errBox = $("#work-form-error");
+    const submitBtn = $("#dlg-work-ok");
+    errBox.hidden = true;
+    errBox.textContent = "";
+
+    const showErr = (msg) => {
+      errBox.hidden = false;
+      errBox.textContent = msg;
+    };
+
+    const goal = f.goal.value.trim();
+    if (!goal) return showErr("목표(Goal)를 입력하세요.");
+    const merge_mode = f.merge_mode.value;
+    const review_rounds = Number(f.review_rounds.value);
+    if (!Number.isInteger(review_rounds) || review_rounds < 1) {
+      return showErr("리뷰 라운드 상한은 1 이상의 정수여야 합니다.");
+    }
+
+    const verify = [];
+    for (const row of $$(".work-verify-row", $("#work-verify-rows"))) {
+      const name = $(".verify-name", row).value.trim();
+      const argvRaw = $(".verify-argv", row).value.trim();
+      const timeout_sec = Number($(".verify-timeout", row).value);
+      if (!name && !argvRaw) continue;
+      if (!name || !argvRaw) {
+        return showErr("검증 명령의 이름과 실행 인자(argv)를 모두 입력하세요.");
+      }
+      const argv = argvRaw.split(/\s+/).filter(Boolean);
+      if (!argv.length) {
+        return showErr("검증 명령의 실행 인자(argv)를 입력하세요.");
+      }
+      if (!Number.isFinite(timeout_sec) || timeout_sec < 1) {
+        return showErr("검증 명령 제한 시간은 1초 이상이어야 합니다.");
+      }
+      verify.push({ name, argv, timeout_sec: Math.floor(timeout_sec) });
+    }
+
+    const partRows = $$(".work-part-row", $("#work-part-rows"));
+    if (!partRows.length) {
+      return showErr("최소 1개 이상의 파트를 추가하세요.");
+    }
+
+    const parts = [];
+    const enabledSeats = activeParticipants().filter((p) => p.enabled);
+    for (const row of partRows) {
+      const title = $(".part-title-input", row).value.trim();
+      const brief = $(".part-brief-input", row).value.trim();
+      const scopeRaw = $(".part-scope-input", row).value.trim();
+      const seat = $(".part-seat-select", row).value;
+      const reviewer = $(".part-reviewer-select", row).value;
+      if (!title || !brief) {
+        return showErr("모든 파트의 제목과 완료 조건을 입력하세요.");
+      }
+      const scope = scopeRaw
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (!scope.length) {
+        return showErr("파트 '" + title + "'의 범위 경로(scope)를 1개 이상 입력하세요.");
+      }
+      const authorSeat = enabledSeats.find((p) => p.id === seat);
+      const reviewerSeat = enabledSeats.find((p) => p.id === reviewer);
+      if (!authorSeat || !reviewerSeat) {
+        return showErr("파트 '" + title + "'의 담당 좌석과 리뷰어 좌석을 선택하세요.");
+      }
+      if (authorSeat.provider === reviewerSeat.provider) {
+        return showErr("파트 '" + title + "'의 리뷰어는 담당과 다른 공급사 좌석이어야 합니다.");
+      }
+      parts.push({ title, brief, scope, seat, reviewer });
+    }
+
+    const roomId = state.roomId;
+    const sequence = openSeq;
+    submitBtn.disabled = true;
+    try {
+      const plan = await api("POST", "/api/rooms/" + roomId + "/work", {
+        goal,
+        merge_mode,
+        review_rounds,
+        verify,
+        parts,
+      });
+      if (state.roomId !== roomId || openSeq !== sequence) return;
+      state.work = plan;
+      state.workBoardCollapsed = false;
+      $("#dlg-work").close();
+      renderRoomHead();
+      renderWork();
+      announce("작업 계획이 확정되었습니다.");
+    } catch (err) {
+      if (state.roomId === roomId && openSeq === sequence) {
+        showErr(err.message);
+      }
+    } finally {
+      submitBtn.disabled = false;
+    }
   }
 
   // ---------- composer, mentions, warnings & shortcuts ----------
@@ -2600,6 +3641,23 @@
     $("#dlg-room-cancel").onclick = () => $("#dlg-room").close();
     $("#form-room").onsubmit = onRoomSubmit;
     $("#btn-add-seat-spec").onclick = () => addSeatSpec($("#room-seat-specs"));
+
+    const btnWorkPlan = $("#btn-work-plan");
+    if (btnWorkPlan) {
+      btnWorkPlan.onclick = () => {
+        closeMoreMenu();
+        openWorkPlanDialog();
+      };
+    }
+    const dlgWorkCancel = $("#dlg-work-cancel");
+    if (dlgWorkCancel) dlgWorkCancel.onclick = () => $("#dlg-work").close();
+    const btnAddVerify = $("#btn-add-verify");
+    if (btnAddVerify) btnAddVerify.onclick = () => addVerifyRow($("#work-verify-rows"));
+    const btnAddPart = $("#btn-add-part");
+    if (btnAddPart) btnAddPart.onclick = () => addPartRow($("#work-part-rows"), true);
+    const formWork = $("#form-work");
+    if (formWork) formWork.onsubmit = onWorkPlanSubmit;
+
     $("#btn-add-participant").onclick = () => {
       participantDialogSequence++;
       $("#participant-spec").replaceChildren();
@@ -2752,6 +3810,8 @@
       await api("DELETE", "/api/rooms/" + state.roomId);
       state.roomId = null;
       state.room = null;
+      state.work = null;
+      closeDiffDrawer();
       renderUsagePanel();
       $("#btn-add-participant").disabled = true;
       $("#participants").replaceChildren();
@@ -2782,6 +3842,11 @@
         const more = $("#more-actions");
         if (more && more.open) {
           more.open = false;
+          return;
+        }
+        const diffDrawer = $("#diff-drawer");
+        if (diffDrawer && !diffDrawer.hidden) {
+          closeDiffDrawer();
           return;
         }
         if (document.body.classList.contains("show-left") || document.body.classList.contains("show-right")) {
