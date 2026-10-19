@@ -41,6 +41,7 @@ type Hub struct {
 	limitsDone      chan struct{}
 	limitsSaveError error
 	nativeSessions  map[string]bool
+	mcp             *agent.MCPServer // read-only tool server attached to read/write runs
 	Log             *log.Logger
 }
 
@@ -939,7 +940,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		tc.TotalRounds = rs.disc.Total
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
-	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout}
+	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
 }
 
@@ -1291,4 +1292,12 @@ func (h *Hub) ExportMarkdown(id string) (string, error) {
 		b.WriteString("\n\n")
 	}
 	return b.String(), nil
+}
+
+// SetMCP attaches a read-only MCP server to every read/write run started after
+// the call (nil detaches). Chat mode never gets it.
+func (h *Hub) SetMCP(m *agent.MCPServer) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.mcp = m
 }

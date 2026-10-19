@@ -56,6 +56,15 @@ func claudeArgs(o RunOptions) []string {
 	if o.SessionID != "" {
 		args = append(args, "--resume", o.SessionID)
 	}
+	if o.MCP != nil && o.Mode != ModeChat {
+		// --strict-mcp-config (above) keeps the user's own MCP servers out; this
+		// adds only the given server and pre-approves its tools, since print mode
+		// cannot prompt for permission.
+		cfg, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
+			o.MCP.Name: map[string]any{"type": "stdio", "command": o.MCP.Command, "args": o.MCP.Args},
+		}})
+		args = append(args, "--mcp-config", string(cfg), "--allowedTools", "mcp__"+o.MCP.Name)
+	}
 	switch o.Mode {
 	case ModeRead:
 		args = append(args, "--tools", "Read,Grep,Glob,Agent,Task,WebSearch,WebFetch", "--add-dir", o.Workspace)
@@ -353,9 +362,11 @@ func (p *claudeParser) assistant(m map[string]any, parent string, emit func(Even
 				emit(x)
 			}
 		case "thinking":
-			if parent == "" {
+			// Some models return the thinking block without its text (only a
+			// signature). An empty event says nothing, so it is not recorded.
+			if t := strings.TrimSpace(str(blk, "thinking")); parent == "" && t != "" {
 				x := ev(KindThinking)
-				x.Text = clip(str(blk, "thinking"), 4000)
+				x.Text = clip(t, 4000)
 				emit(x)
 			}
 		case "tool_use":

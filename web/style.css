@@ -1509,3 +1509,11 @@ dialog menu {
     scroll-behavior: auto !important;
   }
 }
+
+/* live progress inside a reply that has no text yet */
+.live-progress { font-size: 12.5px; display: grid; gap: 4px; }
+.live-thought { color: var(--muted); font-style: italic; }
+.live-sub { border-left: 2px solid var(--accent); padding-left: 8px; }
+.live-sub.done { border-left-color: var(--border); opacity: .8; }
+.live-sub-name { font-weight: 600; }
+.live-sub-last { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
