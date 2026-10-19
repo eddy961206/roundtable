@@ -4,7 +4,9 @@ package room
 
 // WorkPlan is the per-room work-division state stored in room.json ("work").
 type WorkPlan struct {
+	IntegrationWorktree        string       `json:"integration_worktree"`
 	IntegrationWorktreeRemoved bool         `json:"integration_worktree_removed,omitempty"`
+	IntegrationCleanupError    string       `json:"integration_cleanup_error,omitempty"`
 	Goal                       string       `json:"goal"`
 	BaseSHA                    string       `json:"base_sha"`
 	Integration                string       `json:"integration_branch"` // rt/<roomID>/integration
@@ -25,25 +27,26 @@ type VerifyCmd struct {
 }
 
 type Part struct {
-	ID              string       `json:"id"`
-	Title           string       `json:"title"`
-	Brief           string       `json:"brief"` // completion criteria
-	Scope           []string     `json:"scope"` // repository-relative paths
-	Seat            string       `json:"seat"`
-	Reviewer        string       `json:"reviewer"` // seat of another provider (D3)
-	Branch          string       `json:"branch"`   // rt/<roomID>/<partID>
-	Worktree        string       `json:"worktree"`
-	WorktreeRemoved bool         `json:"worktree_removed,omitempty"`
-	SessionID       string       `json:"session_id"`
-	LastSeen        int64        `json:"last_seen"` // delivery boundary independent of the seat's chat session
-	Unseen          []int64      `json:"unseen,omitempty"`
-	State           string       `json:"state"` // working|reviewing|fixing|queued|awaiting_approval|merging|merged|blocked|abandoned
-	SubmitSHA       string       `json:"submit_sha"`
-	ReadyMode       string       `json:"ready_mode"` // D6: merge_mode captured when the part became queued
-	Approval        *Approval    `json:"approval,omitempty"`
-	Block           *Block       `json:"block,omitempty"`
-	Review          *ReviewState `json:"review,omitempty"`
-	MergedSHA       string       `json:"merged_sha,omitempty"`
+	ID                   string       `json:"id"`
+	Title                string       `json:"title"`
+	Brief                string       `json:"brief"` // completion criteria
+	Scope                []string     `json:"scope"` // repository-relative paths
+	Seat                 string       `json:"seat"`
+	Reviewer             string       `json:"reviewer"` // seat of another provider (D3)
+	Branch               string       `json:"branch"`   // rt/<roomID>/<partID>
+	Worktree             string       `json:"worktree"`
+	WorktreeRemoved      bool         `json:"worktree_removed,omitempty"`
+	WorktreeCleanupError string       `json:"worktree_cleanup_error,omitempty"`
+	SessionID            string       `json:"session_id"`
+	LastSeen             int64        `json:"last_seen"` // delivery boundary independent of the seat's chat session
+	Unseen               []int64      `json:"unseen,omitempty"`
+	State                string       `json:"state"` // working|reviewing|fixing|queued|awaiting_approval|merging|merged|blocked|abandoned
+	SubmitSHA            string       `json:"submit_sha"`
+	ReadyMode            string       `json:"ready_mode"` // D6: merge_mode captured when the part became queued
+	Approval             *Approval    `json:"approval,omitempty"`
+	Block                *Block       `json:"block,omitempty"`
+	Review               *ReviewState `json:"review,omitempty"`
+	MergedSHA            string       `json:"merged_sha,omitempty"`
 }
 
 type Approval struct {

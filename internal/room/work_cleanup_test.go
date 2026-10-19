@@ -69,7 +69,7 @@ func TestWorktreeCleanupAfterMergeAndAbandon(t *testing.T) {
 	if got := gitT(t, f.repo, "rev-parse", p1.Branch); got != sha {
 		t.Fatalf("part branch changed: %s", got)
 	}
-	if _, err := f.hub.PartDiff(f.room.ID, p1.ID); !errors.Is(err, ErrWorkConflict) || !strings.Contains(err.Error(), "이미 정리됨") {
+	if diff, err := f.hub.PartDiff(f.room.ID, p1.ID); err != nil || diff.HeadSHA != sha {
 		t.Fatalf("removed part diff: %v", err)
 	}
 	if _, err := f.hub.RetryPart(f.room.ID, p1.ID); !errors.Is(err, ErrWorkConflict) || !strings.Contains(err.Error(), "이미 정리됨") {
@@ -143,6 +143,7 @@ func TestWorktreeCleanupRestart(t *testing.T) {
 			f.hub.mu.Lock()
 			rs := f.hub.rooms[f.room.ID]
 			rs.room.Work.part(p1.ID).State = "merged"
+			rs.room.Work.part(p1.ID).SubmitSHA = f.base
 			rs.room.Work.part(p2.ID).State = "abandoned"
 			err := f.store.SaveRoom(rs.room)
 			f.hub.mu.Unlock()
@@ -158,8 +159,10 @@ func TestWorktreeCleanupRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer restarted.Shutdown(context.Background())
+			f.hub = restarted
+			waitWorktreeCleanup(t, f)
 			snap, err := restarted.Snapshot(f.room.ID)
-			if err != nil || !snap.Work.part(p1.ID).WorktreeRemoved || !snap.Work.IntegrationWorktreeRemoved || snap.Work.part(p2.ID).WorktreeRemoved {
+			if err != nil || snap.Work.part(p1.ID).WorktreeRemoved == alreadyRemoved || snap.Work.IntegrationWorktreeRemoved == alreadyRemoved || snap.Work.part(p2.ID).WorktreeRemoved {
 				t.Fatalf("recovery flags: %+v %v", snap, err)
 			}
 			assertWorktreeExists(t, p1.Worktree, false)
@@ -169,7 +172,7 @@ func TestWorktreeCleanupRestart(t *testing.T) {
 				gitT(t, f.repo, "show-ref", "--verify", "refs/heads/"+branch)
 			}
 			rooms, _, err := f.store.LoadRooms()
-			if err != nil || !rooms[0].Work.part(p1.ID).WorktreeRemoved || !rooms[0].Work.IntegrationWorktreeRemoved {
+			if err != nil || rooms[0].Work.part(p1.ID).WorktreeRemoved == alreadyRemoved || rooms[0].Work.IntegrationWorktreeRemoved == alreadyRemoved {
 				t.Fatalf("recovery flags not persisted: %v", err)
 			}
 		})

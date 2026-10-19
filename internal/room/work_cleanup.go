@@ -1,6 +1,7 @@
 package room
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +13,10 @@ type worktreeCleanup struct {
 	name   string
 	path   string
 	branch string
+	sha    string // submitted commit for parts; saved integration tip otherwise
 }
+
+var errCleanupNativeOpen = errors.New("CLI 창을 닫으면 정리: 이 worktree에서 네이티브 CLI 세션이 열려 있음")
 
 func removedWorktreeError(part *Part) error {
 	return fmt.Errorf("%w: 파트 %s worktree는 이미 정리됨: %s", ErrWorkConflict, part.ID, part.Worktree)
@@ -35,13 +39,23 @@ func (h *Hub) worktreeCleanupTargets(rs *roomState) []worktreeCleanup {
 			finished = false
 		}
 		if part.State == "merged" && !part.WorktreeRemoved {
-			targets = append(targets, worktreeCleanup{part.ID, part.ID, part.Worktree, part.Branch})
+			targets = append(targets, worktreeCleanup{part.ID, part.ID, part.Worktree, part.Branch, part.SubmitSHA})
 		}
 	}
 	if finished && !plan.IntegrationWorktreeRemoved {
-		targets = append(targets, worktreeCleanup{name: "integration", path: filepath.Join(h.workRoot, rs.room.ID, "integration"), branch: plan.Integration})
+		targets = append(targets, worktreeCleanup{name: "integration", path: plan.IntegrationWorktree, branch: plan.Integration, sha: plan.IntegrationSHA})
 	}
 	return targets
+}
+
+// Caller holds h.mu. Directory matching also covers historical part sessions.
+func (h *Hub) worktreeNativeOpen(path string) bool {
+	for _, dir := range h.nativeSessions {
+		if sameWorktreePath(dir, path) {
+			return true
+		}
+	}
+	return false
 }
 
 // startWorktreeCleanup reserves the merge gate under h.mu, then runs git outside
@@ -63,8 +77,16 @@ func (h *Hub) startWorktreeCleanup(rs *roomState) {
 		attempted := map[string]bool{}
 		for {
 			for _, target := range targets {
-				attempted[target.name] = true
-				err := h.removePlanWorktree(repo, roomID, target)
+				h.mu.Lock()
+				nativeOpen := h.worktreeNativeOpen(target.path)
+				h.mu.Unlock()
+				var err error
+				if nativeOpen {
+					err = errCleanupNativeOpen
+				} else {
+					attempted[target.name] = true
+					err = h.removePlanWorktree(repo, roomID, target)
+				}
 				h.mu.Lock()
 				if !rs.deleted {
 					h.recordWorktreeCleanup(rs, target, err)
@@ -80,7 +102,7 @@ func (h *Hub) startWorktreeCleanup(rs *roomState) {
 			targets = nil
 			if !rs.deleted {
 				for _, target := range h.worktreeCleanupTargets(rs) {
-					if !attempted[target.name] {
+					if !attempted[target.name] && !h.worktreeNativeOpen(target.path) {
 						targets = append(targets, target)
 					}
 				}
@@ -102,13 +124,24 @@ func (h *Hub) startWorktreeCleanup(rs *roomState) {
 
 func (h *Hub) recordWorktreeCleanup(rs *roomState, target worktreeCleanup, err error) {
 	label := "통합"
+	lastError := &rs.room.Work.IntegrationCleanupError
 	if target.partID != "" {
 		label = "파트 " + target.partID
+		lastError = &rs.room.Work.part(target.partID).WorktreeCleanupError
 	}
 	if err != nil {
-		h.workNote(rs, fmt.Sprintf("%s worktree 정리 실패 · 상태와 branch는 유지: %v", label, err))
+		if *lastError == err.Error() {
+			return
+		}
+		*lastError = err.Error()
+		if errors.Is(err, errCleanupNativeOpen) {
+			h.workNote(rs, fmt.Sprintf("%s worktree 정리 보류 · %v", label, err))
+		} else {
+			h.workNote(rs, fmt.Sprintf("%s worktree 정리 실패 · 상태와 branch는 유지: %v\n조치: 미커밋 파일을 커밋하거나 따로 보관한 뒤 정리하고, 경로·HEAD·branch를 확인해. 폴더와 Git 등록이 어긋났으면 보존할 파일 확인 후 git worktree prune으로 남은 등록을 정리해.", label, err))
+		}
 		return
 	}
+	*lastError = ""
 	if target.partID == "" {
 		rs.room.Work.IntegrationWorktreeRemoved = true
 	} else {
@@ -118,6 +151,9 @@ func (h *Hub) recordWorktreeCleanup(rs *roomState, target worktreeCleanup, err e
 }
 
 func (h *Hub) removePlanWorktree(repo, roomID string, target worktreeCleanup) error {
+	if target.path == "" {
+		return fmt.Errorf("저장된 worktree 경로가 없음: %s", target.name)
+	}
 	// Reject traversal and paths that do not match this plan's generated layout.
 	for _, component := range []string{roomID, target.name} {
 		if component == "" || component == "." || component == ".." || strings.ContainsAny(component, `/\:`) {
@@ -155,25 +191,43 @@ func (h *Hub) removePlanWorktree(repo, roomID string, target worktreeCleanup) er
 			return fmt.Errorf("worktree 경로가 다른 위치로 연결됨: %s", path)
 		}
 	}
-	if _, err := os.Lstat(target.path); os.IsNotExist(err) {
-		// A crash can occur after git removes the worktree but before the flag
-		// is saved. Accept absence only if git's registration is also gone.
-		list, listErr := runGit(repo, "worktree", "list", "--porcelain", "-z")
-		if listErr != nil {
-			return listErr
-		}
-		registered := false
-		for _, field := range strings.Split(list, "\x00") {
-			if strings.HasPrefix(field, "worktree ") && sameWorktreePath(strings.TrimPrefix(field, "worktree "), target.path) {
-				registered = true
-				break
-			}
-		}
-		if !registered {
-			return nil
-		}
-	} else if err != nil {
+	list, err := runGit(repo, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
 		return err
+	}
+	registered := false
+	for _, field := range strings.Split(list, "\x00") {
+		if strings.HasPrefix(field, "worktree ") && sameWorktreePath(strings.TrimPrefix(field, "worktree "), target.path) {
+			registered = true
+			break
+		}
+	}
+	if !registered {
+		return fmt.Errorf("Git worktree 등록 목록에 저장 경로가 없음: %s", target.path)
+	}
+	if _, err := os.Lstat(target.path); err != nil {
+		return fmt.Errorf("등록된 worktree 경로를 읽지 못함: %w", err)
+	}
+	if target.partID != "" {
+		branch, err := gitLine(target.path, "symbolic-ref", "--quiet", "HEAD")
+		if err != nil || branch != "refs/heads/"+target.branch {
+			return fmt.Errorf("HEAD가 파트 branch를 가리키지 않음: %s (기대 %s)", target.path, target.branch)
+		}
+	}
+	if target.sha == "" {
+		return fmt.Errorf("보존할 커밋 기록이 없음: %s", target.name)
+	}
+	if _, err := runGit(repo, "merge-base", "--is-ancestor", target.sha, "refs/heads/"+target.branch); err != nil {
+		return fmt.Errorf("branch가 기록된 커밋 %s를 포함하는지 확인하지 못함: %w", target.sha, err)
+	}
+	// Integration intentionally uses detached HEAD; preserve any additional
+	// commits that are not reachable from its retained branch.
+	head, err := gitLine(target.path, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return err
+	}
+	if _, err := runGit(repo, "merge-base", "--is-ancestor", head, "refs/heads/"+target.branch); err != nil {
+		return fmt.Errorf("worktree HEAD가 남겨 둘 branch에 보존되어 있지 않음: %w", err)
 	}
 	_, err = runGit(repo, "worktree", "remove", target.path)
 	return err

@@ -40,9 +40,9 @@ type Hub struct {
 	limitsSaving    bool
 	limitsDone      chan struct{}
 	limitsSaveError error
-	nativeSessions  map[string]bool
-	mcp             *agent.MCPServer // read-only tool server attached to read/write runs
-	workRoot        string           // <data>/worktrees: part and integration worktrees live outside user repos
+	nativeSessions  map[string]string // provider/session key -> reserved working directory
+	mcp             *agent.MCPServer  // read-only tool server attached to read/write runs
+	workRoot        string            // <data>/worktrees: part and integration worktrees live outside user repos
 	Log             *log.Logger
 }
 
@@ -88,7 +88,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 	if err != nil {
 		return nil, fmt.Errorf("worktree 폴더: %w", err)
 	}
-	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]bool{}, workRoot: workRoot, Log: logger}
+	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]string{}, workRoot: workRoot, Log: logger}
 	rooms, msgs, err := store.LoadRooms()
 	if err != nil {
 		return nil, err
@@ -141,6 +141,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, rs := range h.rooms {
+		h.startWorktreeCleanup(rs)
 		h.advanceQueue(rs)
 		if rs.room.Work != nil {
 			if err := h.store.SaveRoom(rs.room); err != nil {

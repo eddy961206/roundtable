@@ -143,9 +143,6 @@ func (h *Hub) workPart(roomID, partID string) (*roomState, *Part, error) {
 	if part == nil {
 		return nil, nil, fmt.Errorf("파트 없음: %s", partID)
 	}
-	if part.WorktreeRemoved {
-		return nil, nil, removedWorktreeError(part)
-	}
 	return rs, part, nil
 }
 
@@ -342,6 +339,7 @@ func createWorktrees(repo, dir string, plan *WorkPlan) (*worktreeSet, error) {
 	if err := add(plan.Integration, paths[0], "--detach", paths[0], base); err != nil {
 		return nil, errors.Join(err, removeWorktrees(repo, made))
 	}
+	plan.IntegrationWorktree = paths[0]
 	for i, p := range plan.Parts {
 		if err := add(p.Branch, paths[i+1], paths[i+1], p.Branch); err != nil {
 			return nil, errors.Join(err, removeWorktrees(repo, made))
@@ -535,6 +533,9 @@ func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	if part.WorktreeRemoved {
+		return nil, removedWorktreeError(part)
+	}
 	if part.State != "blocked" {
 		return nil, fmt.Errorf("%w: 파트 %s는 정지 상태가 아님", ErrWorkConflict, partID)
 	}
@@ -636,9 +637,6 @@ func (h *Hub) AbandonPart(roomID, partID string) (*WorkPlan, error) {
 func (h *Hub) PartDiff(roomID, partID string) (*PartDiff, error) {
 	h.mu.Lock()
 	rs, part, err := h.workPart(roomID, partID)
-	if err == nil && rs.workBusy[busyCleanup] && part.State == "merged" {
-		err = fmt.Errorf("%w: 파트 %s worktree 정리 중", ErrWorkConflict, partID)
-	}
 	if err == nil && part.SubmitSHA == "" {
 		err = fmt.Errorf("%w: 파트 %s는 아직 제출되지 않음", ErrWorkConflict, partID)
 	}
@@ -825,9 +823,9 @@ func (h *Hub) mergePart(rs *roomState, part *Part, submitSHA, beforeSHA, branch,
 	// cannot roll back the integration ref or turn a merged part into blocked.
 	if err := h.saveWork(rs); err != nil {
 		h.workNote(rs, "병합 상태 저장 실패로 worktree 정리 보류: "+err.Error())
-		return
+	} else {
+		h.startWorktreeCleanup(rs)
 	}
-	h.startWorktreeCleanup(rs)
 	h.advanceQueue(rs)
 	_ = h.saveWork(rs)
 }
@@ -942,13 +940,6 @@ func (h *Hub) recoverWork(rs *roomState) error {
 			h.blockPart(rs, part, "restart", "queued", fmt.Sprintf("통합 branch가 병합 전(%s)도 병합 후(%s)도 아닌 %s를 가리킴", shortSHA(m.BeforeSHA), shortSHA(m.MergeSHA), shortSHA(tip)), nil)
 		}
 		plan.Merging = nil
-	}
-	if err := h.store.SaveRoom(rs.room); err != nil {
-		return err
-	}
-	// NewHub has not published this room or started merge workers yet.
-	for _, target := range h.worktreeCleanupTargets(rs) {
-		h.recordWorktreeCleanup(rs, target, h.removePlanWorktree(rs.room.Workspace, rs.room.ID, target))
 	}
 	return h.store.SaveRoom(rs.room)
 }
