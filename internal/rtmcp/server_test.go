@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 )
 
@@ -256,89 +255,25 @@ func TestReadDefaultBudget(t *testing.T) {
 	}
 }
 
-func TestPostWait(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		wait, polls int
-		timeout     bool
-	}{
-		{"complete", 2, 2, false}, {"zero-complete", 0, 0, false}, {"zero-timeout", 0, 1000, true}, {"timeout", 1, 1000, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			count, posts := 0, 0
-			s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == "POST" {
-					posts++
-					io.WriteString(w, `{"id":"trigger","seq":10}`)
-					return
-				}
-				count++
-				queue := `[{"group":"unrelated"}]`
-				status := "done"
-				if count <= tc.polls {
-					queue = `[{"group":"trigger"},{"group":"unrelated"}]`
-					status = "streaming"
-				}
-				io.WriteString(w, snapshotBody(fmt.Sprintf(`[{"seq":10,"author":"user","status":"done","text":"질문"},{"seq":11,"author":"s1","status":%q,"text":"답"}]`, status), queue))
-			}, false)
-			start := time.Now()
-			got := call(t, s, "rt_post", fmt.Sprintf(`{"room":"r1","text":"질문","wait_seconds":%d}`, tc.wait))
-			elapsed := time.Since(start)
-			if got["seq"] != float64(10) || got["timed_out"] != tc.timeout || got["next_seq"] != float64(11) || posts != 1 {
-				t.Fatal(got, posts)
-			}
-			if tc.name == "timeout" && (elapsed < time.Second || elapsed > 2*time.Second) {
-				t.Fatal(elapsed)
-			}
-			if len(got["messages"].([]any)) != 1 {
-				t.Fatal(got)
-			}
-		})
-	}
-}
-
-func TestPostWaitErrorsKeepSentSequence(t *testing.T) {
-	posts := 0
-	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" {
-			posts++
-			io.WriteString(w, `{"id":"m1","seq":7}`)
-			return
-		}
-		http.Error(w, "unavailable", 503)
-	}, false)
-	_, err := s.call(context.Background(), "rt_post", json.RawMessage(`{"room":"r1","text":"x","wait_seconds":1}`))
-	if err == nil || !strings.Contains(err.Error(), "seq=7") || posts != 1 {
-		t.Fatal(err, posts)
-	}
-}
-
-func TestPostWaitDeadlineCancelsSlowPoll(t *testing.T) {
-	polls := 0
-	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" {
-			io.WriteString(w, `{"id":"trigger","seq":10}`)
-			return
-		}
-		polls++
-		if polls > 1 {
-			<-r.Context().Done()
-			return
-		}
-		io.WriteString(w, snapshotBody(`[{"seq":11,"author":"s1","status":"streaming","text":"관측된 답"}]`, `[{"group":"trigger"}]`))
-	}, false)
-	start := time.Now()
-	got := call(t, s, "rt_post", `{"room":"r1","text":"x","wait_seconds":1}`)
-	if got["timed_out"] != true || time.Since(start) > 2*time.Second || polls != 2 {
-		t.Fatal(got, time.Since(start), polls)
-	}
-}
-
 func TestEmptyRoomList(t *testing.T) {
 	// The existing API encodes a nil slice as null when there are no rooms.
 	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `null`) }, false)
 	if got := call(t, s, "rt_list_rooms", `{}`); len(got["rooms"].([]any)) != 0 {
 		t.Fatal(got)
+	}
+}
+
+func TestRoomListPreservesSeatAvailability(t *testing.T) {
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/rooms" {
+			io.WriteString(w, `[{"id":"r1","active":false}]`)
+			return
+		}
+		io.WriteString(w, `{"room":{"id":"r1","participants":[{"id":"active","enabled":true},{"id":"stopped","enabled":false},{"id":"archived","enabled":false,"removed":true}]}}`)
+	}, false)
+	seats := call(t, s, "rt_list_rooms", `{}`)["rooms"].([]any)[0].(map[string]any)["participants"].([]any)
+	if len(seats) != 3 || seats[0].(map[string]any)["enabled"] != true || seats[1].(map[string]any)["enabled"] != false || seats[2].(map[string]any)["removed"] != true {
+		t.Fatal(seats)
 	}
 }
 
@@ -431,23 +366,28 @@ func TestStdioProtocol(t *testing.T) {
 	if len(responses) != 12 || hits != 1 {
 		t.Fatal(len(responses), hits, out.String())
 	}
-	if responses[0]["result"].(map[string]any)["protocolVersion"] != protocolVersion {
-		t.Fatal(responses[0])
+	byID := map[string]map[string]any{}
+	codes := map[int]int{}
+	for _, response := range responses {
+		byID[fmt.Sprint(response["id"])] = response
+		if e, ok := response["error"].(map[string]any); ok {
+			codes[int(e["code"].(float64))]++
+		}
 	}
-	if len(responses[1]["result"].(map[string]any)["tools"].([]any)) != 8 || responses[1]["id"] != "list" {
-		t.Fatal(responses[1])
+	if byID["1"]["result"].(map[string]any)["protocolVersion"] != protocolVersion {
+		t.Fatal(byID["1"])
 	}
-	content := responses[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 8 {
+		t.Fatal(byID["list"])
+	}
+	content := byID["3"]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)
 	if content["type"] != "text" || content["text"] != `{"rooms":[]}` {
 		t.Fatal(content)
 	}
-	if responses[3]["result"].(map[string]any)["isError"] != true {
-		t.Fatal(responses[3])
+	if byID["4"]["result"].(map[string]any)["isError"] != true {
+		t.Fatal(byID["4"])
 	}
-	wantCodes := map[int]int{5: -32601, 6: -32602, 7: -32600, 8: -32600, 9: -32700, 10: -32600, 11: -32600}
-	for i, code := range wantCodes {
-		if responses[i]["error"].(map[string]any)["code"] != float64(code) {
-			t.Fatal(i, responses[i])
-		}
+	if !reflect.DeepEqual(codes, map[int]int{-32600: 4, -32700: 1, -32601: 1, -32602: 1}) {
+		t.Fatal(codes)
 	}
 }

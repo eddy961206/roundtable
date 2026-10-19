@@ -11,7 +11,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -39,6 +41,7 @@ func New(base string, readOnly bool) (*Server, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	transport.ResponseHeaderTimeout = 15 * time.Second
 	dialer := &net.Dialer{Timeout: 10 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
 		if err != nil || !net.ParseIP(host).IsLoopback() {
@@ -65,43 +68,159 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-// Serve follows gitea-mcp's newline-delimited JSON-RPC transport. Stdout is
-// reserved for protocol messages. Notifications never invoke HTTP tools.
+// Serve uses one reader and one writer. Tool calls run independently so a long
+// wait cannot block ping, cancellation or another tool. EOF drains pending calls.
 func (s *Server) Serve(in io.Reader, out io.Writer) error {
-	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	enc := json.NewEncoder(out)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		var req rpcRequest
-		var result any
-		var rpcErr *rpcError
-		var id any
-		if !json.Valid(line) {
-			rpcErr = &rpcError{-32700, "parse error"}
-		} else if err := json.Unmarshal(line, &req); err != nil || line[0] != '{' || req.JSONRPC != "2.0" || req.Method == "" || !validID(req.ID) {
-			rpcErr = &rpcError{-32600, "invalid request"}
-		} else {
-			if len(req.ID) == 0 {
+	type input struct {
+		req     rpcRequest
+		err     *rpcError
+		scanErr error
+	}
+	inputs := make(chan input)
+	quit := make(chan struct{})
+	defer close(quit)
+	go func() {
+		defer close(inputs)
+		scanner := bufio.NewScanner(in)
+		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+		for scanner.Scan() {
+			line := bytes.TrimSpace(scanner.Bytes())
+			if len(line) == 0 {
 				continue
 			}
-			id = req.ID
-			result, rpcErr = s.handle(req)
+			var req rpcRequest
+			var rpcErr *rpcError
+			if !json.Valid(line) {
+				rpcErr = &rpcError{-32700, "parse error"}
+			} else if err := json.Unmarshal(line, &req); err != nil || line[0] != '{' || req.JSONRPC != "2.0" || req.Method == "" || !validID(req.ID) {
+				rpcErr = &rpcError{-32600, "invalid request"}
+			}
+			select {
+			case inputs <- input{req: req, err: rpcErr}:
+			case <-quit:
+				return
+			}
 		}
+		select {
+		case inputs <- input{scanErr: scanner.Err()}:
+		case <-quit:
+		}
+	}()
+	type runningCall struct{ cancel context.CancelFunc }
+	type reply struct {
+		req    rpcRequest
+		call   *runningCall
+		result any
+		err    *rpcError
+	}
+	active := map[string]*runningCall{}
+	replies := make(chan reply)
+	var workers sync.WaitGroup
+	defer func() {
+		for _, call := range active {
+			call.cancel()
+		}
+		if inputs != nil {
+			if closer, ok := in.(io.Closer); ok {
+				_ = closer.Close()
+			}
+		}
+		workers.Wait()
+	}()
+	enc := json.NewEncoder(out)
+	write := func(id any, result any, rpcErr *rpcError) error {
 		resp := map[string]any{"jsonrpc": "2.0", "id": id}
 		if rpcErr != nil {
 			resp["error"] = rpcErr
 		} else {
 			resp["result"] = result
 		}
-		if err := enc.Encode(resp); err != nil {
-			return err
+		return enc.Encode(resp)
+	}
+	for inputs != nil || len(active) > 0 {
+		select {
+		case item, ok := <-inputs:
+			if !ok {
+				inputs = nil
+				continue
+			}
+			if item.scanErr != nil {
+				return item.scanErr
+			}
+			req := item.req
+			if item.err != nil {
+				if err := write(nil, nil, item.err); err != nil {
+					return err
+				}
+				continue
+			}
+			if req.Method == "" {
+				continue
+			} // scanner's EOF marker
+			if len(req.ID) == 0 {
+				if req.Method == "notifications/cancelled" {
+					var p struct {
+						RequestID json.RawMessage `json:"requestId"`
+					}
+					if json.Unmarshal(req.Params, &p) == nil && len(p.RequestID) > 0 && validID(p.RequestID) {
+						key := rpcIDKey(p.RequestID)
+						if call := active[key]; call != nil {
+							delete(active, key)
+							call.cancel()
+						}
+					}
+				}
+				continue
+			}
+			key := rpcIDKey(req.ID)
+			if active[key] != nil {
+				if err := write(req.ID, nil, &rpcError{-32600, "request id already running"}); err != nil {
+					return err
+				}
+				continue
+			}
+			if req.Method != "tools/call" {
+				result, rpcErr := s.handle(context.Background(), req)
+				if err := write(req.ID, result, rpcErr); err != nil {
+					return err
+				}
+				continue
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			call := &runningCall{cancel: cancel}
+			active[key] = call
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				result, rpcErr := s.handle(ctx, req)
+				select {
+				case replies <- reply{req, call, result, rpcErr}:
+				case <-ctx.Done():
+				}
+			}()
+		case reply := <-replies:
+			key := rpcIDKey(reply.req.ID)
+			if active[key] != reply.call {
+				continue
+			} // cancelled or id reused
+			delete(active, key)
+			reply.call.cancel()
+			if err := write(reply.req.ID, reply.result, reply.err); err != nil {
+				return err
+			}
 		}
 	}
-	return scanner.Err()
+	return nil
+}
+
+func rpcIDKey(id json.RawMessage) string {
+	var s string
+	if json.Unmarshal(id, &s) == nil {
+		return "s:" + s
+	}
+	var n int64
+	_ = json.Unmarshal(id, &n)
+	return "n:" + strconv.FormatInt(n, 10)
 }
 
 func validID(id json.RawMessage) bool {
@@ -124,7 +243,7 @@ func validID(id json.RawMessage) bool {
 	return false
 }
 
-func (s *Server) handle(req rpcRequest) (any, *rpcError) {
+func (s *Server) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 	switch req.Method {
 	case "initialize":
 		return map[string]any{
@@ -148,7 +267,7 @@ func (s *Server) handle(req rpcRequest) (any, *rpcError) {
 		if len(p.Arguments) == 0 {
 			p.Arguments = json.RawMessage(`{}`)
 		}
-		value, err := s.call(context.Background(), p.Name, p.Arguments)
+		value, err := s.call(ctx, p.Name, p.Arguments)
 		if err != nil {
 			return map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}, nil
 		}

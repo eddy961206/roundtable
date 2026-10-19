@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -58,6 +59,8 @@ type seat struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
 	Role     string `json:"role"`
+	Enabled  bool   `json:"enabled"`
+	Removed  bool   `json:"removed"`
 }
 
 type apiMessage struct {
@@ -70,19 +73,20 @@ type apiMessage struct {
 	Role   string `json:"role"`
 	Error  string `json:"error"`
 	Live   bool   `json:"live"`
+	TurnID string `json:"turn_id"`
+	Target string `json:"target"`
 }
 
 type page struct {
 	Room *struct {
 		ID           string `json:"id"`
+		Seq          int64  `json:"seq"`
 		Title        string `json:"title"`
 		Mode         string `json:"mode"`
 		Participants []seat `json:"participants"`
 	} `json:"room"`
-	Messages []apiMessage `json:"messages"`
-	Queue    []struct {
-		Group string `json:"group"`
-	} `json:"queue"`
+	Messages []apiMessage      `json:"messages"`
+	Queue    []apiTurn         `json:"queue"`
 	Requests []json.RawMessage `json:"requests"`
 	History  struct {
 		HasMore   bool  `json:"has_more"`
@@ -159,6 +163,10 @@ func (s *Server) read(ctx context.Context, room string, after, maxChars int64) (
 }
 
 func (s *Server) readPages(ctx context.Context, room string, after, maxChars int64, latest *page) (*readResult, error) {
+	return s.readSelected(ctx, room, after, after, maxChars, latest, nil)
+}
+
+func (s *Server) readSelected(ctx context.Context, room string, after, lower, maxChars int64, latest *page, includeTurns map[string]bool) (*readResult, error) {
 	names := map[string]string{"user": "user", "system": "system"}
 	for _, p := range latest.Room.Participants {
 		names[p.ID] = p.Label
@@ -176,7 +184,7 @@ func (s *Server) readPages(ctx context.Context, room string, after, maxChars int
 			if oldest == 0 || m.Seq < oldest {
 				oldest = m.Seq
 			}
-			if m.Seq <= after || seen[m.Seq] {
+			if (m.Seq <= after && !includeTurns[m.TurnID]) || seen[m.Seq] {
 				continue
 			}
 			seen[m.Seq] = true
@@ -189,7 +197,7 @@ func (s *Server) readPages(ctx context.Context, room string, after, maxChars int
 		if oldest == 0 {
 			return nil, fmt.Errorf("대화 페이지가 비었는데 has_more가 켜져 있음")
 		}
-		if oldest <= after {
+		if oldest <= lower {
 			break
 		}
 		next := current.History.BeforeSeq
@@ -232,6 +240,23 @@ type postResult struct {
 }
 
 func (s *Server) post(ctx context.Context, a arguments) (any, error) {
+	var watch *observer
+	if a.WaitSeconds != nil {
+		var err error
+		watch, err = s.observe(ctx, a.Room)
+		if err != nil {
+			return nil, err
+		}
+		defer watch.close()
+		baseline, err := s.snapshot(ctx, a.Room, 0, 1)
+		if err != nil {
+			return nil, err
+		}
+		watch.seed(baseline)
+		if err := s.seedRunningReply(ctx, a.Room, a.Target, baseline, watch); err != nil {
+			return nil, err
+		}
+	}
 	var sent apiMessage
 	if err := s.api(ctx, "POST", "/api/rooms/"+a.Room+"/messages", map[string]string{"text": a.Text, "target": a.Target}, &sent); err != nil {
 		return nil, err
@@ -244,15 +269,40 @@ func (s *Server) post(ctx context.Context, a arguments) (any, error) {
 		return result, nil
 	}
 	deadline := time.Now().Add(time.Duration(*a.WaitSeconds) * time.Second)
-	latest, err := s.snapshot(ctx, a.Room, 0, 200)
+	initialCtx := ctx
+	initialCancel := func() {}
+	if *a.WaitSeconds > 0 {
+		initialCtx, initialCancel = context.WithDeadline(ctx, deadline)
+	}
+	latest, err := s.snapshot(initialCtx, a.Room, 0, 1)
+	initialCancel()
 	if err != nil {
 		return nil, fmt.Errorf("메시지 seq=%d 전송됨; 대기 조회 실패(재전송하지 말 것): %w", sent.Seq, err)
 	}
 	timedOut := false
+	var related map[string]bool
+	lower := sent.Seq
 	for {
-		pending := false
-		for _, turn := range latest.Queue {
-			pending = pending || turn.Group == sent.ID
+		// The HTTP snapshot supplies current activity; SSE supplies durable-for-
+		// this-call links even when ancestors finished between two snapshots.
+		syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		if *a.WaitSeconds > 0 {
+			cancel()
+			syncCtx, cancel = context.WithDeadline(ctx, deadline)
+		}
+		err := watch.catchUp(syncCtx, latest, sent)
+		cancel()
+		if err != nil {
+			if related != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+				timedOut = true
+				break
+			}
+			return nil, fmt.Errorf("메시지 seq=%d 전송됨; SSE 동기화 실패(재전송하지 말 것): %w", sent.Seq, err)
+		}
+		var pending bool
+		related, lower, pending, err = watch.related(latest, sent)
+		if err != nil {
+			return nil, fmt.Errorf("메시지 seq=%d 전송됨; 턴 추적 실패: %w", sent.Seq, err)
 		}
 		if !pending {
 			break
@@ -274,7 +324,7 @@ func (s *Server) post(ctx context.Context, a arguments) (any, error) {
 			break
 		}
 		pollCtx, cancel := context.WithDeadline(ctx, deadline)
-		observed, err := s.snapshot(pollCtx, a.Room, 0, 200)
+		observed, err := s.snapshot(pollCtx, a.Room, 0, 1)
 		cancel()
 		if err != nil {
 			if ctx.Err() == nil && time.Until(deadline) <= 0 {
@@ -285,7 +335,13 @@ func (s *Server) post(ctx context.Context, a arguments) (any, error) {
 		}
 		latest = observed
 	}
-	read, err := s.readPages(ctx, a.Room, sent.Seq, 20000, latest)
+	// Fetch bodies once after waiting. Include the existing steering reply even
+	// when its sequence precedes the submitted user message.
+	latest, err = s.snapshot(ctx, a.Room, 0, 200)
+	if err != nil {
+		return nil, fmt.Errorf("메시지 seq=%d 전송됨; 답변 조회 실패: %w", sent.Seq, err)
+	}
+	read, err := s.readSelected(ctx, a.Room, sent.Seq, lower, 20000, latest, related)
 	if err != nil {
 		return nil, fmt.Errorf("메시지 seq=%d 전송됨; 답변 조회 실패(재전송하지 말 것): %w", sent.Seq, err)
 	}

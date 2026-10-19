@@ -50,12 +50,12 @@ func (s *Server) tools() []tool {
 	limit := int64(600)
 	participant := object(map[string]schema{"provider": text, "model": str, "effort": str, "label": str, "role": str}, "provider")
 	all := []tool{
-		{Name: "rt_list_rooms", Description: "방 id·제목·모드·참가자·실행 여부 조회", InputSchema: object(map[string]schema{})},
+		{Name: "rt_list_rooms", Description: "방 id·제목·모드·참가자·실행 여부 조회. 좌석의 enabled·removed로 활성 여부 구분", InputSchema: object(map[string]schema{})},
 		{Name: "rt_create_room", Description: "새 방 생성. 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용", InputSchema: object(map[string]schema{
 			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
 			"participants": {Type: "array", Items: &participant, MinItems: 1},
 		}, "title", "workspace", "mode", "participants")},
-		{Name: "rt_post", Description: "메시지 전송. wait_seconds(0~600)를 지정하면 해당 메시지의 턴 종료까지 대기하고 새 메시지도 반환. 시간 초과는 실행 취소가 아님", InputSchema: object(map[string]schema{
+		{Name: "rt_post", Description: "메시지 전송. wait_seconds(0~600)를 지정하면 steering 대상과 연쇄 호출 턴까지 대기하고 답변도 반환. steering 응답은 전송 seq보다 낮을 수 있음. 시간 초과는 실행 취소가 아님", InputSchema: object(map[string]schema{
 			"room": id, "text": text, "target": id, "wait_seconds": integer(0, &limit),
 		}, "room", "text")},
 		{Name: "rt_read", Description: "after_seq 이후 메시지를 오래된 순으로 조회. max_chars(기본 20000)는 본문 합계의 Unicode 문자 수이며 오래된 본문부터 줄이고 truncated로 표시", InputSchema: object(map[string]schema{
