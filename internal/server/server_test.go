@@ -41,6 +41,13 @@ func newTestServer(t *testing.T) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Cleanups run last-in first-out: close HTTP first, then stop running turns so
+	// t.TempDir can remove the data folders.
+	t.Cleanup(func() {
+		if err := hub.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	web := fstest.MapFS{"index.html": {Data: []byte("<html>ok</html>")}}
 	ts := httptest.NewServer(New(hub, agent.NewRegistry(echoProvider{}), web))
 	t.Cleanup(ts.Close)
