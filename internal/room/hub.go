@@ -42,6 +42,7 @@ type Hub struct {
 	limitsSaveError error
 	nativeSessions  map[string]bool
 	mcp             *agent.MCPServer // read-only tool server attached to read/write runs
+	workRoot        string           // <data>/worktrees: part and integration worktrees live outside user repos
 	Log             *log.Logger
 }
 
@@ -55,6 +56,8 @@ type roomState struct {
 	deleted  bool // late invocation callbacks must not recreate a deleted room
 	stopGen  int  // prevents a stopped turn from scheduling follow-up work
 	resetGen int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
+
+	workBusy map[string]bool // plan creation or part submit checks running git outside h.mu
 }
 
 type running struct {
@@ -80,7 +83,11 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 	if err != nil {
 		return nil, fmt.Errorf("작업 임시 폴더: %w", err)
 	}
-	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]bool{}, Log: logger}
+	workRoot, err := filepath.Abs(filepath.Join(store.Root(), "worktrees"))
+	if err != nil {
+		return nil, fmt.Errorf("worktree 폴더: %w", err)
+	}
+	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]bool{}, workRoot: workRoot, Log: logger}
 	rooms, msgs, err := store.LoadRooms()
 	if err != nil {
 		return nil, err
@@ -98,7 +105,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 				return nil, fmt.Errorf("방 %s 작업 폴더: %w", r.ID, err)
 			}
 		}
-		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
+		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, workBusy: map[string]bool{}}
 		for _, m := range rs.msgs {
 			if m.Kind != "agent" {
 				continue
@@ -108,7 +115,17 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 			}
 		}
 		rs.refreshParticipantStates()
+		if r.Work != nil {
+			if err := h.recoverWork(rs); err != nil {
+				return nil, err
+			}
+		}
 		h.rooms[r.ID] = rs
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rs := range h.rooms {
+		h.advanceQueue(rs)
 	}
 	return h, nil
 }
@@ -207,7 +224,7 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	if err := h.store.SaveRoom(r); err != nil {
 		return nil, err
 	}
-	h.rooms[r.ID] = &roomState{room: r, running: map[string]*running{}, subs: map[chan []byte]struct{}{}}
+	h.rooms[r.ID] = &roomState{room: r, running: map[string]*running{}, subs: map[chan []byte]struct{}{}, workBusy: map[string]bool{}}
 	return r, nil
 }
 
@@ -248,6 +265,7 @@ type Snapshot struct {
 	Discussion *DiscussionView         `json:"discussion"`
 	Limits     map[string]agent.Limits `json:"limits"`
 	History    HistoryPage             `json:"history"`
+	Work       *WorkPlan               `json:"work"`
 }
 
 type DiscussionView struct {
@@ -370,6 +388,9 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	if contextChanged && len(rs.running) > 0 {
 		return nil, fmt.Errorf("실행 중에는 모드와 작업 폴더를 변경할 수 없음")
 	}
+	if contextChanged && (rs.room.Work != nil || rs.workBusy[busyPlan]) {
+		return nil, fmt.Errorf("작업 계획이 있는 방은 모드와 작업 폴더를 변경할 수 없음")
+	}
 	if patch.MaxChain != nil {
 		if *patch.MaxChain < 1 {
 			return nil, fmt.Errorf("연쇄 한도는 1 이상이어야 함")
@@ -474,6 +495,9 @@ func (rs *roomState) dropQueuedFor(h *Hub, agentID string) {
 	for _, t := range dropped {
 		if t.Reason == "discussion" {
 			h.discussionStep(rs, t.Agent, "PASS", "cancelled")
+		}
+		if t.Reason == "review" {
+			h.reviewTurnLost(rs, t, "리뷰 턴을 맡은 좌석이 비활성화됨")
 		}
 	}
 	rs.refreshParticipantStates()
@@ -761,6 +785,11 @@ func (h *Hub) Stop(id string) error {
 	if !ok {
 		return fmt.Errorf("방 없음: %s", id)
 	}
+	for _, t := range rs.queue {
+		if t.Reason == "review" {
+			h.reviewTurnLost(rs, t, "사용자가 중지해 리뷰 턴이 취소됨")
+		}
+	}
 	rs.stopLocked("사용자가 중지함")
 	return nil
 }
@@ -799,6 +828,9 @@ func (h *Hub) CancelTurn(id, turnID string) error {
 			rs.queue = append(rs.queue[:i], rs.queue[i+1:]...)
 			if t.Reason == "discussion" {
 				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
+			}
+			if t.Reason == "review" {
+				h.reviewTurnLost(rs, t, "사용자가 리뷰 턴을 취소함")
 			}
 			rs.broadcast("queue", rs.queueView())
 			h.pump(rs)
@@ -863,6 +895,9 @@ func (h *Hub) pump(rs *roomState) {
 			if t.Reason == "discussion" {
 				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
 			}
+			if t.Reason == "review" {
+				h.reviewTurnLost(rs, t, "리뷰 턴을 맡은 좌석을 실행할 수 없음")
+			}
 			continue
 		}
 		// Ordinary priority turns must not block a later discussion turn for
@@ -911,6 +946,8 @@ type prepared struct {
 	opts     agent.RunOptions
 	ctx      context.Context
 	cancel   context.CancelFunc
+	part     *Part // the turn runs in this part's worktree (D9, review)
+	reviewer bool  // fresh reviewer session that must not be kept (D10)
 }
 
 // buildTurn renders a prompt without reserving a participant. Caller holds h.mu.
@@ -922,6 +959,15 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	prov := h.reg.Get(p.Provider)
 	if prov == nil {
 		return nil
+	}
+	if t.Reason == "review" {
+		return h.buildReviewTurn(rs, t, p, prov)
+	}
+	if part := rs.activePart(p.ID); part != nil {
+		return h.buildPartTurn(rs, t, p, prov, part)
+	}
+	if t.Reason == "part" {
+		return nil // the part left working/fixing before its turn started
 	}
 	first := p.SessionID == ""
 	cap := t.Cap
@@ -944,11 +990,75 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
 }
 
+// buildPartTurn runs every turn of a seat with a working/fixing part in the
+// part session and worktree (D9). The first part turn gets only plan context.
+func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.Provider, part *Part) *prepared {
+	t.Part = part.ID
+	seen, unseen := p.LastSeen, slices.Clone(p.Unseen)
+	var prompt string
+	switch {
+	case part.SessionID == "":
+		prompt, seen, unseen = BuildPartPrompt(rs.room.Work, part), rs.room.Seq, nil
+		if t.prompt != "" {
+			prompt += "\n\n" + t.prompt
+		}
+	case t.prompt != "":
+		prompt = t.prompt
+	default:
+		cap := t.Cap
+		if t.Reason == "discussion" {
+			cap = rs.room.Seq
+		}
+		var hist []*Message
+		hist, seen, unseen = rs.deltaFor(p, false, cap)
+		if len(hist) == 0 && t.Reason != "discussion" {
+			p.LastSeen, p.Unseen = seen, unseen
+			return nil
+		}
+		tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, Part: part}
+		if rs.disc != nil && t.Reason == "discussion" {
+			tc.TotalRounds = rs.disc.Total
+		}
+		view := *rs.room
+		view.Workspace = part.Worktree
+		prompt = BuildPrompt(&view, p, hist, tc)
+	}
+	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
+	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part}
+}
+
+// buildReviewTurn runs a ReviewState step: the reviewer in a fresh read-only
+// session (D10), the author in the part session. Room history is never added.
+func (h *Hub) buildReviewTurn(rs *roomState, t *Turn, p *Participant, prov agent.Provider) *prepared {
+	part := rs.room.Work.part(t.Part)
+	if part.State != "reviewing" {
+		return nil
+	}
+	reviewer := p.ID == part.Reviewer
+	opts := agent.RunOptions{Prompt: t.prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
+	if reviewer {
+		opts.SessionID, opts.Mode = "", agent.ModeRead
+	}
+	return &prepared{t: t, p: p, seen: p.LastSeen, unseen: slices.Clone(p.Unseen), stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, reviewer: reviewer}
+}
+
+// keepSession stores a CLI session id in the slot the turn ran in. Caller holds h.mu.
+func (h *Hub) keepSession(rs *roomState, pr *prepared, id string) {
+	switch {
+	case pr.reviewer:
+	case pr.part != nil:
+		pr.part.SessionID = id
+	case pr.resetGen == rs.resetGen:
+		pr.p.SessionID = id
+	}
+}
+
 // prepareTurn reserves one participant and opens its reply. Caller holds h.mu.
 func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	t, p, prov := pr.t, pr.p, pr.prov
 	msg := rs.nextMessage("agent", p.ID, "")
 	msg.Status, msg.TurnID, msg.Reason, msg.Round, msg.Model = "streaming", t.ID, t.Reason, t.Round, p.Model
+	msg.Part, msg.ReviewStep = t.Part, t.step
 	msg.Provider, msg.SessionID, msg.Mode, msg.Effort = p.Provider, pr.opts.SessionID, pr.opts.Mode, pr.opts.Effort
 	msg.SessionDirectory = pr.opts.Workspace
 	if pr.opts.Mode == agent.ModeChat || msg.SessionDirectory == "" {
@@ -1000,9 +1110,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		case agent.KindSession:
 			if e.Text != "" {
 				msg.SessionID = e.Text
-				if pr.resetGen == rs.resetGen {
-					p.SessionID = e.Text
-				}
+				h.keepSession(rs, pr, e.Text)
 				_ = h.store.AppendMessage(rs.room.ID, msg)
 				_ = h.store.SaveRoom(rs.room)
 				rs.broadcast("message", msg)
@@ -1059,8 +1167,8 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if res.SessionID != "" {
 		msg.SessionID = res.SessionID
 	}
-	if res.SessionID != "" && pr.resetGen == rs.resetGen {
-		p.SessionID = res.SessionID
+	if res.SessionID != "" {
+		h.keepSession(rs, pr, res.SessionID)
 	}
 	text := strings.TrimSpace(res.Text)
 	if text == "" {
@@ -1073,6 +1181,13 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			signal = "CONTINUE"
 		}
 		msg.Signal = signal
+	}
+	workDone := false
+	if pr.part != nil && t.Reason != "review" && t.Reason != "discussion" {
+		text, workDone = ParseWorkDone(text)
+		if workDone {
+			msg.Signal = workDoneSignal
+		}
 	}
 	msg.Text = text
 	switch {
@@ -1104,6 +1219,16 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			}
 		}
 	}
+	// D11: a malformed review table fails the turn; ReviewState keeps nothing from it.
+	var nextStep *ReviewStep
+	var outcome string
+	if t.Reason == "review" && msg.Status == "done" && pr.part.State == "reviewing" {
+		var applyErr error
+		nextStep, outcome, applyErr = pr.part.Review.Apply(text)
+		if applyErr != nil {
+			msg.Status, msg.Error = "error", "리뷰 표 형식 오류: "+applyErr.Error()
+		}
+	}
 	p.Turns++
 	rs.room.UpdatedAt = nowMs()
 	_ = h.store.AppendMessage(rs.room.ID, msg)
@@ -1112,7 +1237,13 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		h.Log.Printf("turn %s %s/%s status=%s %dms err=%v", rs.room.ID, p.ID, p.Model, msg.Status, msg.Duration, err)
 	}
 
-	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" {
+	if t.Reason == "review" {
+		h.finishReview(rs, pr.part, msg, nextStep, outcome)
+	}
+	if workDone && msg.Status == "done" && pr.stopGen == rs.stopGen {
+		h.submitAsync(rs, pr.part.ID)
+	}
+	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" {
 		h.chainMentions(rs, msg, t)
 	}
 	if pr.stopGen == rs.stopGen && t.Reason == "discussion" {

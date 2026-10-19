@@ -47,6 +47,7 @@ type Room struct {
 	DiscussionRounds int            `json:"discussion_rounds"` // default rounds for 토론 mode
 	Seq              int64          `json:"seq"`
 	Persona          bool           `json:"persona"` // allow light banter between agents
+	Work             *WorkPlan      `json:"-"`       // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {
@@ -80,9 +81,11 @@ type Message struct {
 	Target           string         `json:"target,omitempty"` // user message addressed to one agent only
 	Live             bool           `json:"live,omitempty"`   // injected into a running turn (steering)
 	TurnID           string         `json:"turn_id,omitempty"`
-	Reason           string         `json:"reason,omitempty"` // mention | broadcast | discussion
+	Reason           string         `json:"reason,omitempty"` // mention | broadcast | discussion | part | review
 	Round            int            `json:"round,omitempty"`
-	Signal           string         `json:"signal,omitempty"` // discussion signal
+	Signal           string         `json:"signal,omitempty"` // discussion signal or WORK:DONE
+	Part             string         `json:"part,omitempty"`
+	ReviewStep       string         `json:"review_step,omitempty"` // findings | author_reply | rebuttal | recheck
 	Error            string         `json:"error,omitempty"`
 	Model            string         `json:"model,omitempty"`
 	Provider         string         `json:"provider,omitempty"`
@@ -106,8 +109,11 @@ type Turn struct {
 	Round    int    `json:"round,omitempty"`
 	Status   string `json:"status"` // queued | running
 	Created  int64  `json:"created"`
+	Part     string `json:"part,omitempty"` // work part this turn runs for (D9, review)
 	parallel bool   // broadcast prompt instructions survive independent start times
 	priority bool   // targeted user messages precede ordinary waiting turns
+	prompt   string // hub-built part or review instruction
+	step     string // review step kind
 }
 
 // TraceLine binds an agent event to the message it belongs to.
