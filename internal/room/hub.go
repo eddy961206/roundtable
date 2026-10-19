@@ -601,13 +601,6 @@ func (rs *roomState) broadcast(typ string, payload any) {
 	if len(rs.subs) == 0 {
 		return
 	}
-	if typ == "work" {
-		for _, r := range rs.requests {
-			if r.Status == "pending" {
-				rs.broadcast("request", rs.requestView(r))
-			}
-		}
-	}
 	b, err := json.Marshal(map[string]any{"type": typ, "data": payload})
 	if err != nil {
 		return
@@ -945,10 +938,6 @@ func (h *Hub) pump(rs *roomState) {
 			continue
 		}
 		part := rs.seatPart(p.ID)
-		if rs.deferredRequestTurn(t) {
-			i++
-			continue
-		}
 		partActive := part != nil && (part.State == "working" || part.State == "fixing")
 		if t.Reason == "part" && !partActive {
 			rs.queue = slices.Delete(rs.queue, i, i+1)
@@ -1041,7 +1030,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		cap = rs.room.Seq
 	}
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
-	if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID)) == 0 {
+	if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID, "")) == 0 {
 		// No CLI call is needed to acknowledge own/filtered messages. Keep
 		// unfinished replies as holes for a later cap to deliver exactly once.
 		p.LastSeen, p.Unseen = seen, unseen
@@ -1082,7 +1071,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 		cursor := *p
 		cursor.LastSeen, cursor.Unseen = part.LastSeen, part.Unseen
 		hist, seen, unseen = rs.deltaForContext(&cursor, false, cap, part.ID)
-		if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID)) == 0 {
+		if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID, part.ID)) == 0 {
 			part.LastSeen, part.Unseen = seen, unseen
 			return nil
 		}
@@ -1442,9 +1431,6 @@ func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, part
 		if m.NoticeFor == p.ID {
 			continue
 		} // delivered separately, regardless of cap or history trimming
-		if partID != "" && rs.isRequestSource(m, p.ID) {
-			continue
-		}
 		out = append(out, m)
 	}
 	return out, seen, unseen

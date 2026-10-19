@@ -41,45 +41,6 @@ func TestQ1ReviewSignalBlock(t *testing.T) {
 	}
 }
 
-func TestQ1ReviewPartDefersNewRequestUntilRelease(t *testing.T) {
-	h, r, ps := controlledHub(t, "codex", "claude")
-	h.mu.Lock()
-	r.Work = &WorkPlan{Parts: []*Part{{ID: "p1", Seat: "codex", State: "fixing", SessionID: "part-session", Worktree: t.TempDir()}}}
-	h.mu.Unlock()
-	postQueueMessage(t, h, r.ID, "ask codex", "claude")
-	from := nextCall(t, ps[1])
-	from.result <- controlledResult{text: "[[REQUEST:@codex]] DEFERRED-REQUEST"}
-	snap := queueSnapshot(t, h, r.ID, func(s *Snapshot) bool { return len(s.Requests) == 1 && len(s.Queue) == 1 })
-	if snap.Requests[0].Status != "pending" || snap.Requests[0].WaitReason == "" {
-		t.Fatal(snap.Requests)
-	}
-	select {
-	case <-ps[0].callsCh:
-		t.Fatal("request started a part turn")
-	default:
-	}
-	postQueueMessage(t, h, r.ID, "part-only followup", "codex")
-	partCall := nextCall(t, ps[0])
-	if strings.Contains(partCall.opts.Prompt, "DEFERRED-REQUEST") || strings.Contains(partCall.opts.Prompt, "[요청 ") {
-		t.Fatal("request leaked into part", partCall.opts.Prompt)
-	}
-	partCall.result <- controlledResult{text: "part work continues"}
-	queueSnapshot(t, h, r.ID, func(s *Snapshot) bool { return s.Room.participant("codex").Status != "running" && len(s.Queue) == 1 })
-	if _, err := h.AbandonPart(r.ID, "p1"); err != nil {
-		t.Fatal(err)
-	}
-	roomCall := nextCall(t, ps[0])
-	if roomCall.opts.SessionID == "part-session" || !strings.Contains(roomCall.opts.Prompt, "[요청 "+snap.Requests[0].ID) {
-		t.Fatal("deferred request did not resume in room", roomCall.opts.Prompt)
-	}
-	roomCall.result <- controlledResult{text: "done\n[[REQUEST_DONE:" + snap.Requests[0].ID + "]]"}
-	waitIdle(t, h, r.ID)
-	snap, _ = h.Snapshot(r.ID)
-	if snap.Requests[0].Status != "done" || snap.Requests[0].WaitReason != "" {
-		t.Fatal(snap.Requests)
-	}
-}
-
 func TestQ1ReviewNoticeRetryKeepsImageCap(t *testing.T) {
 	h, r, ps := controlledHub(t, "codex")
 	postQueueMessage(t, h, r.ID, "first", "codex")
@@ -148,7 +109,7 @@ func TestQ1ReviewNoticeReplayAndOtherSeats(t *testing.T) {
 		t.Fatal(err)
 	}
 	rs = h.rooms[r.ID]
-	if len(rs.pendingNotices("codex")) != 0 {
+	if len(rs.pendingNotices("codex", "")) != 0 {
 		t.Fatal("notice receipt lost at restart")
 	}
 	hist, _, _ := rs.deltaFor(rs.room.participant("codex"), true, rs.room.Seq)
