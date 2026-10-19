@@ -17,12 +17,10 @@ Roundtable은 Codex의 쓰기 모드 실행 전에 `<server scratch>/codex/go-bu
 Go 저장소는 이 `feat/trace-tail` worktree를 사용했다. 캐시를 작업 폴더 밖에 두어 workspace 쓰기 권한만으로 통과하는 조건을 배제했다.
 
 ```text
-C:\Users\Public\Documents\ESTsoft\CreatorTemp\roundtable-trace-tail-cache\scratch\codex\go-build
+<서버 scratch 폴더>\codex\go-build
 ```
 
 Codex에 환경변수와 소스를 변경하지 않고 `go env GOCACHE`, `go build ./...` 두 명령만 실행하도록 요청했다. 새 세션과 같은 세션을 재개한 실행 모두 위 캐시 경로를 반환했고 빌드 명령의 실제 종료 코드는 0이었다. CLI 기록에서도 모델, 추론 수준, `workspace-write`, 캐시 `writable_roots`를 대조했다.
-
-세션 ID: `01a1541a-e677-73d2-842a-abbbe6154909`.
 
 `internal/agent/codex_cache_test.go`에서 새 세션 및 재개 인자, read/chat의 설정과 디렉터리 미변경, 캐시 생성 실패, 상대 scratch 경로 거부를 확인한다.
 
