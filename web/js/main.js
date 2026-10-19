@@ -4,12 +4,13 @@ import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { activeParticipants, openSeq, state } from "./state.js";
 import { bindPanels, closeDrawers, closeMoreMenu, initTheme, toggleDrawer, toggleTheme } from "./layout.js";
-import { refreshLimits, renderProviderStatus, renderUsagePanel, scheduleUsageRefresh, usageTimer } from "./usage.js";
+import { refreshLimits, refreshProviderVersions, renderProviderStatus, renderUsagePanel, scheduleUsageRefresh, usageTimer } from "./usage.js";
+import { openModelStatsDialog } from "./stats.js";
 import { addAttachmentFiles, clearComposerError, clearDraftAttachments, closeLightbox, extractClipboardImageFiles, renderRequests } from "./attachments.js";
 import { applyMention, closeMentionPop, mentionPopup, renderMentionButtons, send, setTarget, updateHint } from "./composer.js";
 import { closeDiffDrawer } from "./work.js";
-import { connectRoomsFeed, loadRooms, renderRoomHead, renderRoomList } from "./rooms.js";
-import { getAgentElapsedMs, renderParticipants } from "./participants.js";
+import { bindRoomList, bindRoomTitleEdit, closeRoomMenu, connectRoomsFeed, deleteRoom, loadRooms, renderRoomHead, renderRoomList, roomMenuIsOpen } from "./rooms.js";
+import { getAgentElapsedMs, loadRolePresets, renderParticipants } from "./participants.js";
 import { ensureAndRenderTrace, expandTrace } from "./trace.js";
 import { bindTimeline, focusTimelineMessage, jumpToLatestMessages, onTimelineImageLoad, renderMessage, renderTimeline, scheduleRender, scrollToTimelineBottom, syncPendingScrollRestore } from "./timeline.js";
 import { connect, openRoom, schedulePanels, upsertRequest } from "./room.js";
@@ -95,8 +96,16 @@ function tickElapsed() {
 
 function bindUI() {
   bindPanels();
+  bindRoomList();
+  bindRoomTitleEdit();
   let participantDialogSequence = 0;
   $("#btn-refresh-usage").onclick = () => refreshLimits(true);
+  $("#btn-refresh-versions").onclick = () => refreshProviderVersions();
+  $("#btn-model-stats").onclick = () => {
+    closeMoreMenu();
+    openModelStatsDialog();
+  };
+  $("#dlg-stats-close").onclick = () => $("#dlg-stats").close();
   $("#btn-latest-history").onclick = jumpToLatestMessages;
   const jumpBottomBtn = $("#btn-jump-bottom");
   if (jumpBottomBtn) {
@@ -104,6 +113,8 @@ function bindUI() {
   }
   bindTimeline();
   $("#btn-theme").onclick = toggleTheme;
+  // Role presets are fetched once up front so the dialogs open with chips already there.
+  loadRolePresets();
   $("#btn-new-room").onclick = () => openRoomDialog();
   const onbNew = $("#btn-onboard-new");
   if (onbNew) onbNew.onclick = () => openRoomDialog();
@@ -375,10 +386,8 @@ function bindUI() {
 
   $("#btn-delete").onclick = async () => {
     closeMoreMenu();
-    if (!confirm("방과 대화 기록을 영구 삭제할까요? 되돌릴 수 없습니다.")) return;
-    await api("DELETE", "/api/rooms/" + state.roomId);
-    closeRoom("");
-    loadRooms();
+    if (!state.roomId) return;
+    try { await deleteRoom(state.roomId); } catch (err) { alert("방을 삭제하지 못했습니다: " + err.message); }
   };
 
   // Global keyboard shortcuts
@@ -401,6 +410,10 @@ function bindUI() {
       const more = $("#more-actions");
       if (more && more.open) {
         more.open = false;
+        return;
+      }
+      if (roomMenuIsOpen()) {
+        closeRoomMenu();
         return;
       }
       const diffDrawer = $("#diff-drawer");

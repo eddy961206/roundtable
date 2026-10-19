@@ -1,4 +1,4 @@
-// Sidebar account usage panel, provider CLI status and the usage refresh timer.
+// Sidebar account usage panel, provider CLI status (with versions) and the usage refresh timer.
 import { $, el, fmtK, fmtReset, fmtTime, LABEL } from "./util.js";
 import { api } from "./api.js";
 import { activeParticipants, seatClass, state } from "./state.js";
@@ -33,16 +33,63 @@ export async function refreshLimits(manual = false, cached = false) {
   }
 }
 
+// One line per provider: found/not found, then the CLI version with the time it was read
+// (R6: version, version_checked_at in ms, version_error come with GET /api/providers).
+function versionText(p) {
+  if (!p.available) return { text: "", cls: "muted" };
+  if (p.version_error) return { text: "버전 확인 실패 · " + p.version_error, cls: "warn" };
+  if (p.version) return { text: "v" + p.version + (p.version_checked_at ? " · 확인 " + fmtTime(p.version_checked_at) : ""), cls: "muted" };
+  if (p.version_checked_at) return { text: "버전 없음 · 확인 " + fmtTime(p.version_checked_at), cls: "muted" };
+  return { text: "버전 확인 중…", cls: "muted" };
+}
+
+let versionsError = "";
 export function renderProviderStatus() {
   const box = $("#limits");
   if (!box) return;
   box.innerHTML = "";
   for (const p of state.providers) {
     const row = el("div", "prov-mini");
-    row.appendChild(el("span", "prov-name " + p.id, LABEL[p.id] || p.label || p.id));
+    const head = el("div", "prov-mini-head");
+    head.appendChild(el("span", "prov-name " + p.id, LABEL[p.id] || p.label || p.id));
     const statusText = !p.available ? "CLI 없음" : p.can_steer ? "CLI 있음 · 즉시 조정" : "CLI 있음";
-    row.appendChild(el("span", p.available ? "muted" : "unavailable", statusText));
+    head.appendChild(el("span", p.available ? "muted" : "unavailable", statusText));
+    row.appendChild(head);
+    const v = versionText(p);
+    if (v.text) {
+      const line = el("div", "prov-version small-note " + v.cls, v.text);
+      line.title = p.version_error ? p.version_error : p.version_checked_at ? new Date(p.version_checked_at).toLocaleString("ko-KR") + "에 확인" : "";
+      row.appendChild(line);
+    }
     box.appendChild(row);
+  }
+  const err = $("#versions-error");
+  if (err) {
+    err.textContent = versionsError;
+    err.hidden = !versionsError;
+  }
+}
+
+// POST /api/providers/versions re-runs the version commands; the result is read back with GET /api/providers.
+let versionsBusy = false;
+export async function refreshProviderVersions() {
+  const btn = $("#btn-refresh-versions");
+  if (versionsBusy) return;
+  versionsBusy = true;
+  versionsError = "";
+  if (btn) { btn.disabled = true; btn.textContent = "확인 중…"; }
+  try {
+    await api("POST", "/api/providers/versions");
+    const prov = await api("GET", "/api/providers");
+    if (!prov || !Array.isArray(prov.providers)) throw new Error("응답에 providers 배열이 없습니다");
+    state.providers = prov.providers;
+    state.catalogRevision++;
+  } catch (err) {
+    versionsError = "버전을 다시 확인하지 못했습니다: " + (err.message || String(err));
+  } finally {
+    versionsBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = "다시 확인"; }
+    renderProviderStatus();
   }
 }
 

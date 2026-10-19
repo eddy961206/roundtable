@@ -41,9 +41,13 @@
         <div id="usage-detail-content"></div>
       </details>
       <details id="provider-details">
-        <summary>CLI 설치 상태</summary>
-        <p class="small-note muted">실행 프로그램을 찾았는지만 확인해. 로그인·구독 여부는 별도로 확인해야 해.</p>
+        <summary>CLI 설치 상태 · 버전</summary>
+        <p class="small-note muted">실행 프로그램을 찾았는지와 버전 명령의 결과만 보여줘. 로그인·구독 여부는 별도로 확인해야 해.</p>
         <div id="limits"></div>
+        <div class="versions-foot">
+          <button type="button" id="btn-refresh-versions" class="ghost" title="각 CLI의 버전 명령을 다시 실행합니다">다시 확인</button>
+          <p id="versions-error" class="small-note warn" role="alert" hidden></p>
+        </div>
       </details>
     </section>
   </nav>
@@ -85,6 +89,26 @@
             <span class="badge chat">chat</span> 대화 중심 · 프로젝트 폴더를 전달하지 않음<br>
             <span class="badge write">write</span> CLI 작업 폴더 편집 허용</p>
           </div>
+          <div class="onboard-card" role="listitem">
+            <h3>5. 작업 계획과 파트 분배</h3>
+            <p><strong>write</strong> 방에서 <strong>작업 계획</strong>을 열고 목표·검증 명령·파트를 정하면, 파트마다 담당 좌석이 자기 worktree에서 작업하고 통합 branch로 병합됩니다. 진행은 상단 작업 보드에서 봅니다.</p>
+          </div>
+          <div class="onboard-card" role="listitem">
+            <h3>6. 적대적 교차 리뷰</h3>
+            <p>파트가 끝나면 <strong>다른 공급사</strong>의 좌석이 diff를 리뷰합니다. 지적 → 작성자 답변 → 반박 → 재확인 순서로 라운드가 돌고, 통과한 뒤에야 병합됩니다. 지적·수정·철회 수는 <strong>더보기 ▾ 모델 기록</strong>에 쌓입니다.</p>
+          </div>
+          <div class="onboard-card" role="listitem">
+            <h3>7. 참가자 간 요청</h3>
+            <p>에이전트는 응답 끝에 <code>[[REQUEST:@이름]] 확인할 내용</code>으로 서로에게 일을 넘기고, 받은 쪽은 <code>[[REQUEST_DONE:…]]</code>로 끝냅니다. 오른쪽 <strong>요청</strong> 목록에서 진행 상태를 봅니다.</p>
+          </div>
+          <div class="onboard-card" role="listitem">
+            <h3>8. 이미지 공유</h3>
+            <p>입력창에 이미지를 붙여넣거나 끌어놓으면(PNG·JPEG·WEBP) 모든 참가자가 봅니다. 에이전트도 화면 캡처를 <code>[[ATTACH:파일.png]]</code>로 올릴 수 있어 UI 작업의 시각 검토를 다른 좌석에 요청할 수 있습니다.</p>
+          </div>
+          <div class="onboard-card" role="listitem">
+            <h3>9. 역할 카드</h3>
+            <p>참가자마다 <strong>역할</strong>(예: 큰 그림·UX, 적대적 검증)을 정하면 모든 안내문에 들어갑니다. 역할은 "이 관점을 먼저 깊게 본다"는 우선순위이지 다른 문제를 말하지 말라는 뜻이 아닙니다. 프리셋과 모델 추천은 서버의 역할 파일에서 옵니다.</p>
+          </div>
         </div>
 
         <div class="onboard-prompts">
@@ -113,7 +137,9 @@
           <div class="title-row">
             <button type="button" id="btn-left" class="icon-btn mobile-only" aria-label="방 목록 열기" title="방 목록 열기">☰</button>
             <button type="button" id="btn-expand-left" class="icon-btn panel-expand-left" aria-label="방 목록 패널 열기" aria-controls="sidebar" aria-expanded="false" title="방 목록 패널 열기">»</button>
-            <h2 id="room-title"></h2>
+            <h2 id="room-title" tabindex="0" title="방 이름 (Enter 또는 두 번 클릭으로 편집)"></h2>
+            <input id="room-title-input" class="room-title-input" type="text" maxlength="120" aria-label="새 방 이름 (Enter 저장, Esc 취소)" hidden>
+            <button type="button" id="btn-rename-room" class="icon-btn rename-btn" aria-label="방 이름 바꾸기" title="방 이름 바꾸기 (Enter 저장 · Esc 취소)">✎</button>
             <span id="room-mode" class="badge"></span>
             <span id="room-ws" class="muted mono"></span>
             <span id="room-note-badge" class="badge note-badge" hidden>공지</span>
@@ -136,6 +162,7 @@
                 <button type="button" id="btn-work-plan" title="작업 분배 및 적대적 교차 리뷰 계획을 확정합니다" hidden>작업 계획</button>
                 <button type="button" id="btn-reset" title="각 에이전트의 CLI 세션을 버리고 다음 턴부터 대화 전체를 새로 읽게 합니다">세션 초기화</button>
                 <a id="btn-export" class="button" download title="대화 전체를 마크다운 파일로 저장합니다">내보내기</a>
+                <button type="button" id="btn-model-stats" title="저장된 방 데이터에서 계산한 모델별 수행 기록을 봅니다">모델 기록</button>
                 <button type="button" id="btn-settings" title="방 설정 및 공지 수정">설정</button>
                 <button type="button" id="btn-delete" class="danger ghost" title="방과 기록을 영구 삭제합니다">방 삭제</button>
               </div>
@@ -288,6 +315,16 @@
       <button type="submit" id="dlg-work-ok" class="primary">계획 확정</button>
     </menu>
   </form>
+</dialog>
+
+<dialog id="dlg-stats" class="dlg-wide dlg-stats" aria-labelledby="dlg-stats-title">
+  <div class="stats-head">
+    <h3 id="dlg-stats-title">모델 기록</h3>
+    <button type="button" id="dlg-stats-close" class="icon-btn" aria-label="모델 기록 닫기 (Esc)" title="닫기 (Esc)">✕</button>
+  </div>
+  <p class="small-note muted">공급사·모델·추론 수준·역할별로 턴 수, 오류, 응답 시간 중앙값, 토큰, 파트·리뷰 결과를 모읍니다. 열 제목을 누르면 정렬됩니다. 추천은 사람이 하며 이 표는 근거일 뿐입니다.</p>
+  <p id="stats-status" class="muted" role="status"></p>
+  <div id="stats-table" class="stats-table-wrap"></div>
 </dialog>
 
 <dialog id="dlg-lightbox" class="dlg-lightbox" aria-labelledby="lightbox-name">

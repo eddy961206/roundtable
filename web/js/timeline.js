@@ -10,6 +10,7 @@ import { renderMessageAttachments, renderMessageRequests } from "./attachments.j
 import { updateHint } from "./composer.js";
 import { findWorkPart, focusWorkPartCard, isPartErrorAbandoned, isPartErrorResolved, reviewStepLabel } from "./work.js";
 import { buildSessionActions, updateSessionActions } from "./participants.js";
+import { timingTitle } from "./stats.js";
 import { activeTraceActivity, ensureAndRenderTrace, liveHtml, toggleTrace } from "./trace.js";
 
 // ---------- timeline (Fix P2 #2: Strict 200 DOM cap in all scroll positions) ----------
@@ -487,7 +488,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
     if (m.model) meta.push('<span class="muted">' + esc(modelLabel(authorProvider(m.author), m.model)) + "</span>");
     if (m.effort) meta.push('<span class="muted">' + esc(m.effort) + "</span>");
     if (m.kind === "agent" && m.status !== "streaming" && m.duration_ms > 0) {
-      meta.push('<span class="resp-time" title="이 답변에 걸린 시간">⏱ ' + esc(fmtElapsed(m.duration_ms)) + "</span>");
+      meta.push('<span class="resp-time" title="' + esc(timingTitle(m)) + '">⏱ ' + esc(fmtElapsed(m.duration_ms)) + "</span>");
     }
     if (m.reason === "discussion") meta.push('<span class="badge">🗣 토론 ' + m.round + "R</span>");
     else if (m.reason === "mention") meta.push('<span class="badge">@호출</span>');

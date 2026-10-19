@@ -2519,3 +2519,126 @@ dialog.dlg-lightbox[open] {
   border-radius: 6px;
   opacity: 0.8;
 }
+
+/* ---------- v1 usability: inline rename, room ⋯ menu, role cards, CLI versions, model stats ---------- */
+.title-row .rename-btn {
+  font-size: 13px;
+  color: var(--muted);
+  opacity: 0.7;
+}
+.title-row:hover .rename-btn, .title-row .rename-btn:focus-visible { opacity: 1; color: var(--text); }
+#room-title { cursor: text; border-radius: 6px; padding: 0 2px; }
+.room-title-input {
+  flex: 1 1 200px;
+  min-width: 120px;
+  max-width: 420px;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 2px 8px;
+  min-height: 28px;
+}
+
+.room-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.room-row .room-item { flex: 1; min-width: 0; }
+.room-menu-btn {
+  flex: none;
+  color: var(--muted);
+  opacity: 0.55;
+  font-size: 14px;
+  line-height: 1;
+}
+.room-row:hover .room-menu-btn, .room-menu-btn:focus-visible, .room-menu-btn[aria-expanded="true"] { opacity: 1; color: var(--text); }
+@media (hover: none) { .room-menu-btn { opacity: 1; } }
+#room-list li { position: relative; }
+.room-menu-pop {
+  position: absolute;
+  right: 4px;
+  top: calc(100% - 2px);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 176px;
+  z-index: 32;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.room-menu-pop .room-menu-item {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 4px 10px;
+  min-height: 30px;
+  font-size: 12.5px;
+}
+.room-rename { margin: 0; padding: 2px 0; }
+.room-rename-input { width: 100%; min-height: 32px; font-size: 13px; }
+
+/* Role: one line on the card, chips + text in editors */
+.participant-role {
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.role-label { font-size: 12.5px; margin: 10px 0 4px; }
+.role-field { display: grid; gap: 6px; margin-bottom: 8px; }
+.role-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.role-chip {
+  min-height: 26px;
+  padding: 2px 9px;
+  font-size: 12px;
+  border-radius: 999px;
+  gap: 5px;
+}
+.role-chip[aria-pressed="true"] {
+  background: var(--accent-bg);
+  border-color: var(--accent-bg);
+  color: var(--accent-fg);
+}
+.role-chip.suggested { border-style: dashed; border-color: var(--accent); }
+.role-chip[aria-pressed="true"].suggested { border-style: solid; }
+.role-chip-mark {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+.role-chip[aria-pressed="true"] .role-chip-mark { background: rgba(255, 255, 255, 0.25); color: var(--accent-fg); }
+.role-input { width: 100%; min-width: 0; font-size: 12.5px; resize: vertical; }
+.role-note { margin: 0; }
+.seat-spec .seat-role { grid-column: 1 / -1; }
+.seat-spec .role-label { margin-top: 0; }
+.participant-edit .save-role { margin-bottom: 4px; }
+
+/* CLI status: name + found, then version on its own line */
+.prov-mini { flex-direction: column; align-items: stretch; gap: 1px; white-space: normal; }
+.prov-mini-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; white-space: nowrap; }
+.prov-version { overflow-wrap: anywhere; }
+.versions-foot { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.versions-foot button { align-self: flex-start; min-height: 26px; padding: 2px 8px; font-size: 11.5px; }
+.versions-foot p { margin: 0; }
+.warn { color: var(--warn); }
+
+/* Model stats dialog */
+dialog.dlg-stats { width: min(1100px, 96vw); }
+.stats-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.stats-head h3 { margin: 0; }
+.stats-table-wrap { overflow: auto; max-height: calc(100dvh - 220px); margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.stats-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.stats-table th, .stats-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; vertical-align: top; }
+.stats-table th { position: sticky; top: 0; background: var(--panel2); z-index: 1; }
+.stats-table th.num, .stats-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.stats-table td.role { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.stats-table .sort-btn { background: transparent; border: 0; padding: 0; min-height: 0; font-weight: 600; color: var(--muted); }
+.stats-table th[aria-sort="ascending"] .sort-btn, .stats-table th[aria-sort="descending"] .sort-btn { color: var(--text); }
+.stats-table tbody tr:hover { background: var(--panel2); }
+@media (min-width: 1180px) { .onboard-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
