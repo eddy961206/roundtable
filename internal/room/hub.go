@@ -96,7 +96,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		return nil, fmt.Errorf("worktree 폴더: %w", err)
 	}
 	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, listSubs: map[chan []byte]struct{}{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]string{}, workRoot: workRoot, Log: logger}
-	rooms, msgs, err := store.LoadRooms()
+	rooms, msgs, _, err := store.loadRooms(false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +107,16 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		h.limits = map[string]agent.Limits{}
 	}
 	for _, r := range rooms {
+		// Persist startup recovery before any queued work can run. Statistics
+		// must see the same cancelled turns as the recovered room snapshot.
+		for _, m := range msgs[r.ID] {
+			if m.Status == "streaming" {
+				m.Status = "cancelled"
+				if err := store.AppendMessage(r.ID, m); err != nil {
+					return nil, fmt.Errorf("방 %s 중단 메시지 복구: %w", r.ID, err)
+				}
+			}
+		}
 		if r.Workspace != "" {
 			r.Workspace, err = filepath.Abs(r.Workspace)
 			if err != nil {
@@ -484,7 +494,7 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 			p.Effort = *pp.Effort
 		}
 		if pp.Role != nil {
-			p.Role = *pp.Role
+			p.Role = strings.TrimSpace(*pp.Role)
 		}
 		original := rs.room.participant(p.ID)
 		if p.Model != original.Model || p.Effort != original.Effort {

@@ -18,19 +18,28 @@ type CLIVersion struct {
 // RefreshVersions coalesces concurrent refreshes and probes vendors in parallel.
 // Version lookup never runs a model turn and never holds the room mutex.
 func (r *Registry) RefreshVersions(ctx context.Context) error {
-	r.versionMu.Lock()
-	if flight := r.versionFlight; flight != nil {
-		r.versionMu.Unlock()
-		select {
-		case <-flight:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	flight := make(chan struct{})
-	r.versionFlight = flight
+	r.versionMu.Lock()
+	flight := r.versionFlight
+	if flight == nil {
+		flight = make(chan struct{})
+		r.versionFlight = flight
+		go r.refreshVersions(flight)
+	}
 	r.versionMu.Unlock()
+	// An HTTP disconnect cancels only this wait. The shared, time-bounded
+	// probes must still finish for other callers and the provider cache.
+	select {
+	case <-flight:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *Registry) refreshVersions(flight chan struct{}) {
 	defer func() {
 		r.versionMu.Lock()
 		r.versionFlight = nil
@@ -42,7 +51,7 @@ func (r *Registry) RefreshVersions(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			version := probeVersion(ctx, p.Command())
+			version := probeVersion(context.Background(), p.Command())
 			r.versionMu.Lock()
 			if r.versions == nil {
 				r.versions = map[string]CLIVersion{}
@@ -52,7 +61,6 @@ func (r *Registry) RefreshVersions(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
-	return ctx.Err()
 }
 
 func probeVersion(parent context.Context, command string) CLIVersion {

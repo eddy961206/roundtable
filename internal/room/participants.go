@@ -60,6 +60,7 @@ type preparedParticipant struct {
 
 // Provider discovery can spawn a CLI and must happen outside the hub mutex.
 func (h *Hub) prepareParticipant(spec ParticipantSpec) (preparedParticipant, error) {
+	spec.Role = strings.TrimSpace(spec.Role)
 	out := preparedParticipant{spec: spec}
 	h.mu.Lock()
 	closing := h.closing

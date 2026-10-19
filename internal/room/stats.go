@@ -37,12 +37,10 @@ type modelSamples struct {
 	total, first []int64
 }
 
-// ModelStats uses only persisted room/message records. The store lock gives a
-// consistent file snapshot without holding the hub lock or reading trace files.
+// ModelStats uses persisted room/message records. Each room captures its own
+// append boundary; history reads and decoding hold neither the store nor hub lock.
 func (h *Hub) ModelStats() (*ModelStats, error) {
-	h.store.mu.Lock()
 	rooms, messages, _, err := h.store.loadRooms(false, false)
-	h.store.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
