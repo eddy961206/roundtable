@@ -2572,7 +2572,13 @@
   }
 
   function cacheTrace(id, events, total) {
-    const bounded = events.slice(-TRACE_EVENT_LIMIT).map(boundedTraceEvent);
+    // A subagent whose lines are still in the window keeps its start and model
+    // events even when they fell out of it, so its header stays complete.
+    const cut = Math.max(0, events.length - TRACE_EVENT_LIMIT);
+    const windowed = events.slice(cut);
+    const parents = new Set(windowed.map((e) => e.parent).filter(Boolean));
+    const heads = events.slice(0, cut).filter((e) => (e.kind === "subagent_start" || e.kind === "subagent_meta") && parents.has(e.parent));
+    const bounded = [...heads, ...windowed].map(boundedTraceEvent);
     const clipped = total > TRACE_EVENT_LIMIT || events.length > TRACE_EVENT_LIMIT || bounded.some((event) => event._displayTruncated);
     const previous = state.traceMeta.get(id);
     state.traces.delete(id);
@@ -2602,7 +2608,7 @@
         const pending = state.tracePending.get(id);
         const later = [...pending.entries()].filter(([index]) => index > events.length).sort(([a], [b]) => a - b);
         const total = later.length ? later[later.length - 1][0] : events.length;
-        cacheTrace(id, [...events.slice(-TRACE_EVENT_LIMIT), ...later.map(([, event]) => event)], total);
+        cacheTrace(id, [...events, ...later.map(([, event]) => event)], total);
         state.messages.get(id).trace = Math.max(state.messages.get(id).trace || 0, total);
         state.traceErrors.delete(id);
         renderTrace(id);
@@ -2729,8 +2735,8 @@
           } else {
             s.start = e;
           }
-          // The model the caller asked for; a later subagent_meta reports the one that ran.
-          if (e.meta && e.meta.model) s.model = e.meta.model;
+          // The model the caller asked for; subagent_meta reports the one that ran.
+          if (e.meta && e.meta.model) s.requested = e.meta.model;
           break;
         }
         case "subagent_msg":
@@ -2823,14 +2829,9 @@
       const sum = el("summary");
       fillSubSummary(sum, it);
       det.appendChild(sum);
-      const s = it.start || {};
-      if (s.input) {
-        const taskDiv = el("div", "line sub-task");
-        taskDiv.innerHTML = '<span class="k">과제</span>' + pre(s.input);
-        det.appendChild(taskDiv);
-      }
       const linesBox = el("div", "lines");
       det.appendChild(linesBox);
+      syncSubTask(det, it);
       syncSubLines(linesBox, it.lines);
       const repBox = el("div", "sub-report");
       if (it.end && it.end.output) {
@@ -2859,6 +2860,7 @@
       if (sum) fillSubSummary(sum, it);
       const linesBox = node.querySelector(":scope > .lines");
       if (linesBox) {
+        syncSubTask(node, it);
         syncSubLines(linesBox, it.lines);
       }
       const repBox = node.querySelector(":scope > .sub-report");
@@ -2892,7 +2894,7 @@
   function fillSubSummary(sum, it) {
     const s = it.start || {};
     const name = s.name || s.parent || "subagent";
-    const model = [it.model, it.effort].filter(Boolean).join(" · ");
+    const model = [it.model || it.requested, it.effort].filter(Boolean).join(" · ");
     const desc = (s.meta && s.meta.description) || "";
     const sig = JSON.stringify([name, model, !!it.end, desc]);
     if (sum.dataset.sig === sig) return;
@@ -2902,6 +2904,15 @@
     parts.push(it.end ? " ✓ 종료" : " ⏳ 진행 중");
     if (desc) parts.push(" ", el("span", "muted", desc));
     sum.replaceChildren(...parts);
+  }
+
+  // A subagent first seen through its lines gets its task once subagent_start arrives.
+  function syncSubTask(det, it) {
+    const input = it.start && it.start.input;
+    if (!input || det.querySelector(":scope > .sub-task")) return;
+    const taskDiv = el("div", "line sub-task");
+    taskDiv.innerHTML = '<span class="k">과제</span>' + pre(input);
+    det.insertBefore(taskDiv, det.querySelector(":scope > .lines"));
   }
 
   // Append only new subagent lines so open <details class="line"> inside subagents stay open

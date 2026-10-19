@@ -214,6 +214,21 @@ func TestCodexRolloutMetaOnlyOnChange(t *testing.T) {
 	}
 }
 
+// subagent_meta always names the model and carries effort only when the CLI
+// reported it, so the UI can read meta.model without guarding against gaps.
+func TestCodexSubagentMetaContract(t *testing.T) {
+	if got := rolloutEvents("child", `{"type":"turn_context","payload":{"effort":"high"}}`); len(got) != 0 {
+		t.Fatalf("turn_context without model must not emit: %+v", got)
+	}
+	got := rolloutEvents("child", `{"type":"turn_context","payload":{"model":"gpt-6-astra","effort":""}}`)
+	if len(got) != 1 || got[0].Meta["model"] != "gpt-6-astra" {
+		t.Fatalf("subagent_meta wrong: %+v", got)
+	}
+	if _, ok := got[0].Meta["effort"]; ok {
+		t.Fatalf("unreported effort must be absent: %+v", got[0].Meta)
+	}
+}
+
 func TestCodexLimitsFromRollout(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rollout.jsonl")
