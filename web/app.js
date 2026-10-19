@@ -298,6 +298,41 @@
     return fence + pad + s + pad + fence;
   }
 
+  function resolveMessageRequests(msg) {
+    if (!msg) return [];
+    const out = [];
+    const seenObj = new Set();
+    const seenId = new Set();
+    if (Array.isArray(msg.requests)) {
+      for (const item of msg.requests) {
+        if (!item) continue;
+        if (typeof item === "object") {
+          if (!seenObj.has(item)) {
+            seenObj.add(item);
+            out.push(item);
+          }
+          if (item.id) seenId.add(item.id);
+        } else if (typeof item === "string") {
+          seenId.add(item);
+          const req = state.requests.get(item);
+          if (req && !seenObj.has(req)) {
+            seenObj.add(req);
+            out.push(req);
+          }
+        }
+      }
+    }
+    if (msg.id) {
+      for (const req of state.requests.values()) {
+        if (req && req.source_msg === msg.id && !seenObj.has(req) && !seenId.has(req.id)) {
+          seenObj.add(req);
+          out.push(req);
+        }
+      }
+    }
+    return out;
+  }
+
   function classifyAgentMarkerLine(line, msg) {
     const trimmed = String(line == null ? "" : line).trim();
     if (!trimmed) return { action: "keep", raw: line };
@@ -308,17 +343,30 @@
     ) {
       return { action: "hide", raw: trimmed };
     }
-    if (/^\[\[REQUEST:@[^\]]+\]\](?:\s+.*)?$/.test(trimmed)) {
-      const hasRequests = Boolean(
-        msg &&
-          ((Array.isArray(msg.requests) && msg.requests.length > 0) ||
-            (msg.id && collectMessageRequests(msg).length > 0))
-      );
-      return { action: hasRequests ? "hide" : "chip", raw: trimmed };
+    const reqMatch = trimmed.match(/^\[\[REQUEST:@([^\]]+)\]\](?:\s+(.*))?$/);
+    if (reqMatch) {
+      const targetSeat = reqMatch[1].trim();
+      const reqText = (reqMatch[2] !== undefined ? reqMatch[2] : "").trim();
+      const reqs = resolveMessageRequests(msg);
+      const matched =
+        reqText !== "" &&
+        reqs.some((r) => {
+          if (!r || typeof r.text !== "string") return false;
+          if (r.to && r.to !== targetSeat) return false;
+          return r.text.trim() === reqText;
+        });
+      return { action: matched ? "hide" : "chip", raw: trimmed };
     }
-    if (/^\[\[ATTACH:[^\]]+\]\]$/.test(trimmed)) {
-      const hasAttachments = Boolean(msg && Array.isArray(msg.attachments) && msg.attachments.length > 0);
-      return { action: hasAttachments ? "hide" : "chip", raw: trimmed };
+    const attMatch = trimmed.match(/^\[\[ATTACH:([^\]]+)\]\]$/);
+    if (attMatch) {
+      const rawPath = attMatch[1].trim().replace(/^["']|["']$/g, "");
+      const parts = rawPath.split(/[\\/]/).filter(Boolean);
+      const fileName = parts.length > 0 ? parts[parts.length - 1] : rawPath;
+      const atts = msg && Array.isArray(msg.attachments) ? msg.attachments : [];
+      const matched =
+        fileName !== "" &&
+        atts.some((a) => a && typeof a.name === "string" && a.name === fileName);
+      return { action: matched ? "hide" : "chip", raw: trimmed };
     }
     return { action: "keep", raw: line };
   }
@@ -330,6 +378,8 @@
     const out = [];
     let fenceChar = "";
     let fenceLen = 0;
+    let prevBlank = true;
+    let inIndentedCode = false;
 
     for (const line of lines) {
       if (fenceChar) {
@@ -338,6 +388,7 @@
         if (closeMatch && closeMatch[1][0] === fenceChar && closeMatch[1].length >= fenceLen) {
           fenceChar = "";
           fenceLen = 0;
+          prevBlank = false;
         }
         continue;
       }
@@ -345,9 +396,32 @@
       if (openMatch) {
         fenceChar = openMatch[1][0];
         fenceLen = openMatch[1].length;
+        inIndentedCode = false;
+        prevBlank = false;
         out.push(line);
         continue;
       }
+      const isBlank = line.trim() === "";
+      const isIndented = /^(?: {4,}|\t)/.test(line);
+      if (inIndentedCode) {
+        if (isIndented || isBlank) {
+          out.push(line);
+          prevBlank = isBlank;
+          continue;
+        }
+        inIndentedCode = false;
+      } else if (prevBlank && isIndented) {
+        inIndentedCode = true;
+        out.push(line);
+        prevBlank = false;
+        continue;
+      }
+      if (isBlank) {
+        out.push(line);
+        prevBlank = true;
+        continue;
+      }
+      prevBlank = false;
       const res = classifyAgentMarkerLine(line, msg);
       if (res.action === "hide") {
         continue;
@@ -358,7 +432,7 @@
       }
       out.push(line);
     }
-    return out.join("\n").trim();
+    return out.join("\n");
   }
 
   const markedLib =
@@ -382,10 +456,6 @@
       renderer: {
         html({ text }) {
           return esc(text);
-        },
-        codespan(token) {
-          const cls = token && token._rejectedMarker ? ' class="marker-chip muted"' : "";
-          return "<code" + cls + ">" + (token && token.text != null ? token.text : "") + "</code>";
         },
         link(token) {
           const href = token && token.href != null ? String(token.href) : "";
@@ -426,22 +496,6 @@
   function friendlyMarkdownTokens(tokens) {
     for (const token of tokens) {
       if (["code", "codespan", "html", "link", "image", "def"].includes(token.type)) continue;
-      if (token.type === "paragraph" && Array.isArray(token.tokens)) {
-        for (let i = 0; i < token.tokens.length; i++) {
-          const child = token.tokens[i];
-          if (child.type !== "codespan") continue;
-          const prev = i > 0 ? token.tokens[i - 1] : null;
-          const next = i + 1 < token.tokens.length ? token.tokens[i + 1] : null;
-          const onOwnLine = (!prev || prev.type === "br") && (!next || next.type === "br");
-          const decoded = decodeHtmlEntities(child.text || "").trim();
-          if (
-            onOwnLine &&
-            (/^\[\[REQUEST:@[^\]]+\]\](?:\s+[\s\S]*)?$/.test(decoded) || /^\[\[ATTACH:[^\]]+\]\]$/.test(decoded))
-          ) {
-            child._rejectedMarker = true;
-          }
-        }
-      }
       if (token.tokens) friendlyMarkdownTokens(token.tokens);
       else if (token.type === "text") { token.text = visibleMentions(token.text); token.escaped = false; }
       if (token.items) for (const item of token.items) if (item.tokens) friendlyMarkdownTokens(item.tokens);
@@ -2092,6 +2146,7 @@
       const live = m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim() ? state.live.get(m.id) : null;
       if (m.status !== "streaming") state.live.delete(m.id);
       const agentDisplayText = m.kind === "agent" ? formatAgentMessageText(m.text, m) : "";
+      const hasVisibleAgentText = m.kind === "agent" && agentDisplayText.trim() !== "";
       const bodyHtml =
         m.kind === "user"
           ? m.text
@@ -2100,7 +2155,7 @@
           : live
           ? liveHtml(live)
           : m.kind === "agent"
-          ? agentDisplayText
+          ? hasVisibleAgentText
             ? md(agentDisplayText)
             : ""
           : md(m.text);
@@ -2147,7 +2202,7 @@
       const bodyEl = bubble.querySelector(".body");
       bodyEl.hidden =
         (m.kind === "user" && !m.text) ||
-        (m.kind === "agent" && !live && !agentDisplayText && m.status !== "streaming");
+        (m.kind === "agent" && !live && !hasVisibleAgentText && m.status !== "streaming");
       bodyEl.className = "body" + (m.status === "streaming" ? " cursor" : "");
       if (bodyEl.dataset.rawText !== bodyKey || isInitialMount) {
         bodyEl.dataset.rawText = bodyKey;
