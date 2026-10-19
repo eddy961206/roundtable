@@ -298,6 +298,8 @@
     historyLoading: false,
     latestSeq: 0,
     pendingMessages: 0,
+    stickToBottom: true,
+    unreadBelow: 0,
     traceMeta: new Map(),
     tracePending: new Map(),
     traceControllers: new Map(),
@@ -689,7 +691,6 @@
   let openSeq = 0;
   async function openRoom(id, resync, latest = false) {
     const preserveHistory = !!(resync && !latest && state.roomId === id && state.browsingHistory && state.order.length);
-    const priorTop = $("#timeline").scrollTop;
     const before = preserveHistory ? state.messages.get(state.order[state.order.length - 1]).seq + 1 : 0;
     const my = ++openSeq;
     if (!resync) {
@@ -704,6 +705,8 @@
       state.partNotices.clear();
       state.partReviewOpen.clear();
       state.workBoardCollapsed = false;
+      state.stickToBottom = true;
+      state.unreadBelow = 0;
       closeDiffDrawer();
       state.draftMentions.clear();
       clearComposerError();
@@ -716,6 +719,10 @@
     const workRev = state.workRevision;
     const snap = await api("GET", "/api/rooms/" + id + (preserveHistory ? "?before=" + before + "&limit=200" : ""));
     if (my !== openSeq || state.roomId !== id) return;
+
+    const tl = $("#timeline");
+    const priorTop = tl ? tl.scrollTop : 0;
+    const shouldScrollBottom = !resync || latest || (state.stickToBottom && !preserveHistory);
 
     state.messages.clear();
     state.order = [];
@@ -743,6 +750,10 @@
     state.browsingHistory = preserveHistory;
     state.historyLoading = false;
     state.pendingMessages = preserveHistory ? state.pendingMessages + Math.max(0, snap.room.seq - state.latestSeq) : 0;
+    if (shouldScrollBottom) {
+      state.stickToBottom = true;
+      state.unreadBelow = 0;
+    }
     state.latestSeq = snap.room.seq;
     state.queue = snap.queue || [];
     state.discussion = snap.discussion;
@@ -769,8 +780,11 @@
     renderRoomHead();
     renderWork();
     pruneMessageCaches();
-    renderTimeline(!preserveHistory);
-    if (preserveHistory) $("#timeline").scrollTop = priorTop;
+    renderTimeline(shouldScrollBottom);
+    if (!shouldScrollBottom && tl) {
+      tl.scrollTop = priorTop;
+      updateJumpBottomBtn();
+    }
     renderParticipants();
     renderQueue();
     renderDiscussion();
@@ -821,7 +835,7 @@
         const m = state.messages.get(data.id);
         if (!m) return;
         m.text = (m.text || "") + (data.block && m.text ? "\n\n" : "") + data.text;
-        scheduleRender(m.id);
+        scheduleRender(data.id);
         break;
       }
       case "trace": {
@@ -881,6 +895,7 @@
         state.work = data;
         renderRoomHead();
         renderWork();
+        refreshPartErrorMessages();
         break;
       case "limits":
         refreshLimits(false, true);
@@ -906,13 +921,21 @@
     const existed = !!prev;
     const isNewSequence = m.seq > state.latestSeq;
     if (isNewSequence) { state.latestSeq = m.seq; state.history.total++; }
-    const tl = $("#timeline");
-    if (!existed && !state.browsingHistory && state.order.length >= DOM_CAP_STEP && tl.scrollHeight - tl.scrollTop - tl.clientHeight >= 80) state.browsingHistory = true;
+    if (!existed && m.kind === "user" && !state.browsingHistory) {
+      state.stickToBottom = true;
+      state.unreadBelow = 0;
+    }
+    const atBottomNow = !state.browsingHistory && state.stickToBottom;
+    if (!existed && !state.browsingHistory && state.order.length >= DOM_CAP_STEP && !atBottomNow) state.browsingHistory = true;
     if (!existed && (state.browsingHistory || (!isNewSequence && state.order.length))) {
       if (isNewSequence) state.pendingMessages++;
       updateTimelineBanners();
+      updateJumpBottomBtn();
       scheduleRoomList();
       return;
+    }
+    if (!existed && isNewSequence && m.kind !== "user" && !atBottomNow) {
+      state.unreadBelow++;
     }
     state.messages.set(m.id, m);
     if (!existed) {
@@ -932,6 +955,9 @@
       }
     }
     if (!document.hidden) renderMessage(m.id, !existed);
+    if (m.status === "done" && (m.part || m.review_step)) {
+      refreshPartErrorMessages(m.part || "");
+    }
     if (state.room) schedulePanels();
     if (!existed || prev.status !== m.status) scheduleRoomList();
 
@@ -1177,36 +1203,103 @@
   }
 
   // ---------- timeline (Fix P2 #2: Strict 200 DOM cap in all scroll positions) ----------
+  let isRenderingTimeline = false;
+
+  function isTimelineAtBottom(tl = $("#timeline")) {
+    if (!tl) return true;
+    return tl.scrollHeight - tl.scrollTop - tl.clientHeight < 60;
+  }
+
+  function updateJumpBottomBtn() {
+    if (isRenderingTimeline) return;
+    const btn = $("#btn-jump-bottom");
+    const badge = $("#jump-bottom-count");
+    const tl = $("#timeline");
+    if (!btn || !tl || !state.roomId) {
+      if (btn) btn.hidden = true;
+      return;
+    }
+    const atBottom = !state.browsingHistory && (state.stickToBottom || isTimelineAtBottom(tl));
+    if (atBottom) {
+      state.stickToBottom = true;
+      state.unreadBelow = 0;
+      btn.hidden = true;
+      if (badge) badge.hidden = true;
+      return;
+    }
+    btn.hidden = false;
+    const count = (state.browsingHistory ? state.pendingMessages : 0) + state.unreadBelow;
+    if (badge) {
+      if (count > 0) {
+        badge.hidden = false;
+        badge.textContent = count > 99 ? "99+" : String(count);
+      } else {
+        badge.hidden = true;
+        badge.textContent = "0";
+      }
+    }
+    const label = count > 0 ? "맨 아래로 이동 (새 메시지 " + count + "개)" : "맨 아래로 이동";
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  }
+
+  async function scrollToTimelineBottom() {
+    const tl = $("#timeline");
+    if (!tl) return;
+    state.stickToBottom = true;
+    state.unreadBelow = 0;
+    if (state.browsingHistory || state.pendingMessages > 0 || state.winEnd < state.order.length) {
+      await jumpToLatestMessages();
+      return;
+    }
+    tl.scrollTop = tl.scrollHeight;
+    updateJumpBottomBtn();
+  }
+
   function renderTimeline(scrollToBottom) {
     const tl = $("#timeline");
     if (!tl) return;
-    tl.innerHTML = "";
+    const priorTop = tl.scrollTop;
+    const shouldPinBottom = scrollToBottom || (state.stickToBottom && !state.browsingHistory);
+    isRenderingTimeline = true;
+    try {
+      tl.innerHTML = "";
 
-    const total = state.order.length;
-    if (!total) {
-      state.winStart = 0;
-      state.winEnd = 0;
+      const total = state.order.length;
+      if (!total) {
+        state.winStart = 0;
+        state.winEnd = 0;
+        updateTimelineBanners(tl);
+        renderRoomEmptyGuide(tl);
+        return;
+      }
+
+      if (shouldPinBottom || state.winEnd > total || state.winEnd <= state.winStart) {
+        state.winEnd = total;
+        state.winStart = Math.max(0, total - DOM_CAP_STEP);
+      }
+      if (state.winEnd - state.winStart > DOM_CAP_STEP) {
+        state.winStart = state.winEnd - DOM_CAP_STEP;
+      }
+
       updateTimelineBanners(tl);
-      renderRoomEmptyGuide(tl);
-      return;
-    }
+      const newerBtn = $("#timeline-newer", tl);
+      for (let i = state.winStart; i < state.winEnd; i++) {
+        renderMessage(state.order[i], true, true, newerBtn);
+      }
+      updateTimelineBanners(tl);
 
-    if (scrollToBottom || state.winEnd > total || state.winEnd <= state.winStart) {
-      state.winEnd = total;
-      state.winStart = Math.max(0, total - DOM_CAP_STEP);
+      if (shouldPinBottom) {
+        tl.scrollTop = tl.scrollHeight;
+        state.stickToBottom = true;
+        state.unreadBelow = 0;
+      } else {
+        tl.scrollTop = priorTop;
+      }
+    } finally {
+      isRenderingTimeline = false;
     }
-    if (state.winEnd - state.winStart > DOM_CAP_STEP) {
-      state.winStart = state.winEnd - DOM_CAP_STEP;
-    }
-
-    updateTimelineBanners(tl);
-    const newerBtn = $("#timeline-newer", tl);
-    for (let i = state.winStart; i < state.winEnd; i++) {
-      renderMessage(state.order[i], true, true, newerBtn);
-    }
-    updateTimelineBanners(tl);
-
-    if (scrollToBottom) tl.scrollTop = tl.scrollHeight;
+    updateJumpBottomBtn();
   }
 
   function updateTimelineBanners(tl = $("#timeline")) {
@@ -1222,6 +1315,7 @@
     } else if (older) older.remove();
     $("#history-banner").hidden = !(state.browsingHistory || state.pendingMessages);
     $("#history-status").textContent = "이전 대화 보는 중" + (state.pendingMessages ? " · 새 메시지 " + state.pendingMessages + "개" : "");
+    updateJumpBottomBtn();
   }
 
   function pruneMessageCaches() {
@@ -1239,7 +1333,7 @@
     const anchor = tl.querySelector(".msg");
     const anchorId = anchor && anchor.id;
     const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
-    state.historyLoading = true; state.browsingHistory = true;
+    state.historyLoading = true; state.browsingHistory = true; state.stickToBottom = false;
     updateTimelineBanners(tl);
     try {
       const page = await api("GET", "/api/rooms/" + roomId + "?before=" + before + "&limit=100");
@@ -1254,6 +1348,7 @@
       renderTimeline(false);
       const restored = anchorId && document.getElementById(anchorId);
       if (restored) tl.scrollTop += restored.getBoundingClientRect().top - anchorTop;
+      updateJumpBottomBtn();
       announce("이전 대화 " + page.messages.length + "개를 불러왔습니다. 최신 대화는 아래 버튼으로 돌아갈 수 있습니다.");
     } catch (err) {
       if (state.roomId === roomId && openSeq === sequence) announce("이전 대화 조회 실패: " + err.message);
@@ -1264,6 +1359,8 @@
 
   async function jumpToLatestMessages() {
     if (!state.roomId) return;
+    state.stickToBottom = true;
+    state.unreadBelow = 0;
     try { await openRoom(state.roomId, true, true); }
     catch (err) { announce("최신 대화 조회 실패: " + err.message); }
   }
@@ -1489,7 +1586,7 @@
     const emptyGuide = $("#timeline-empty");
     if (emptyGuide) emptyGuide.remove();
 
-    const atBottom = tl.scrollHeight - tl.scrollTop - tl.clientHeight < 80;
+    const atBottom = !state.browsingHistory && state.stickToBottom;
     const total = state.order.length;
     const idx = state.order.indexOf(id);
 
@@ -1601,6 +1698,9 @@
         meta.push('<span class="badge">⏹ 중단됨</span>');
       } else if (m.status === "error") {
         meta.push('<span class="badge" style="color:var(--danger);border-color:var(--danger)">⚠ 실패</span>');
+        if (isPartErrorResolved(m)) {
+          meta.push('<span class="badge muted resolved-after-badge">이후 해결됨</span>');
+        }
       }
       if (m.signal) {
         meta.push('<span class="signal ' + esc(m.signal) + '">' + esc(m.signal) + "</span>");
@@ -1671,11 +1771,19 @@
         const errBox = el("div", "err-box");
         errBox.appendChild(el("span", "", "⚠ 원인: " + (m.error || "에이전트 실행 실패")));
         if (m.kind === "agent" && m.status === "error") {
-          const rBtn = el("button", "retry-btn", "↻ 다시 시도");
-          rBtn.type = "button";
-          rBtn.title = participantLabel(m.author) + "에게 직전 사용자 메시지를 다시 요청합니다";
-          rBtn.onclick = () => retryTurn(m.id, rBtn);
-          errBox.appendChild(rBtn);
+          if (m.part || m.review_step) {
+            const pBtn = el("button", "retry-btn part-retry-guide-btn", "파트 보드에서 재시도");
+            pBtn.type = "button";
+            pBtn.title = (m.part ? m.part + " " : "") + "파트 보드 카드로 이동하여 재시도합니다";
+            pBtn.onclick = () => focusWorkPartCard(m.part);
+            errBox.appendChild(pBtn);
+          } else {
+            const rBtn = el("button", "retry-btn", "↻ 다시 시도");
+            rBtn.type = "button";
+            rBtn.title = participantLabel(m.author) + "에게 직전 사용자 메시지를 다시 요청합니다";
+            rBtn.onclick = () => retryTurn(m.id, rBtn);
+            errBox.appendChild(rBtn);
+          }
         }
         errSlot.appendChild(errBox);
       }
@@ -1734,7 +1842,10 @@
 
     if (!batch && (atBottom || (isNew && m.kind === "user"))) {
       tl.scrollTop = tl.scrollHeight;
+      state.stickToBottom = true;
+      state.unreadBelow = 0;
     }
+    if (!batch) updateJumpBottomBtn();
   }
 
   function updateTraceCount(id) {
@@ -1869,6 +1980,7 @@
   function renderTrace(id) {
     const box = $("#t-" + id);
     if (!box) return;
+    const shouldPinBottom = !state.browsingHistory && state.stickToBottom;
     box.hidden = false;
     const events = state.traces.get(id) || [];
     const metadata = state.traceMeta.get(id);
@@ -1953,6 +2065,10 @@
       if (!box.querySelector(".trace-empty")) {
         box.appendChild(el("div", "muted trace-empty", "표시할 도구 기록 없음"));
       }
+      if (shouldPinBottom) {
+        const tl = $("#timeline");
+        if (tl) tl.scrollTop = tl.scrollHeight;
+      }
       return;
     }
     const emptyEl = box.querySelector(".trace-empty");
@@ -1974,6 +2090,10 @@
       } else {
         patchTraceItemElement(existing, it);
       }
+    }
+    if (shouldPinBottom) {
+      const tl = $("#timeline");
+      if (tl) tl.scrollTop = tl.scrollHeight;
     }
   }
 
@@ -2671,6 +2791,12 @@
     rebuttal: "반박 검토 (rebuttal)",
     recheck: "수정 확인 (recheck)",
   };
+  const REVIEW_STEP_ORDER = {
+    findings: 1,
+    author_reply: 2,
+    rebuttal: 3,
+    recheck: 4,
+  };
   function reviewStepLabel(step) {
     return REVIEW_STEP_LABELS[step] || step;
   }
@@ -2690,6 +2816,75 @@
   function findWorkPart(pid) {
     if (!state.work || !state.work.parts) return null;
     return state.work.parts.find((p) => p.id === pid) || null;
+  }
+
+  function isPartErrorResolved(m) {
+    if (!m || m.status !== "error" || (!m.part && !m.review_step)) return false;
+    const part = m.part ? findWorkPart(m.part) : null;
+    if (part && (part.state === "merged" || part.state === "abandoned")) {
+      return true;
+    }
+    const baseStepOrder = m.review_step ? REVIEW_STEP_ORDER[m.review_step] || 0 : 0;
+    const mIdx = state.order.indexOf(m.id);
+    for (let i = 0; i < state.order.length; i++) {
+      const cand = state.messages.get(state.order[i]);
+      if (!cand || cand.id === m.id) continue;
+      const isAfter = m.seq != null && cand.seq != null ? cand.seq > m.seq : mIdx >= 0 && i > mIdx;
+      if (!isAfter) continue;
+      if (m.part && cand.part !== m.part) continue;
+      if (cand.status !== "done") continue;
+      if (m.review_step) {
+        const candStepOrder = cand.review_step ? REVIEW_STEP_ORDER[cand.review_step] || 0 : 0;
+        if (candStepOrder > 0 && candStepOrder >= baseStepOrder) return true;
+      } else if (m.part && cand.part === m.part) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function refreshPartErrorMessages(partId = "") {
+    for (let i = state.winStart; i < state.winEnd; i++) {
+      const id = state.order[i];
+      const msg = state.messages.get(id);
+      if (!msg || msg.status !== "error") continue;
+      if (!msg.part && !msg.review_step) continue;
+      if (partId && msg.part && msg.part !== partId) continue;
+      renderMessage(id, false);
+    }
+  }
+
+  function focusWorkPartCard(partId) {
+    if (!state.work) {
+      announce("현재 활성화된 파트 보드가 없습니다.");
+      return;
+    }
+    if (state.workBoardCollapsed) {
+      state.workBoardCollapsed = false;
+      renderWorkHeadBar();
+      renderWork();
+    }
+    const board = $("#work-board");
+    if (!board) return;
+    let card = null;
+    if (partId) {
+      card = Array.from(board.querySelectorAll(".part-card")).find((elNode) => elNode.dataset.partId === partId) || null;
+    }
+    const target = card || board;
+    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (card) {
+      card.classList.remove("part-card-flash");
+      void card.offsetWidth;
+      card.classList.add("part-card-flash");
+      setTimeout(() => {
+        card.classList.remove("part-card-flash");
+      }, 1600);
+      const retryBtn = Array.from(card.querySelectorAll(".part-actions button")).find(
+        (b) => !b.disabled && (b.textContent === "재시도" || b.textContent.includes("라운드 1회 추가"))
+      );
+      if (retryBtn) retryBtn.focus({ preventScroll: true });
+    }
+    announce((partId ? partId + " " : "") + "파트 보드 카드로 이동했습니다.");
   }
 
   async function patchMergeMode(nextMode, btn) {
@@ -2891,6 +3086,7 @@
       }
       renderWorkHeadBar();
       renderWork();
+      refreshPartErrorMessages(part.id);
       announce(part.id + " 파트 " + action + " 요청 완료");
     } catch (err) {
       if (state.roomId !== roomId || openSeq !== sequence) return;
@@ -3032,6 +3228,13 @@
     const haltedBanner = $("#work-halted-banner");
     const board = $("#work-board");
     const w = state.work;
+    const shouldPinBottom = !state.browsingHistory && state.stickToBottom;
+    const syncBottomPin = () => {
+      if (shouldPinBottom) {
+        const tl = $("#timeline");
+        if (tl) tl.scrollTop = tl.scrollHeight;
+      }
+    };
 
     if (haltedBanner) {
       if (!w || !w.halted) {
@@ -3053,19 +3256,29 @@
       }
     }
 
-    if (!board) return;
+    if (!board) {
+      syncBottomPin();
+      return;
+    }
     if (!w) {
       board.hidden = true;
       board.replaceChildren();
       delete board.dataset.sig;
+      syncBottomPin();
       return;
     }
     board.hidden = state.workBoardCollapsed;
-    if (state.workBoardCollapsed) return;
+    if (state.workBoardCollapsed) {
+      syncBottomPin();
+      return;
+    }
 
     const participantsKey = state.room ? state.room.participants.map((p) => [p.id, p.label, p.provider]) : [];
     const sig = JSON.stringify([w, [...state.partNotices.entries()], participantsKey]);
-    if (board.dataset.sig === sig) return;
+    if (board.dataset.sig === sig) {
+      syncBottomPin();
+      return;
+    }
     board.dataset.sig = sig;
     board.replaceChildren();
 
@@ -3238,6 +3451,7 @@
 
       board.appendChild(card);
     }
+    syncBottomPin();
   }
 
   // ---------- Diff Drawer (lazy loaded via GET /api/rooms/{id}/work/parts/{pid}/diff) ----------
@@ -3731,6 +3945,24 @@
       $("#usage-title").focus();
     };
     $("#btn-latest-history").onclick = jumpToLatestMessages;
+    const jumpBottomBtn = $("#btn-jump-bottom");
+    if (jumpBottomBtn) {
+      jumpBottomBtn.onclick = () => scrollToTimelineBottom();
+    }
+    const timelineEl = $("#timeline");
+    if (timelineEl) {
+      timelineEl.addEventListener(
+        "scroll",
+        () => {
+          if (isRenderingTimeline || document.hidden) return;
+          const atBottom = !state.browsingHistory && isTimelineAtBottom(timelineEl);
+          state.stickToBottom = atBottom;
+          if (atBottom) state.unreadBelow = 0;
+          updateJumpBottomBtn();
+        },
+        { passive: true }
+      );
+    }
     $("#btn-theme").onclick = toggleTheme;
     $("#btn-new-room").onclick = () => openRoomDialog();
     const onbNew = $("#btn-onboard-new");
