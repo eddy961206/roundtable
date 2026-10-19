@@ -924,18 +924,6 @@
       }
       handle(msg.type, msg.data);
     };
-    es.addEventListener("request", (ev) => {
-      if (state.es !== es || state.roomId !== id) return;
-      state.lastEvent = Date.now();
-      let payload;
-      try {
-        payload = JSON.parse(ev.data);
-      } catch {
-        return;
-      }
-      const req = payload && payload.type === "request" && payload.data ? payload.data : payload;
-      handle("request", req);
-    });
     let connected = false;
     es.onerror = () => {
       if (state.es !== es || state.roomId !== id) return;
