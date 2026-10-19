@@ -43,6 +43,7 @@ func main() {
 	data := flag.String("data", filepath.Join(home, ".roundtable"), "data directory")
 	claudeCmd := flag.String("claude", "claude", "Claude Code command")
 	codexCmd := flag.String("codex", "codex", "Codex command")
+	codexSandbox := flag.String("codex-windows-sandbox", "", "Windows sandbox for Codex runs: elevated | unelevated (empty = Codex config)")
 	agyCmd := flag.String("agy", "agy", "Antigravity command")
 	openCodeCmd := flag.String("opencode", "opencode", "OpenCode command")
 	open := flag.Bool("open", false, "open the browser after start")
@@ -64,7 +65,13 @@ func main() {
 	if err := os.MkdirAll(scratch, 0o700); err != nil {
 		logger.Fatalf("scratch dir: %v", err)
 	}
+	switch *codexSandbox {
+	case "", "elevated", "unelevated":
+	default:
+		log.Fatalf("-codex-windows-sandbox: elevated 또는 unelevated만 허용: %q", *codexSandbox)
+	}
 	reg := agent.DefaultRegistry(*claudeCmd, *codexCmd, *agyCmd, *agyStatus)
+	reg.Get("codex").(*agent.Codex).SetWindowsSandbox(*codexSandbox)
 	reg.Add(agent.NewOpenCode(*openCodeCmd))
 	hub, err := room.NewHub(store, reg, scratch, logger)
 	if err != nil {

@@ -443,9 +443,13 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 			if err := validateModel(p.Provider, p.Model, p.Effort, choices[p.Provider]); err != nil {
 				return nil, err
 			}
-			p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
-			p.Unseen = nil
-			p.ContextWindow = prov.ContextWindow(p.Model)
+			// Each CLI takes the effort per invocation, so an effort change resumes
+			// the same session instead of re-sending the room history.
+			if p.Model != original.Model {
+				p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
+				p.Unseen = nil
+				p.ContextWindow = prov.ContextWindow(p.Model)
+			}
 		}
 	}
 	if contextChanged {
@@ -939,6 +943,7 @@ type prepared struct {
 	p        *Participant
 	seen     int64
 	unseen   []int64
+	brief    string
 	stopGen  int
 	resetGen int
 	prov     agent.Provider
@@ -981,13 +986,14 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		p.LastSeen, p.Unseen = seen, unseen
 		return nil
 	}
-	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first}
+	brief := briefKey(standingBrief(rs.room, p))
+	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Briefed: !first && p.Brief == brief}
 	if rs.disc != nil && t.Reason == "discussion" {
 		tc.TotalRounds = rs.disc.Total
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
-	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
+	return &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
 }
 
 // buildPartTurn runs every turn of a seat with a working/fixing part in the
@@ -1202,6 +1208,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	}
 	if msg.Status == "done" && pr.resetGen == rs.resetGen {
 		p.LastSeen, p.Unseen = pr.seen, pr.unseen
+		if pr.part == nil { // part and reviewer sessions never hold the chat brief
+			p.Brief = pr.brief
+		}
 	}
 	// Only this invocation's steers count against Result.Steered. Earlier
 	// accepted steers may still lie above this turn's delivery boundary.
@@ -1279,6 +1288,9 @@ func applyUsage(p *Participant, prov agent.Provider, u map[string]any) {
 	p.Totals.Cached += num("cache_read_input_tokens") + num("cached_input_tokens") + num("cache_read_tokens")
 	p.Totals.Cost += num("total_cost_usd")
 	if c := num("context_tokens"); c > 0 {
+		if int(c) < p.ContextTokens { // the CLI compacted this session; the brief may be gone
+			p.Brief = ""
+		}
 		p.ContextTokens = int(c)
 	}
 	if w := num("context_window"); w > 0 {

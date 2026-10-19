@@ -26,7 +26,6 @@ type RunOptions struct {
 	Timeout    time.Duration
 	Steer      <-chan string // live user messages while the turn runs (providers that CanSteer)
 	MCP        *MCPServer    // extra read-only tool server for this run (nil = none)
-	ExtraDirs  []string      // additional readable folders (provider-internal use)
 }
 
 // MCPServer is a stdio MCP server handed to a CLI for one run. Name becomes the

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -35,14 +34,6 @@ func TestIncompleteStreamIsNotComplete(t *testing.T) {
 	g.Line(`{"event":"init","conversation_id":"c"}`, func(Event) {})
 	if fin := g.Finish(func(Event) {}); fin.Complete {
 		t.Fatal("agy without result must not be complete")
-	}
-}
-
-func TestEscapedLenGuardsQuotes(t *testing.T) {
-	quotes := strings.Repeat(`"`, 12000)
-	got := compactPrompt(quotes, agyPromptLimit)
-	if escapedLen(got) > agyPromptLimit {
-		t.Fatalf("escaped length %d exceeds limit", escapedLen(got))
 	}
 }
 
