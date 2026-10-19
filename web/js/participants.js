@@ -86,6 +86,8 @@ export function buildRoleField(container, { initial = "", getModel = () => "", o
   };
 
   function render() {
+    // Chips are rebuilt on every render; a chip chosen with the keyboard keeps focus.
+    const focusedPreset = chips.contains(document.activeElement) ? document.activeElement.dataset.preset : null;
     chips.replaceChildren();
     const model = getModel();
     const suggested = suggestedPreset(model);
@@ -110,6 +112,7 @@ export function buildRoleField(container, { initial = "", getModel = () => "", o
     for (const preset of rolePresets.presets) {
       const chip = el("button", "role-chip", preset.name);
       chip.type = "button";
+      chip.dataset.preset = preset.id;
       const directive = (preset.directive || "").trim();
       chip.setAttribute("aria-pressed", current && current === directive ? "true" : "false");
       chip.title = directive;
@@ -124,6 +127,10 @@ export function buildRoleField(container, { initial = "", getModel = () => "", o
         if (onInput) onInput();
       };
       chips.appendChild(chip);
+    }
+    if (focusedPreset != null) {
+      const again = chips.querySelector('.role-chip[data-preset="' + CSS.escape(focusedPreset) + '"]');
+      if (again) again.focus();
     }
     // First sight of this model and the text is empty or the previous model's suggestion.
     if (autoSuggest && !userEdited && suggested && model !== suggestedForModel && (current === "" || current === suggestedText)) {

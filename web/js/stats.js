@@ -49,6 +49,8 @@ function compare(a, b, col) {
 function renderTable() {
   const box = $("#stats-table");
   if (!box) return;
+  // Sorting rebuilds the table; a keyboard user who pressed Enter on a header keeps that header.
+  const keepFocus = box.contains(document.activeElement) && document.activeElement.classList.contains("sort-btn");
   box.replaceChildren();
   const col = COLUMNS.find((c) => c.key === sortKey) || COLUMNS[0];
   const sorted = [...rows].sort((a, b) => (sortDesc ? -1 : 1) * compare(a, b, col));
@@ -61,6 +63,7 @@ function renderTable() {
     th.setAttribute("aria-sort", c.key === sortKey ? (sortDesc ? "descending" : "ascending") : "none");
     const b = el("button", "sort-btn", c.label + (c.key === sortKey ? (sortDesc ? " ▾" : " ▴") : ""));
     b.type = "button";
+    b.dataset.key = c.key;
     b.title = c.label + " 기준으로 정렬";
     b.onclick = () => {
       if (sortKey === c.key) sortDesc = !sortDesc;
@@ -84,6 +87,10 @@ function renderTable() {
   }
   table.appendChild(tbody);
   box.appendChild(table);
+  if (keepFocus) {
+    const btn = box.querySelector('.sort-btn[data-key="' + CSS.escape(sortKey) + '"]');
+    if (btn) btn.focus();
+  }
 }
 
 export async function openModelStatsDialog() {
