@@ -2016,7 +2016,8 @@ dialog.dlg-wide {
   }
 }
 
-.resolved-after-badge {
+.resolved-after-badge,
+.abandoned-after-badge {
   opacity: 0.78;
   font-weight: 500;
 }
