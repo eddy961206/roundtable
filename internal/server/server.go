@@ -424,16 +424,6 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			var event struct {
-				Type string          `json:"type"`
-				Data json.RawMessage `json:"data"`
-			}
-			if json.Unmarshal(b, &event) == nil && event.Type == "request" {
-				if !send("event: request\ndata: %s\n\n", event.Data) {
-					return
-				}
-				continue
-			}
 			if !send("data: %s\n\n", b) { // json.Marshal never emits raw newlines
 				return
 			}

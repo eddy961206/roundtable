@@ -147,22 +147,27 @@ func TestRequestSSEAndCancelAPI(t *testing.T) {
 		t.Fatal(code, body)
 	}
 	scanner := bufio.NewScanner(res.Body)
-	named := false
 	var got room.Request
 	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "event: request" {
-			named = true
+		line, ok := strings.CutPrefix(scanner.Text(), "data: {") // skip the hello timestamp
+		if !ok {
 			continue
 		}
-		if named && strings.HasPrefix(line, "data: ") {
-			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &got); err != nil {
+		var ev struct {
+			Type string          `json:"type"`
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal([]byte("{"+line), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev.Type == "request" {
+			if err := json.Unmarshal(ev.Data, &got); err != nil {
 				t.Fatal(err)
 			}
 			break
 		}
 	}
-	if !named || got.ID == "" || got.Status != "pending" || got.To != "codex" {
+	if got.ID == "" || got.Status != "pending" || got.To != "codex" {
 		t.Fatalf("event=%+v err=%v", got, scanner.Err())
 	}
 	if code, body := call(t, ts, "POST", "/api/rooms/"+r.ID+"/requests/"+got.ID+"/cancel", nil); code != 200 || body["status"] != "cancelled" {
