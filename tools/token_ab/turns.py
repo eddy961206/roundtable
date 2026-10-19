@@ -1,6 +1,6 @@
 """Run the same scripted conversation against one roundtable server and record per-turn usage.
 
-usage: python turns.py <base_url> <label> <out.json> [short] [opus] [argon] [astra]
+usage: python turns.py <base_url> <label> <out.json> [short] [opus] [argon] [astra] [ds]
 
 Seats Opus and Argon by default (name seats to pick others), the same room note,
 8 broadcast questions, every effort changed low -> medium before question 7.
@@ -15,7 +15,8 @@ BASE, LABEL, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 FLAGS = set(sys.argv[4:])
 ALL_SEATS = {'opus': {'provider': 'claude', 'model': 'claude-opus-5-5', 'effort': 'low', 'label': 'Opus', 'count': 1},
              'argon': {'provider': 'agy', 'model': 'gemini-4-argon', 'effort': 'low', 'label': 'Argon', 'count': 1},
-             'astra': {'provider': 'codex', 'model': 'gpt-6-astra', 'effort': 'low', 'label': 'Astra', 'count': 1}}
+             'astra': {'provider': 'codex', 'model': 'gpt-6-astra', 'effort': 'low', 'label': 'Astra', 'count': 1},
+             'ds': {'provider': 'opencode', 'model': 'tokenharbor/deepseek-v4.1-flash:free', 'label': 'DS', 'count': 1}}
 SEATS = [ALL_SEATS[k] for k in ALL_SEATS if k in FLAGS] or [ALL_SEATS['opus'], ALL_SEATS['argon']]
 
 

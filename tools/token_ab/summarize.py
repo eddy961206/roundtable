@@ -11,7 +11,8 @@ Argon (agy), per-turn builds: input_tokens is the uncached input, cache_read_tok
 Argon (agy), @cumulative builds: context_tokens is the uncached input; cache_read_tokens is
 cumulative per session, so its per-turn value is the difference from the previous turn.
 Astra (Codex): input_tokens includes cached_input_tokens; @cumulative builds store thread
-totals, so per-turn values are differences within a session."""
+totals, so per-turn values are differences within a session.
+DS (OpenCode): token counts were always per turn; input_tokens excludes the cache."""
 import json
 import sys
 
@@ -53,17 +54,27 @@ def astra_stats(astra, cumulative):
             'astra_ms': sum(r['duration_ms'] for r in astra)}
 
 
+def ds_stats(ds):
+    return {'ds_uncached': [r['usage']['input_tokens'] + r['usage'].get('cache_creation_input_tokens', 0) for r in ds],
+            'ds_cached': [r['usage'].get('cache_read_input_tokens', 0) for r in ds],
+            'ds_sessions': len({r['session_id'] for r in ds}),
+            'ds_ms': sum(r['duration_ms'] for r in ds)}
+
+
 def load(arg):
     path, _, kind = arg.partition('@')
     rows = json.load(open(path, encoding='utf-8'))['rows']
     opus = [r for r in rows if r['seat'] == 'Opus'][:8]
     argon = [r for r in rows if r['seat'] == 'Argon'][:8]
     astra = [r for r in rows if r['seat'] == 'Astra'][:8]
+    ds = [r for r in rows if r['seat'] == 'DS'][:8]
     stats = {}
     if argon:
         stats.update(argon_stats(argon, kind == 'cumulative'))
     if astra:
         stats.update(astra_stats(astra, kind == 'cumulative'))
+    if ds:
+        stats.update(ds_stats(ds))
     if opus:
         stats.update(opus_stats(opus))
     return stats
