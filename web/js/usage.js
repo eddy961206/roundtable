@@ -38,7 +38,7 @@ export async function refreshLimits(manual = false, cached = false) {
 function versionText(p) {
   if (!p.available) return { text: "", cls: "muted" };
   if (p.version_error) return { text: "버전 확인 실패 · " + p.version_error, cls: "warn" };
-  if (p.version) return { text: "v" + p.version + (p.version_checked_at ? " · 확인 " + fmtTime(p.version_checked_at) : ""), cls: "muted" };
+  if (p.version) return { text: p.version + (p.version_checked_at ? " · 확인 " + fmtTime(p.version_checked_at) : ""), cls: "muted" };
   if (p.version_checked_at) return { text: "버전 없음 · 확인 " + fmtTime(p.version_checked_at), cls: "muted" };
   return { text: "버전 확인 중…", cls: "muted" };
 }
