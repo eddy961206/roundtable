@@ -137,6 +137,21 @@ func TestBuildPartPromptRoleAndVisualReview(t *testing.T) {
 	if partInRoom.Review == nil || partInRoom.Review.Pending == nil || !strings.Contains(partInRoom.Review.Pending.Prompt, "당신의 역할: 논리와 경계 조건을 먼저 깊게 본다.") {
 		t.Fatalf("startReview did not inject reviewer role into review prompt: %+v", partInRoom.Review)
 	}
+	reviewer.SessionID = "chat-session"
+	partInRoom.SessionID = "part-session"
+	reviewTurn := h.buildTurn(rs, rs.queue[0])
+	if reviewTurn == nil || reviewTurn.opts.SessionID != "" || reviewTurn.opts.Mode != agent.ModeRead || !strings.Contains(reviewTurn.opts.Prompt, "당신의 역할: "+reviewer.Role) {
+		t.Fatalf("fresh reviewer turn lost its role or session isolation: %+v", reviewTurn)
+	}
+	next, _, err := partInRoom.Review.Apply(findingHeader + findingOne)
+	if err != nil || next == nil || next.Who != "author" {
+		t.Fatalf("author step: %+v, %v", next, err)
+	}
+	h.runReviewStep(rs, partInRoom, *next)
+	authorTurn := h.buildTurn(rs, rs.queue[len(rs.queue)-1])
+	if authorTurn == nil || authorTurn.opts.SessionID != "part-session" || !strings.Contains(authorTurn.opts.Prompt, "당신의 역할: "+author.Role) {
+		t.Fatalf("author review turn lost its role or part session: %+v", authorTurn)
+	}
 }
 
 func TestAttachmentNoticeIncludesVisualReviewGuidance(t *testing.T) {
