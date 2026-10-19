@@ -5407,14 +5407,10 @@
 
   function setComposerBusy(busy) {
     isSendingMessage = busy;
-    const input = $("#input");
-    if (input) input.readOnly = busy;
-    const sendBtn = $("#send");
-    if (sendBtn) sendBtn.disabled = busy;
-    const attachBtn = $("#btn-attach");
-    if (attachBtn) attachBtn.disabled = busy;
-    const fileInput = $("#file-input");
-    if (fileInput) fileInput.disabled = busy;
+    $("#input").readOnly = busy;
+    $("#btn-send").disabled = busy;
+    $("#btn-attach").disabled = busy;
+    $("#file-input").disabled = busy;
     renderDraftAttachments();
   }
 
