@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -77,24 +78,30 @@ type ModelOption struct {
 
 // Info is the serialisable view of a provider for the UI.
 type Info struct {
-	ID            string              `json:"id"`
-	Label         string              `json:"label"`
-	Command       string              `json:"command"`
-	Available     bool                `json:"available"`
-	Path          string              `json:"path"`
-	Models        []ModelOption       `json:"models"`
-	Efforts       []string            `json:"efforts"`
-	ModelEfforts  map[string][]string `json:"model_efforts,omitempty"`
-	Default       string              `json:"default_model"`
-	DefaultEffort string              `json:"default_effort"`
-	CanSteer      bool                `json:"can_steer"`
-	CatalogStatus string              `json:"catalog_status,omitempty"`
-	CatalogError  string              `json:"catalog_error,omitempty"`
+	ID               string              `json:"id"`
+	Label            string              `json:"label"`
+	Command          string              `json:"command"`
+	Available        bool                `json:"available"`
+	Path             string              `json:"path"`
+	Models           []ModelOption       `json:"models"`
+	Efforts          []string            `json:"efforts"`
+	ModelEfforts     map[string][]string `json:"model_efforts,omitempty"`
+	Default          string              `json:"default_model"`
+	DefaultEffort    string              `json:"default_effort"`
+	CanSteer         bool                `json:"can_steer"`
+	CatalogStatus    string              `json:"catalog_status,omitempty"`
+	CatalogError     string              `json:"catalog_error,omitempty"`
+	Version          string              `json:"version"`
+	VersionCheckedAt int64               `json:"version_checked_at"`
+	VersionError     string              `json:"version_error"`
 }
 
 // Registry holds the configured providers in display order.
 type Registry struct {
-	providers []Provider
+	providers     []Provider
+	versionMu     sync.Mutex
+	versions      map[string]CLIVersion
+	versionFlight chan struct{}
 }
 
 // NewRegistry holds any providers (tests inject fakes).
@@ -137,6 +144,10 @@ func (r *Registry) Infos() []Info {
 		path, _ := resolveCommand(p.Command())
 		in := Info{ID: p.ID(), Label: p.Label(), Command: p.Command(), Available: p.Available(), Path: path, Models: p.Models(), Efforts: p.Efforts(), ModelEfforts: p.ModelEfforts(), CanSteer: p.CanSteer()}
 		in.Default, in.DefaultEffort = p.DefaultModel()
+		r.versionMu.Lock()
+		version := r.versions[p.ID()]
+		r.versionMu.Unlock()
+		in.Version, in.VersionCheckedAt, in.VersionError = version.Version, version.CheckedAt, version.Error
 		if catalog, ok := p.(interface{ CatalogStatus() (string, string) }); ok {
 			in.CatalogStatus, in.CatalogError = catalog.CatalogStatus()
 		}

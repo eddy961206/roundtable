@@ -110,17 +110,17 @@ func (s *Store) LoadLimits(into any) error {
 
 // LoadAll reads full stored history for callers that explicitly need every trace.
 func (s *Store) LoadAll() ([]*Room, map[string][]*Message, map[string][]TraceLine, error) {
-	return s.loadRooms(true)
+	return s.loadRooms(true, true)
 }
 
 // LoadRooms leaves event payloads on disk. Only missing legacy session metadata
 // is recovered while loading messages; ordinary room reads never scan traces.
 func (s *Store) LoadRooms() ([]*Room, map[string][]*Message, error) {
-	rooms, messages, _, err := s.loadRooms(false)
+	rooms, messages, _, err := s.loadRooms(false, true)
 	return rooms, messages, err
 }
 
-func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[string][]TraceLine, error) {
+func (s *Store) loadRooms(withTraces, recoverSessions bool) ([]*Room, map[string][]*Message, map[string][]TraceLine, error) {
 	entries, err := os.ReadDir(filepath.Join(s.root, "rooms"))
 	if err != nil {
 		return nil, nil, nil, err
@@ -135,6 +135,9 @@ func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[
 		dir := s.roomDir(e.Name())
 		b, err := os.ReadFile(filepath.Join(dir, "room.json"))
 		if err != nil {
+			if !recoverSessions {
+				return nil, nil, nil, err
+			}
 			continue
 		}
 		var r Room
@@ -151,13 +154,13 @@ func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[
 			}
 		}
 		rooms = append(rooms, &r)
-		msgs[r.ID], err = loadMessages(filepath.Join(dir, "messages.jsonl"))
+		msgs[r.ID], err = loadStoredMessages(filepath.Join(dir, "messages.jsonl"), recoverSessions)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		missingSessions := map[string]*Message{}
 		for _, m := range msgs[r.ID] {
-			if m.Kind == "agent" && m.SessionID == "" {
+			if recoverSessions && m.Kind == "agent" && m.SessionID == "" {
 				missingSessions[m.ID] = m
 			}
 		}
@@ -185,6 +188,10 @@ func (s *Store) loadRooms(withTraces bool) ([]*Room, map[string][]*Message, map[
 }
 
 func loadMessages(path string) ([]*Message, error) {
+	return loadStoredMessages(path, true)
+}
+
+func loadStoredMessages(path string, recoverStreaming bool) ([]*Message, error) {
 	byID := map[string]*Message{}
 	var order []string
 	err := scanJSONLines(path, func(line []byte) error {
@@ -195,7 +202,7 @@ func loadMessages(path string) ([]*Message, error) {
 		if _, ok := byID[m.ID]; !ok {
 			order = append(order, m.ID)
 		}
-		if m.Status == "streaming" {
+		if recoverStreaming && m.Status == "streaming" {
 			m.Status = "cancelled"
 		}
 		byID[m.ID] = &m

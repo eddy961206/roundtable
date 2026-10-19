@@ -15,6 +15,7 @@ type ParticipantSpec struct {
 	Label    string  `json:"label"`
 	Model    string  `json:"model"`
 	Effort   *string `json:"effort"`
+	Role     string  `json:"role"`
 	Count    int     `json:"count"`
 }
 
@@ -122,7 +123,7 @@ func newParticipants(r *Room, prepared preparedParticipant) ([]*Participant, err
 		for r.participant(id) != nil || slices.ContainsFunc(seats, func(p *Participant) bool { return p.ID == id }) {
 			id = spec.Provider + "-" + newID()
 		}
-		seats = append(seats, &Participant{ID: id, Provider: spec.Provider, Label: label, Enabled: prepared.available, Model: prepared.model, Effort: prepared.effort, Status: "idle", ContextWindow: prepared.contextWindow})
+		seats = append(seats, &Participant{ID: id, Provider: spec.Provider, Label: label, Enabled: prepared.available, Model: prepared.model, Effort: prepared.effort, Role: spec.Role, Status: "idle", ContextWindow: prepared.contextWindow})
 	}
 	return seats, nil
 }
