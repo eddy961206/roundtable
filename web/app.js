@@ -334,7 +334,9 @@
   }
 
   function classifyAgentMarkerLine(line, msg) {
-    const trimmed = String(line == null ? "" : line).trim();
+    const rawLine = String(line == null ? "" : line);
+    if (/^(?: {4,}|\t)/.test(rawLine)) return { action: "keep", raw: line };
+    const trimmed = rawLine.trim();
     if (!trimmed) return { action: "keep", raw: line };
     if (
       /^\[\[REQUEST_(?:DONE|REJECT):[^\]]+\]\](?:\s+.*)?$/.test(trimmed) ||
@@ -359,6 +361,7 @@
     }
     const attMatch = trimmed.match(/^\[\[ATTACH:([^\]]+)\]\]$/);
     if (attMatch) {
+      // 첨부는 이름으로만 대조, 거절 사유는 system 메시지로 보임
       const rawPath = attMatch[1].trim().replace(/^["']|["']$/g, "");
       const parts = rawPath.split(/[\\/]/).filter(Boolean);
       const fileName = parts.length > 0 ? parts[parts.length - 1] : rawPath;
@@ -371,15 +374,14 @@
     return { action: "keep", raw: line };
   }
 
-  function formatAgentMessageText(text, msg) {
+  function prepareAgentMessageText(text, msg) {
     const raw = String(text == null ? "" : text);
-    if (!raw) return "";
+    if (!raw) return { text: "", rejectedMarkers: [] };
     const lines = raw.split(/\r?\n/);
     const out = [];
+    const rejectedMarkers = [];
     let fenceChar = "";
     let fenceLen = 0;
-    let prevBlank = true;
-    let inIndentedCode = false;
 
     for (const line of lines) {
       if (fenceChar) {
@@ -388,7 +390,6 @@
         if (closeMatch && closeMatch[1][0] === fenceChar && closeMatch[1].length >= fenceLen) {
           fenceChar = "";
           fenceLen = 0;
-          prevBlank = false;
         }
         continue;
       }
@@ -396,43 +397,37 @@
       if (openMatch) {
         fenceChar = openMatch[1][0];
         fenceLen = openMatch[1].length;
-        inIndentedCode = false;
-        prevBlank = false;
         out.push(line);
         continue;
       }
-      const isBlank = line.trim() === "";
-      const isIndented = /^(?: {4,}|\t)/.test(line);
-      if (inIndentedCode) {
-        if (isIndented || isBlank) {
-          out.push(line);
-          prevBlank = isBlank;
-          continue;
-        }
-        inIndentedCode = false;
-      } else if (prevBlank && isIndented) {
-        inIndentedCode = true;
-        out.push(line);
-        prevBlank = false;
-        continue;
-      }
-      if (isBlank) {
-        out.push(line);
-        prevBlank = true;
-        continue;
-      }
-      prevBlank = false;
       const res = classifyAgentMarkerLine(line, msg);
       if (res.action === "hide") {
         continue;
       }
       if (res.action === "chip") {
+        rejectedMarkers.push(res.raw);
         out.push(wrapMarkdownCodeSpan(res.raw));
         continue;
       }
       out.push(line);
     }
-    return out.join("\n");
+    return { text: out.join("\n"), rejectedMarkers };
+  }
+
+  function formatAgentMessageText(text, msg) {
+    return prepareAgentMessageText(text, msg).text;
+  }
+
+  function applyRejectedMarkerChips(container, rejectedMarkers) {
+    if (!container || !Array.isArray(rejectedMarkers) || rejectedMarkers.length === 0) return;
+    const markerSet = new Set(rejectedMarkers);
+    container.querySelectorAll("code").forEach((codeEl) => {
+      if (codeEl.parentElement && codeEl.parentElement.tagName === "PRE") return;
+      const txt = codeEl.textContent || "";
+      if (markerSet.has(txt)) {
+        codeEl.classList.add("marker-chip", "muted");
+      }
+    });
   }
 
   const markedLib =
@@ -2145,7 +2140,8 @@
 
       const live = m.kind === "agent" && m.status === "streaming" && !(m.text || "").trim() ? state.live.get(m.id) : null;
       if (m.status !== "streaming") state.live.delete(m.id);
-      const agentDisplayText = m.kind === "agent" ? formatAgentMessageText(m.text, m) : "";
+      const agentPrepared = m.kind === "agent" ? prepareAgentMessageText(m.text, m) : { text: "", rejectedMarkers: [] };
+      const agentDisplayText = agentPrepared.text;
       const hasVisibleAgentText = m.kind === "agent" && agentDisplayText.trim() !== "";
       const bodyHtml =
         m.kind === "user"
@@ -2207,6 +2203,9 @@
       if (bodyEl.dataset.rawText !== bodyKey || isInitialMount) {
         bodyEl.dataset.rawText = bodyKey;
         bodyEl.innerHTML = bodyHtml;
+        if (m.kind === "agent" && !live) {
+          applyRejectedMarkerChips(bodyEl, agentPrepared.rejectedMarkers);
+        }
         bodyEl.querySelectorAll("pre").forEach((preEl) => {
           const b = el("button", "copy", "복사");
           b.type = "button";
@@ -5855,7 +5854,9 @@
       mergeSnapshotRequests,
       formatLightboxMeta,
       classifyAgentMarkerLine,
+      prepareAgentMessageText,
       formatAgentMessageText,
+      applyRejectedMarkerChips,
       md,
     };
   }
