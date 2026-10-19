@@ -77,6 +77,12 @@ func TestClaudeSubagentStream(t *testing.T) {
 	if len(kinds(events, KindToolCall)) != 0 {
 		t.Fatalf("Agent tool must not appear as a plain tool_call")
 	}
+	// Every subagent message repeats the model; only the first one is news.
+	// The CLI does not report the subagent's effort, so none is invented.
+	metas := kinds(events, KindSubagentMeta)
+	if len(metas) != 1 || metas[0].Parent != parent || metas[0].Meta["model"] != "claude-sonnet-5-5" || metas[0].Meta["effort"] != nil {
+		t.Fatalf("subagent_meta wrong: %+v", metas)
+	}
 	if fin.Usage["total_cost_usd"] == nil {
 		t.Fatal("usage missing cost")
 	}
@@ -176,6 +182,36 @@ func TestCodexChildRollout(t *testing.T) {
 	if len(kinds(events, KindSubagentEnd)) != 1 {
 		t.Fatal("task_complete should end the subagent")
 	}
+	metas := kinds(events, KindSubagentMeta)
+	if len(metas) != 1 || metas[0].Meta["model"] != "gpt-6.1-sol" || metas[0].Meta["effort"] != "high" {
+		t.Fatalf("subagent_meta from turn_context wrong: %+v", metas)
+	}
+}
+
+func TestCodexRolloutMetaOnlyOnChange(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("testdata", "codex_child_rollout.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var turnContext string
+	for _, l := range strings.Split(string(src), "\n") {
+		if strings.Contains(l, `"type":"turn_context"`) {
+			turnContext = l
+		}
+	}
+	// A second turn with the same settings, then a turn at another effort.
+	lowered := strings.Replace(turnContext, `"effort":"high"`, `"effort":"low"`, 1)
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	body := strings.TrimRight(string(src), "\n") + "\n" + turnContext + "\n" + lowered + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var events []Event
+	(&rolloutWatcher{}).tail(&rolloutFile{path: path, id: "child"}, func(e Event) { events = append(events, e) })
+	metas := kinds(events, KindSubagentMeta)
+	if len(metas) != 2 || metas[0].Meta["effort"] != "high" || metas[1].Meta["effort"] != "low" || metas[1].Parent != "child" {
+		t.Fatalf("subagent_meta should follow changes only: %+v", metas)
+	}
 }
 
 func TestCodexLimitsFromRollout(t *testing.T) {
@@ -215,6 +251,10 @@ func TestAgySubagentStream(t *testing.T) {
 	}
 	if lp, _ := starts[0].Meta["log"].(string); !strings.HasSuffix(lp, "transcript.jsonl") {
 		t.Fatalf("log path not resolved: %v", starts[0].Meta["log"])
+	}
+	// Neither subagent_info nor the child transcript names the child's model.
+	if metas := kinds(events, KindSubagentMeta); len(metas) != 0 {
+		t.Fatalf("agy subagent model must not be guessed: %+v", metas)
 	}
 	calls := kinds(events, KindToolCall)
 	var names []string

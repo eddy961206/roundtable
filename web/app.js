@@ -2729,9 +2729,12 @@
           } else {
             s.start = e;
           }
+          // The model the caller asked for; a later subagent_meta reports the one that ran.
+          if (e.meta && e.meta.model) s.model = e.meta.model;
           break;
         }
-        case "subagent_msg": {
+        case "subagent_msg":
+        case "subagent_meta": {
           let s = subs.get(e.parent);
           if (!s) {
             s = {
@@ -2743,7 +2746,12 @@
             items.push(s);
             if (e.parent) subs.set(e.parent, s);
           }
-          s.lines.push(e);
+          if (e.kind === "subagent_meta") {
+            s.model = e.meta.model;
+            s.effort = e.meta.effort;
+          } else {
+            s.lines.push(e);
+          }
           break;
         }
         case "subagent_end": {
@@ -2813,7 +2821,7 @@
       const det = el("details", "item sub");
       det.open = true;
       const sum = el("summary");
-      sum.innerHTML = buildSubSummaryHtml(it);
+      fillSubSummary(sum, it);
       det.appendChild(sum);
       const s = it.start || {};
       if (s.input) {
@@ -2848,10 +2856,7 @@
     }
     if (it.type === "sub") {
       const sum = node.querySelector(":scope > summary");
-      const newSumHtml = buildSubSummaryHtml(it);
-      if (sum && sum.innerHTML !== newSumHtml) {
-        sum.innerHTML = newSumHtml;
-      }
+      if (sum) fillSubSummary(sum, it);
       const linesBox = node.querySelector(":scope > .lines");
       if (linesBox) {
         syncSubLines(linesBox, it.lines);
@@ -2882,16 +2887,21 @@
     );
   }
 
-  function buildSubSummaryHtml(it) {
-    const s = it.start || {},
-      e = it.end;
-    return (
-      "🧩 서브에이전트 <b>" +
-      esc(s.name || s.parent || "subagent") +
-      "</b> " +
-      (e ? "✓ 종료" : "⏳ 진행 중") +
-      (s.meta && s.meta.description ? ' <span class="muted">' + esc(s.meta.description) + "</span>" : "")
-    );
+  // Model and effort come from the CLI and are shown only as far as it reported
+  // them: Claude never reports a subagent's effort, Antigravity neither value.
+  function fillSubSummary(sum, it) {
+    const s = it.start || {};
+    const name = s.name || s.parent || "subagent";
+    const model = [it.model, it.effort].filter(Boolean).join(" · ");
+    const desc = (s.meta && s.meta.description) || "";
+    const sig = JSON.stringify([name, model, !!it.end, desc]);
+    if (sum.dataset.sig === sig) return;
+    sum.dataset.sig = sig;
+    const parts = ["🧩 서브에이전트 ", el("b", "", name)];
+    if (model) parts.push(" ", el("span", "sub-model", model));
+    parts.push(it.end ? " ✓ 종료" : " ⏳ 진행 중");
+    if (desc) parts.push(" ", el("span", "muted", desc));
+    sum.replaceChildren(...parts);
   }
 
   // Append only new subagent lines so open <details class="line"> inside subagents stay open
