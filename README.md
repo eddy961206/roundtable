@@ -158,7 +158,7 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 - 재개 턴은 방 참가자·공지·규칙을 다시 보내지 않고 한 줄 알림만 보낸다. CLI가 문맥을 압축한 것이 보이면 다음 턴에 전체 안내문을 다시 보낸다. 추론 수준만 바꾸면 세션을 유지한다(그 턴은 Gemini·Codex에서 캐시를 쓰지 못한다). 실측: [docs/토큰절감_측정_20261020.md](docs/토큰절감_측정_20261020.md).
 - agy는 프롬프트를 stdin stream-json으로 받으므로 명령줄 길이 한도가 없다.
 - Codex는 사용자 플러그인을 끄고 실행한다. 플러그인 스킬 목록(수만 자)을 재개 턴마다 다시 보내는 것을 실측했고, Roundtable은 플러그인 도구를 쓰지 않는다. 사용자 메모리·전역 AGENTS.md·개인 스킬은 그대로 읽는다.
-- 답변별 토큰은 그 턴의 값이다. agy와 Codex는 대화 전체 누적값을 보고하므로 agy는 단계별 사용량을 더하고, Codex는 rollout의 턴 시작 전 누적값을 빼서 계산한다.
+- 답변별 토큰·비용은 그 턴의 값이다. agy와 Codex는 대화 전체 누적 토큰을 보고하므로 agy는 단계별 사용량을 더하고, Codex는 rollout의 턴 시작 전 누적값을 빼서 계산한다. Claude의 비용은 세션 누적값이라 `session_cost_usd`로 보관하고 직전 값과의 차이를 턴 비용으로 쓴다. 문맥 크기는 캐시를 포함한 마지막 호출의 입력이다. 이 수정 전 빌드로 쌓인 기록은 `tools/fix_cumulative_usage.py`로 한 번 보정한다(서버를 멈추고 실행, 먼저 미리보기).
 - Windows에서 npm으로 설치한 Codex는 `codex.cmd` 뒤의 실제 `codex.exe`를 찾아 실행한다(별도 설치본에 code-mode host가 빠진 경우가 있었다).
 - Codex의 Windows 샌드박스가 간헐적으로 `setup refresh had errors` 로 명령 실행에 실패하는 턴이 있다. CLI 쪽 문제이며 다시 시키면 대개 통과한다.
 

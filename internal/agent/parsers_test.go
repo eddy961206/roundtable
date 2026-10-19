@@ -84,7 +84,7 @@ func TestClaudeSubagentStream(t *testing.T) {
 	if len(metas) != 1 || metas[0].Parent != parent || metas[0].Meta["model"] != "claude-sonnet-5-5" || metas[0].Meta["effort"] != nil {
 		t.Fatalf("subagent_meta wrong: %+v", metas)
 	}
-	if fin.Usage["total_cost_usd"] == nil {
+	if fin.Usage["session_cost_usd"] == nil {
 		t.Fatal("usage missing cost")
 	}
 	if c, ok := fin.Usage["context_tokens"].(int); !ok || c <= 0 {
@@ -432,5 +432,20 @@ func TestAgyResumedTurnUsageIsPerTurn(t *testing.T) {
 		if fin.Usage[k] != v {
 			t.Errorf("%s = %v, want %v", k, fin.Usage[k], v)
 		}
+	}
+}
+
+// OpenCode's tokens.input excludes the cache; the context is input plus cache.
+func TestOpenCodeContextIncludesCache(t *testing.T) {
+	p := newOpenCodeParser()
+	for _, line := range []string{
+		`{"type":"step_finish","sessionID":"ses_1","part":{"reason":"tool-calls","cost":0.001,"tokens":{"input":1027,"output":5,"cache":{"read":0,"write":0}}}}`,
+		`{"type":"step_finish","sessionID":"ses_1","part":{"reason":"stop","cost":0.002,"tokens":{"input":197,"output":2,"cache":{"read":1024,"write":10}}}}`,
+	} {
+		p.Line(line, func(Event) {})
+	}
+	fin := p.Finish(func(Event) {})
+	if fin.Usage["context_tokens"] != 1231.0 || fin.Usage["input_tokens"] != 1224.0 || fin.Usage["cache_read_input_tokens"] != 1024.0 {
+		t.Fatalf("usage %v", fin.Usage)
 	}
 }

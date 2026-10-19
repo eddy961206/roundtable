@@ -29,6 +29,7 @@ type controlledResult struct {
 	text    string
 	err     error
 	steered int
+	usage   map[string]any // parsers emit this map as the usage event and return it
 }
 
 func (p *controlledProvider) Run(ctx context.Context, opts agent.RunOptions, emit func(agent.Event)) (agent.Result, error) {
@@ -38,7 +39,7 @@ func (p *controlledProvider) Run(ctx context.Context, opts agent.RunOptions, emi
 	case <-ctx.Done():
 		return agent.Result{}, ctx.Err()
 	case result := <-call.result:
-		return agent.Result{Text: result.text, SessionID: p.id + "-session", Steered: result.steered}, result.err
+		return agent.Result{Text: result.text, SessionID: p.id + "-session", Steered: result.steered, Usage: result.usage}, result.err
 	}
 }
 

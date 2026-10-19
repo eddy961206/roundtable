@@ -1387,6 +1387,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 				}
 			}
 		case agent.KindUsage:
+			if c, ok := e.Meta["session_cost_usd"].(float64); ok {
+				e.Meta["total_cost_usd"] = c - rs.sessionCost(opts.SessionID)
+			}
 			compacted = applyUsage(p, prov, e.Meta) || compacted
 		}
 		rs.broadcast("trace", map[string]any{"msg_id": msg.ID, "index": msg.Trace, "event": e})
@@ -1541,6 +1544,21 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		// state here only to deliver the updated turn/session/usage counters.
 		rs.broadcast("participant", p)
 	}
+}
+
+// sessionCost is a resumed session's running cost before this turn: the newest
+// session_cost_usd reported in that session. A new session starts at zero.
+func (rs *roomState) sessionCost(session string) float64 {
+	if session == "" {
+		return 0
+	}
+	for i := len(rs.msgs) - 1; i >= 0; i-- {
+		m := rs.msgs[i]
+		if c, ok := m.Usage["session_cost_usd"].(float64); ok && m.SessionID == session {
+			return c
+		}
+	}
+	return 0
 }
 
 // applyUsage records one usage report and tells whether the session's context

@@ -78,3 +78,28 @@ func TestCompactionDuringTurnResendsBriefNextTurn(t *testing.T) {
 	finishCall(third, "c")
 	waitIdle(t, h, r.ID)
 }
+
+func TestClaudeSessionCostBecomesPerTurnCost(t *testing.T) {
+	h, r, ps := controlledHub(t, "claude")
+	turn := func(text string, sessionCost float64) {
+		postQueueMessage(t, h, r.ID, text, "claude")
+		call := nextCall(t, ps[0])
+		usage := map[string]any{"session_cost_usd": sessionCost}
+		call.emit(agent.Event{Kind: agent.KindUsage, Meta: usage})
+		call.result <- controlledResult{text: "ok", usage: usage}
+		waitIdle(t, h, r.ID)
+	}
+	turn("one", 0.10)
+	turn("two", 0.25)
+	snap, _ := h.Snapshot(r.ID)
+	var costs []float64
+	for _, m := range snap.Messages {
+		if m.Kind == "agent" {
+			costs = append(costs, m.Usage["total_cost_usd"].(float64))
+		}
+	}
+	p := snap.Room.participant("claude")
+	if len(costs) != 2 || costs[0] != 0.10 || costs[1] < 0.1499 || costs[1] > 0.1501 || p.Totals.Cost < 0.2499 || p.Totals.Cost > 0.2501 {
+		t.Fatalf("per-turn costs %v, totals %v", costs, p.Totals.Cost)
+	}
+}

@@ -91,7 +91,13 @@ func (p *openCodeParser) addUsage(part map[string]any) {
 		add("cache_read_input_tokens", cache["read"])
 		add("cache_creation_input_tokens", cache["write"])
 	}
+	// tokens.input excludes the cache, so the context this step carried is the
+	// sum; input alone shrinks whenever more of it is cached and looked like a
+	// compaction (measured 2026-10-20: 1027, 197, 725, 279).
 	if n, ok := tokens["input"].(float64); ok {
-		p.usage["context_tokens"] = n
+		cache := obj(tokens, "cache")
+		read, _ := cache["read"].(float64)
+		write, _ := cache["write"].(float64)
+		p.usage["context_tokens"] = n + read + write
 	}
 }

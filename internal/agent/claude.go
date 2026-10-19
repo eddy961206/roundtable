@@ -253,7 +253,12 @@ func (p *claudeParser) Line(line string, emit func(Event)) {
 			p.errText = firstNonEmpty(str(m, "result"), contentText(m["errors"]), str(m, "subtype"))
 		}
 		p.usage = map[string]any{}
-		for _, k := range []string{"total_cost_usd", "duration_ms", "duration_api_ms", "num_turns"} {
+		// total_cost_usd in the result is the session's running total (it grows on
+		// every resumed turn); the room turns it into this turn's cost.
+		if v, ok := m["total_cost_usd"]; ok {
+			p.usage["session_cost_usd"] = v
+		}
+		for _, k := range []string{"duration_ms", "duration_api_ms", "num_turns"} {
 			if v, ok := m[k]; ok {
 				p.usage[k] = v
 			}
