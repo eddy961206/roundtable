@@ -317,3 +317,45 @@ func TestPostWaitMissingStreamDoesNotPost(t *testing.T) {
 		t.Fatal(err, posts)
 	}
 }
+
+// A timed-out steering wait points rt_read below the older streaming reply.
+func TestTimedOutSteeringReturnsResumeAfterSeq(t *testing.T) {
+	f, s := newWaitAPI(t)
+	f.live, f.finishAt = true, 1000
+	f.initLive()
+	got := call(t, s, "rt_post", `{"room":"r1","text":"x","target":"s1","wait_seconds":1}`)
+	if got["live"] != true || got["timed_out"] != true || got["seq"] != float64(7) || got["resume_after_seq"] != float64(1) {
+		t.Fatal(got)
+	}
+	if done := call(t, s, "rt_read", `{"room":"r1","after_seq":1}`); done["messages"].([]any)[0].(map[string]any)["seq"] != float64(2) {
+		t.Fatal(done)
+	}
+}
+
+// The resume point also covers a streaming reply the budget left out of the
+// array: seq 2 (streaming, steered by seq 3) behind a 20001-character seq 4.
+func TestResumeAfterSeqCoversOmittedStreamingReply(t *testing.T) {
+	s := newHTTP(t, func(http.ResponseWriter, *http.Request) { t.Error("one page is enough") }, false)
+	var latest page
+	body := strings.Replace(snapshotBody(`[
+		{"id":"m2","seq":2,"author":"s1","status":"streaming","text":"기존 답","turn_id":"a"},
+		{"id":"m3","seq":3,"author":"user","status":"done","text":"끼워 넣은 입력","live":true},
+		{"id":"m4","seq":4,"author":"s1","status":"done","text":"`+strings.Repeat("길", 20001)+`","turn_id":"b"}]`, `[]`), `"has_more":false`, `"has_more":true,"before_seq":2,"total":4`, 1)
+	if err := json.Unmarshal([]byte(body), &latest); err != nil {
+		t.Fatal(err)
+	}
+	read, err := s.readSelected(context.Background(), "r1", 3, 2, 20000, &latest, map[string]bool{"a": true, "b": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(read.Messages) != 1 || read.Messages[0].Seq != 4 || read.OmittedMessages != 1 {
+		t.Fatalf("%+v", read)
+	}
+	if got := resumeAfterSeq(3, read); got != 1 {
+		t.Fatalf("resume after %d, want 1", got)
+	}
+	// Nothing streaming or left out: continue after the sent message.
+	if got := resumeAfterSeq(3, &readResult{}); got != 3 {
+		t.Fatal(got)
+	}
+}

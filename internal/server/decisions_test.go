@@ -45,6 +45,10 @@ func TestDecisionAPI(t *testing.T) {
 	if code, out := call(t, ts, "PATCH", "/api/rooms/"+id+"/decisions/"+did, map[string]any{"status": "gone"}); code != 400 {
 		t.Fatalf("bad status %d %v", code, out)
 	}
+	// proposed is only created by a seat's marker; no card goes back to it.
+	if code, out := call(t, ts, "PATCH", "/api/rooms/"+id+"/decisions/"+did, map[string]any{"status": "proposed"}); code != 400 {
+		t.Fatalf("back to proposed %d %v", code, out)
+	}
 	if code, _ := call(t, ts, "PATCH", "/api/rooms/"+id+"/decisions/missing", map[string]any{"text": "x"}); code != 400 {
 		t.Fatal("unknown decision accepted")
 	}

@@ -158,3 +158,76 @@ func TestWaitAgainstExistingHTTPServer(t *testing.T) {
 		})
 	}
 }
+
+// A seat's [[DECISION]] marker arrives proposed; rt_update_decision confirms it
+// through the existing PATCH, and rt_read reads the real history page.
+func TestDecisionConfirmationAgainstHTTPServer(t *testing.T) {
+	a := &scriptedProvider{Provider: agent.NewClaude("__missing_test_cli__"), id: "claude"}
+	a.run = func(context.Context, agent.RunOptions) (agent.Result, error) {
+		return agent.Result{Text: "정했어.\n[[DECISION: 캐시는 30초 | 근거: 메시지 | 반대: 없음 | 미확인: 없음]]"}, nil
+	}
+	store, err := room.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub, err := room.NewHub(store, agent.NewRegistry(a), t.TempDir(), log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := hub.Shutdown(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	r, err := hub.CreateRoom(room.RoomSpec{Title: "결정", Mode: "chat", Participants: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	http := httptest.NewServer(httpserver.New(hub, nil, fstest.MapFS{}))
+	defer http.Close()
+	s, err := New(http.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.client.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	tool := func(name string, args map[string]any, dest any) {
+		t.Helper()
+		raw, _ := json.Marshal(args)
+		value, err := s.call(ctx, name, raw)
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		b, _ := json.Marshal(value)
+		if err := json.Unmarshal(b, dest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var post struct {
+		TimedOut bool `json:"timed_out"`
+	}
+	tool("rt_post", map[string]any{"room": r.ID, "text": "정해 줘", "wait_seconds": 3}, &post)
+	if post.TimedOut {
+		t.Fatal("turn did not finish")
+	}
+	var list struct {
+		Decisions []room.Decision `json:"decisions"`
+	}
+	tool("rt_decisions", map[string]any{"room": r.ID}, &list)
+	if len(list.Decisions) != 1 || list.Decisions[0].Status != "proposed" {
+		t.Fatalf("%+v", list)
+	}
+	var confirmed room.Decision
+	tool("rt_update_decision", map[string]any{"room": r.ID, "id": list.Decisions[0].ID, "status": "active"}, &confirmed)
+	if confirmed.Status != "active" || confirmed.Text != "캐시는 30초" {
+		t.Fatalf("%+v", confirmed)
+	}
+	var read readResult
+	tool("rt_read", map[string]any{"room": r.ID, "max_chars": 4}, &read)
+	if len(read.Messages) != 1 || read.Messages[0].Kind != "agent" || len(read.Messages[0].Decisions) != 1 || read.OmittedMessages != 1 || read.FirstSeq != read.Messages[0].Seq {
+		t.Fatalf("%+v", read)
+	}
+}

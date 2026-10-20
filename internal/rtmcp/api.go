@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -64,17 +64,21 @@ type seat struct {
 }
 
 type apiMessage struct {
-	ID     string `json:"id"`
-	Seq    int64  `json:"seq"`
-	Author string `json:"author"`
-	Kind   string `json:"kind"`
-	Status string `json:"status"`
-	Text   string `json:"text"`
-	Role   string `json:"role"`
-	Error  string `json:"error"`
-	Live   bool   `json:"live"`
-	TurnID string `json:"turn_id"`
-	Target string `json:"target"`
+	ID          string           `json:"id"`
+	Seq         int64            `json:"seq"`
+	Author      string           `json:"author"`
+	Kind        string           `json:"kind"`
+	Status      string           `json:"status"`
+	Text        string           `json:"text"`
+	Role        string           `json:"role"`
+	Error       string           `json:"error"`
+	Live        bool             `json:"live"`
+	TurnID      string           `json:"turn_id"`
+	Target      string           `json:"target"`
+	ReplyTo     string           `json:"reply_to"`
+	Attachments []readAttachment `json:"attachments"`
+	Requests    []string         `json:"requests"`
+	Decisions   []string         `json:"decisions"`
 }
 
 type page struct {
@@ -91,6 +95,7 @@ type page struct {
 	History  struct {
 		HasMore   bool  `json:"has_more"`
 		BeforeSeq int64 `json:"before_seq"`
+		Total     int   `json:"total"`
 	} `json:"history"`
 }
 
@@ -109,7 +114,17 @@ func (s *Server) snapshot(ctx context.Context, room string, before int64, limit 
 	return &p, nil
 }
 
-// listRooms keeps the server's newest-first order; limit 0 means every room.
+// listSeat is what choosing a target needs; roles and usage stay in the room.
+type listSeat struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Provider string `json:"provider"`
+	Model    string `json:"model,omitempty"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// listRooms keeps the server's newest-first order. Removed seats are left out:
+// they cannot be addressed, and rt_read names their past messages.
 func (s *Server) listRooms(ctx context.Context, limit int) (any, error) {
 	var rooms []struct {
 		ID     string `json:"id"`
@@ -118,7 +133,7 @@ func (s *Server) listRooms(ctx context.Context, limit int) (any, error) {
 	if err := s.api(ctx, "GET", "/api/rooms", nil, &rooms); err != nil {
 		return nil, err
 	}
-	if limit > 0 && len(rooms) > limit {
+	if len(rooms) > limit {
 		rooms = rooms[:limit]
 	}
 	rows := make([]any, 0, len(rooms))
@@ -131,31 +146,54 @@ func (s *Server) listRooms(ctx context.Context, limit int) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if p.Room.Participants == nil {
-			p.Room.Participants = []seat{}
+		seats := []listSeat{}
+		for _, sp := range p.Room.Participants {
+			if !sp.Removed {
+				seats = append(seats, listSeat{ID: sp.ID, Label: sp.Label, Provider: sp.Provider, Model: sp.Model, Enabled: sp.Enabled})
+			}
 		}
-		rows = append(rows, map[string]any{"id": room.ID, "title": p.Room.Title, "mode": p.Room.Mode, "participants": p.Room.Participants, "active": room.Active})
+		rows = append(rows, map[string]any{"id": room.ID, "title": p.Room.Title, "mode": p.Room.Mode, "participants": seats, "active": room.Active})
 	}
 	return map[string]any{"rooms": rows}, nil
 }
 
-type readMessage struct {
-	Seq       int64  `json:"seq"`
-	Author    string `json:"author"`
-	Name      string `json:"name"`
-	Role      string `json:"role"`
-	Status    string `json:"status"`
-	Text      string `json:"text"`
-	Error     string `json:"error,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
+type readAttachment struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
+// readMessage leaves out empty optional fields. reply_to is the seq of the
+// message the reply answers; the HTTP message holds that message's id.
+type readMessage struct {
+	Seq         int64            `json:"seq"`
+	Author      string           `json:"author"`
+	Name        string           `json:"name"`
+	Kind        string           `json:"kind,omitempty"`
+	Role        string           `json:"role"`
+	Status      string           `json:"status"`
+	Text        string           `json:"text"`
+	Target      string           `json:"target,omitempty"`
+	ReplyTo     int64            `json:"reply_to,omitempty"`
+	Attachments []readAttachment `json:"attachments,omitempty"`
+	Requests    []string         `json:"requests,omitempty"`
+	Decisions   []string         `json:"decisions,omitempty"`
+	Error       string           `json:"error,omitempty"`
+	Truncated   bool             `json:"truncated,omitempty"`
+}
+
+// omitted_chars counts what was cut from the messages held. omitted_messages
+// counts selected messages left out whole; first_seq is then the oldest seq held.
 type readResult struct {
-	Room         string        `json:"room"`
-	Messages     []readMessage `json:"messages"`
-	NextSeq      int64         `json:"next_seq"`
-	Truncated    bool          `json:"truncated"`
-	OmittedChars int64         `json:"omitted_chars"`
+	Room            string        `json:"room"`
+	Messages        []readMessage `json:"messages"`
+	NextSeq         int64         `json:"next_seq"`
+	Truncated       bool          `json:"truncated"`
+	OmittedChars    int64         `json:"omitted_chars"`
+	OmittedMessages int           `json:"omitted_messages,omitempty"`
+	FirstSeq        int64         `json:"first_seq,omitempty"`
+	// unsettled is the lowest selected seq still streaming or left out whole,
+	// counted even when the message is not in the array; 0 when none.
+	unsettled int64
 }
 
 func (s *Server) read(ctx context.Context, room string, after, maxChars int64) (*readResult, error) {
@@ -170,30 +208,66 @@ func (s *Server) readPages(ctx context.Context, room string, after, maxChars int
 	return s.readSelected(ctx, room, after, after, maxChars, latest, nil)
 }
 
+// readSelected walks the pages newest first and spends the max_chars budget
+// from the newest selected message. The message that crosses the budget keeps
+// its end; older selected messages are only counted. Without after_seq (after
+// 0) paging stops once the budget is spent and the history total gives the
+// count of unread messages. Paging also goes on until every held reply_to
+// resolves to a seq.
 func (s *Server) readSelected(ctx context.Context, room string, after, lower, maxChars int64, latest *page, includeTurns map[string]bool) (*readResult, error) {
 	names := map[string]string{"user": "user", "system": "system"}
 	for _, p := range latest.Room.Participants {
 		names[p.ID] = p.Label
 	}
 	result := &readResult{Room: room, NextSeq: after, Messages: []readMessage{}}
+	seqs := map[string]int64{}
+	replyTo := map[int]string{} // index in result.Messages -> trigger message id
+	remaining := maxChars
 	current := latest
 	seen := map[int64]bool{}
+	fetched := 0
 	var before int64
 	for {
 		oldest := int64(0)
-		for _, m := range current.Messages {
-			if m.Seq < 1 {
+		for i := len(current.Messages) - 1; i >= 0; i-- {
+			m := current.Messages[i]
+			if m.Seq < 1 || (i > 0 && current.Messages[i-1].Seq >= m.Seq) {
 				return nil, fmt.Errorf("메시지 seq가 올바르지 않음")
 			}
-			if oldest == 0 || m.Seq < oldest {
-				oldest = m.Seq
-			}
-			if (m.Seq <= after && !includeTurns[m.TurnID]) || seen[m.Seq] {
+			oldest = m.Seq
+			if seen[m.Seq] {
 				continue
 			}
 			seen[m.Seq] = true
+			fetched++
+			seqs[m.ID] = m.Seq
+			if m.Seq <= after && !includeTurns[m.TurnID] {
+				continue
+			}
 			result.NextSeq = max(result.NextSeq, m.Seq)
-			result.Messages = append(result.Messages, readMessage{Seq: m.Seq, Author: m.Author, Name: names[m.Author], Role: m.Role, Status: m.Status, Text: m.Text, Error: m.Error})
+			if m.Status == "streaming" || remaining == 0 {
+				result.unsettled = m.Seq // pages and messages run newest first
+			}
+			if remaining == 0 {
+				result.OmittedMessages++
+				continue
+			}
+			rm := readMessage{Seq: m.Seq, Author: m.Author, Name: names[m.Author], Kind: m.Kind, Role: m.Role, Status: m.Status, Text: m.Text, Target: m.Target, Requests: m.Requests, Decisions: m.Decisions, Error: m.Error}
+			for _, a := range m.Attachments {
+				rm.Attachments = append(rm.Attachments, readAttachment{ID: a.ID, Name: a.Name})
+			}
+			if chars := int64(utf8.RuneCountInString(m.Text)); chars > remaining {
+				result.Truncated, rm.Truncated = true, true
+				result.OmittedChars += chars - remaining
+				rm.Text = string([]rune(m.Text)[chars-remaining:])
+				remaining = 0
+			} else {
+				remaining -= chars
+			}
+			if m.ReplyTo != "" {
+				replyTo[len(result.Messages)] = m.ReplyTo
+			}
+			result.Messages = append(result.Messages, rm)
 		}
 		if !current.History.HasMore {
 			break
@@ -201,11 +275,24 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 		if oldest == 0 {
 			return nil, fmt.Errorf("대화 페이지가 비었는데 has_more가 켜져 있음")
 		}
-		if oldest <= lower {
+		resolved := true
+		for _, id := range replyTo {
+			if _, ok := seqs[id]; !ok {
+				resolved = false
+			}
+		}
+		if resolved && (oldest <= lower || (after == 0 && remaining == 0)) {
+			if after == 0 {
+				// The pages are a contiguous tail of the history the first page counted.
+				if latest.History.Total < fetched {
+					return nil, fmt.Errorf("대화 전체 수(%d)가 읽은 메시지 수(%d)보다 작음", latest.History.Total, fetched)
+				}
+				result.OmittedMessages += latest.History.Total - fetched
+			}
 			break
 		}
 		next := current.History.BeforeSeq
-		if oldest == 0 || next != oldest || (before > 0 && next >= before) {
+		if next != oldest || (before > 0 && next >= before) {
 			return nil, fmt.Errorf("대화 페이지의 before_seq가 진행하지 않음")
 		}
 		before = next
@@ -215,32 +302,37 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 			return nil, err
 		}
 	}
-	sort.Slice(result.Messages, func(i, j int) bool { return result.Messages[i].Seq < result.Messages[j].Seq })
-	remaining := maxChars
-	for i := len(result.Messages) - 1; i >= 0; i-- {
-		m := &result.Messages[i]
-		chars := int64(utf8.RuneCountInString(m.Text))
-		if chars > remaining {
-			result.Truncated, m.Truncated = true, true
-			result.OmittedChars += chars - remaining
-			if remaining == 0 {
-				m.Text = ""
-			} else {
-				m.Text = string([]rune(m.Text)[chars-remaining:])
-			}
-			remaining = 0
-		} else {
-			remaining -= chars
+	for i, id := range replyTo {
+		seq, ok := seqs[id]
+		if !ok {
+			return nil, fmt.Errorf("seq %d의 reply_to가 가리키는 메시지가 대화에 없음: %s", result.Messages[i].Seq, id)
 		}
+		result.Messages[i].ReplyTo = seq
+	}
+	slices.Reverse(result.Messages)
+	if result.OmittedMessages > 0 {
+		result.Truncated = true
+		result.FirstSeq = result.Messages[0].Seq
 	}
 	return result, nil
 }
 
+// resume_after_seq is set on timed_out: the after_seq for rt_read that still
+// covers every reply that was streaming or left out, including a steering
+// reply older than the sent message.
 type postResult struct {
 	Seq  int64 `json:"seq"`
 	Live bool  `json:"live,omitempty"`
 	*readResult
-	TimedOut *bool `json:"timed_out,omitempty"`
+	TimedOut       *bool  `json:"timed_out,omitempty"`
+	ResumeAfterSeq *int64 `json:"resume_after_seq,omitempty"`
+}
+
+func resumeAfterSeq(sent int64, read *readResult) int64 {
+	if read.unsettled > 0 {
+		return min(sent, read.unsettled-1)
+	}
+	return sent
 }
 
 func (s *Server) post(ctx context.Context, a arguments) (any, error) {
@@ -350,5 +442,9 @@ func (s *Server) post(ctx context.Context, a arguments) (any, error) {
 		return nil, fmt.Errorf("메시지 seq=%d 전송됨; 답변 조회 실패(재전송하지 말 것): %w", sent.Seq, err)
 	}
 	result.readResult, result.TimedOut = read, &timedOut
+	if timedOut {
+		resume := resumeAfterSeq(sent.Seq, read)
+		result.ResumeAfterSeq = &resume
+	}
 	return result, nil
 }

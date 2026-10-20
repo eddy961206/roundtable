@@ -20,6 +20,7 @@ Go 단일 바이너리 + 정적 HTML. 프레임워크·빌드 도구·외부 서
 | **적대적 리뷰** | 제출된 파트를 다른 공급사 좌석이 diff만 보고 `번호 · 심각도 · 파일:줄 · 재현 시나리오 · 확신도` 표로 지적한다. 작성자는 항목별 수용·반박, 리뷰어는 반박을 유지·철회, 수용 항목은 새 SHA에서 수정 확인한다. 표 형식이 틀리면 한 번 되묻고, 이견·라운드 상한에서는 사람이 라운드 추가 또는 사람 판정을 고른다. |
 | **이미지** | 입력창에 붙여넣기·끌어놓기·📎로 PNG·JPEG·WEBP를 붙이면 모든 참가자가 다음 발언 때 본다(Claude는 이미지 블록, Codex는 `--image`, agy는 경로). 에이전트는 작업 폴더의 이미지를 `[[ATTACH:경로]]` 한 줄로 방에 올린다. 직접 캡처는 write 방에서만 된다. |
 | **참가자 간 요청** | 에이전트가 `[[REQUEST:@좌석ID 또는 @이름]] 내용`으로 다른 참가자에게 일을 맡기고, 받은 쪽은 응답 끝에 `[[REQUEST_DONE:ID]]`·`[[REQUEST_REJECT:ID]] 이유`를 붙인다. 요청 카드와 오른쪽 "요청" 패널에서 상태를 추적하고 사람이 취소할 수 있다. 서버가 거절한 마커는 그 사유가 해당 에이전트의 다음 프롬프트로 돌아간다. 계약: [docs/이미지첨부_요청추적_계약.md](docs/이미지첨부_요청추적_계약.md) |
+| **결정 카드** | 에이전트가 결정·근거·반대·미확인을 담은 `[[DECISION: …]]` 한 줄로 남긴 카드는 반대 의견과 상관없이 제안(`proposed`)으로 오른쪽 "결정" 패널에 쌓인다. 사람이 확정(`active`)해야 모든 좌석 안내문의 "현재 결정"에 들어가고, 거절은 `dropped`다. 화면에서 사람이 직접 추가한 카드는 바로 `active`다. 외부 에이전트는 `rt_update_decision`으로 확정·거절한다. 계약: [docs/에이전트MCP_블라인드토론_결정카드_계약.md](docs/에이전트MCP_블라인드토론_결정카드_계약.md) |
 | **권한 모드** | 방 단위 `chat`(프로젝트 폴더를 전달하지 않는 대화) / `read`(읽기 중심) / `write`(편집 허용). OS 샌드박스는 기본으로 끈다. 실제 제한은 아래 공급사별 도구·모드 설정을 따른다. Codex의 기본 read는 쓰기를 기술적으로 차단하지 않는다. |
 
 ## 빠른 시작
@@ -61,13 +62,19 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 - Codex: `codex mcp add roundtable -- roundtable mcp --url http://127.0.0.1:8787`
 - agy: `agy mcp add roundtable roundtable mcp --url http://127.0.0.1:8787`
 
-기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_decisions`다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·요청·결정 카드 조회 4개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
+기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_decisions`, `rt_update_decision`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·요청·결정 카드 조회 4개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 
-`timed_out:true`는 대기 시간 초과이며 실행 취소가 아니다. 긴 대기를 쓸 때는 MCP 클라이언트의 도구 제한 시간도 그보다 길게 설정해야 한다. MCP의 `notifications/cancelled`는 해당 요청의 HTTP 조회와 대기만 취소한다. 클라이언트가 stdin을 닫으면 진행 중인 MCP 요청을 모두 취소하고 MCP 서버를 종료한다. 방에서 실행 중인 에이전트 턴은 취소하지 않는다. 대기 중에도 `ping`과 다른 도구 호출을 처리하며, 응답은 요청 id로 구분한다. `rt_list_rooms`는 좌석의 `enabled`와 `removed`도 반환하므로 호출 대상이 활성 상태인지 확인할 수 있다.
+`timed_out:true`는 대기 시간 초과이며 실행 취소가 아니다. 긴 대기를 쓸 때는 MCP 클라이언트의 도구 제한 시간도 그보다 길게 설정해야 한다. MCP의 `notifications/cancelled`는 해당 요청의 HTTP 조회와 대기만 취소한다. 클라이언트가 stdin을 닫으면 진행 중인 MCP 요청을 모두 취소하고 MCP 서버를 종료한다. 방에서 실행 중인 에이전트 턴은 취소하지 않는다. 대기 중에도 `ping`과 다른 도구 호출을 처리하며, 응답은 요청 id로 구분한다. MCP `initialize`의 instructions에는 두 규칙을 싣는다. `timed_out`이면 다시 보내지 말고 `rt_read`로 이어 읽는다. 이때 `after_seq`에는 `timed_out:true` 결과에만 붙는 `resume_after_seq`를 쓴다. 이 값은 보낸 seq와, 아직 `streaming`이거나 예산 밖으로 빠진 답 중 가장 작은 seq−1 가운데 작은 값이다. 빠진 답은 배열에 없어도 이 값에 들어간다. `live:true`면 기존 답의 seq가 보낸 seq보다 작으므로 보낸 seq를 그대로 쓰면 그 답이 빠진다. 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.
 
-`rt_read`는 `after_seq` 이후 메시지를 오래된 순으로 반환한다. `max_chars`는 본문 합계의 Unicode 문자 수이며 기본값은 20000이다. 초과하면 오래된 본문부터 줄여 최신 내용을 보존하고, 전체와 해당 메시지에 `truncated:true`, 전체에 `omitted_chars`를 표시한다. 작성자·역할·상태·seq는 유지한다. 이어 읽기는 `next_seq`를 사용하되, 시간 초과 시 아직 `streaming`인 메시지는 같은 `after_seq`로 다시 조회해야 갱신된 본문을 볼 수 있다. `rt_discuss`의 `blind_first`를 생략하면 방 설정을 따른다. 결정 카드 조회에는 계약 C의 HTTP API가 필요하며 API 오류를 빈 목록으로 바꾸지 않는다.
+`rt_list_rooms`는 최근 갱신순으로 `limit`개(기본 20, 최대 100)를 반환한다. 방마다 id·제목·모드·실행 여부와 좌석의 id·이름·공급사·모델·`enabled`만 담는다. 삭제된 좌석은 호출할 수 없으므로 빼고, 꺼진 좌석은 `enabled:false`로 남긴다. 좌석 역할 같은 나머지 정보는 방 화면에서 본다.
+
+`rt_read`는 메시지를 오래된 순으로 반환한다. `after_seq`를 주면 그보다 큰 seq만, 생략하면 최신 메시지부터 예산까지만 담는다. `max_chars`는 본문 합계의 Unicode 문자 수이며 기본값은 20000이다. 예산은 최신 메시지부터 채운다. 예산 경계에 걸린 메시지는 앞부분을 줄이고 그 메시지와 전체에 `truncated:true`, 전체에 `omitted_chars`(줄인 문자 수)를 표시한다. 예산 밖의 오래된 메시지는 배열에 넣지 않고 `omitted_messages`(개수)와 `first_seq`(담긴 첫 seq)로 알린다. 빠진 메시지가 필요하면 `max_chars`를 늘린다. `after_seq`를 생략하면 예산을 다 쓴 뒤의 이전 페이지는 조회하지 않는다. 메시지마다 seq·작성자·이름·역할·상태·본문을 넣고, `kind`·`target`·`attachments`(`id`·`name`)·`requests`·`decisions`·`reply_to`는 값이 있을 때만 넣는다. `reply_to`는 그 답이 응답한 계기 메시지의 seq다. 계기 메시지가 대화에 없으면 빈 값으로 넘기지 않고 오류를 반환한다. 이어 읽기는 `next_seq`를 사용하되, 시간 초과 시 아직 `streaming`인 메시지는 같은 `after_seq`로 다시 조회해야 갱신된 본문을 볼 수 있다.
+
+`rt_discuss`의 `blind_first`를 생략하면 방 설정을 따른다. 좌석들이 이미 같은 질문에 답한 뒤라면 블라인드 1라운드는 독립 답을 다시 받느라 호출을 좌석 수(N)만큼 더 쓴다. 이때는 `blind_first:false`로 순차 1라운드가 기존 답을 보고 시작하게 한다.
+
+`rt_decisions`는 결정 카드 목록을 반환하며 API 오류를 빈 목록으로 바꾸지 않는다. 좌석이 마커로 남긴 카드는 `proposed`이고 안내문에 들어가지 않는다. `rt_update_decision`(`room`, `id`, 선택 `status`·`text`·`evidence`·`dissent`·`unverified`)은 기존 `PATCH /api/rooms/{id}/decisions/{did}`를 감싼다. `status:"active"`는 확정, `"dropped"`는 거절, `"superseded"`는 대체됨이다. 생략한 항목은 바뀌지 않고, 바꿀 항목이 하나도 없으면 HTTP를 부르지 않고 거절한다. 카드를 `proposed`로 되돌릴 수는 없다. 쓰기 도구라 `--read-only`에서는 노출하지 않는다.
 
 #### MCP 없이 셸로 쓰기: `roundtable rt`
 
@@ -80,6 +87,7 @@ roundtable rt list_rooms --limit 5                   # 최근 갱신순 5개
 roundtable rt post --room <방ID> --text "검토해 줘" --wait_seconds 300
 cat 긴_설명.md | roundtable rt post --room <방ID> --text -   # 값 - 는 stdin에서 읽음
 roundtable rt read --room <방ID> --after_seq 12
+roundtable rt update_decision --room <방ID> --id <결정ID> --status active   # 제안 카드 확정
 ```
 
 결과는 stdout에 한 줄 JSON으로 나온다. 실패하면 사유를 stderr에 쓰고, 검증·실행 실패는 종료 코드 1, 명령 형식 오류는 2를 돌려준다. 정수는 `--rounds 2`, 참·거짓은 `--blind_first false`, 배열은 JSON(`--participants '[{"provider":"agy"}]'`)으로 쓴다. 다른 서버는 `roundtable rt --url http://127.0.0.1:8791 ...`로 지정한다(loopback만 허용). 에이전트에게 사용법을 알려 줄 때는 [skills/roundtable/SKILL.md](skills/roundtable/SKILL.md)를 스킬로 설치하거나 지침에 붙인다.

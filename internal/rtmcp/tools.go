@@ -48,25 +48,30 @@ func (s *Server) tools() []tool {
 	text := schema{Type: "string", MinLength: 1}
 	str := schema{Type: "string"}
 	limit := int64(600)
+	roomLimit := int64(maxListRooms)
 	participant := object(map[string]schema{"provider": text, "model": str, "effort": str, "label": str, "role": str}, "provider")
 	all := []tool{
-		{Name: "rt_list_rooms", Description: "최근 갱신순 방 id·제목·모드·참가자(좌석 id)·실행 여부 조회. 좌석의 enabled·removed로 활성 여부 구분. limit 생략 시 전체", InputSchema: object(map[string]schema{"limit": integer(1, nil)})},
+		{Name: "rt_list_rooms", Description: fmt.Sprintf("최근 갱신순 방 id·제목·모드·실행 여부와 좌석(id·이름·공급사·모델·enabled) 조회. 삭제된 좌석은 빠지고 enabled:false는 꺼진 좌석. limit 기본 %d, 최대 %d", defaultListRooms, maxListRooms), InputSchema: object(map[string]schema{"limit": integer(1, &roomLimit)})},
 		{Name: "rt_create_room", Description: "새 방 생성. 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용", InputSchema: object(map[string]schema{
 			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
 			"participants": {Type: "array", Items: &participant, MinItems: 1},
 		}, "title", "workspace", "mode", "participants")},
-		{Name: "rt_post", Description: "메시지 전송. 결과의 seq는 보낸 메시지 번호. target은 좌석 id(rt_list_rooms의 participants[].id)이며 생략하면 방 규칙대로 전달. wait_seconds(0~600) 생략·0이면 기다리지 않음. 지정하면 이 메시지로 시작된 턴과 연쇄 호출 턴이 끝날 때까지 대기하고 답변도 반환. 실행 중인 대상에 끼워 넣은 입력(steering)이면 그 답의 seq가 보낸 seq보다 낮을 수 있음. 시간 초과(timed_out)는 실행 취소가 아님", InputSchema: object(map[string]schema{
+		{Name: "rt_post", Description: "메시지 전송. 결과의 seq는 보낸 메시지 번호. target은 좌석 id(rt_list_rooms의 participants[].id)이며 생략하면 방 규칙대로 전달. wait_seconds(0~600) 생략·0이면 기다리지 않음. 지정하면 이 메시지로 시작된 턴과 연쇄 호출 턴이 끝날 때까지 대기하고 답변도 반환. 실행 중인 대상에 끼워 넣은 입력(steering)이면 그 답의 seq가 보낸 seq보다 낮을 수 있음. 시간 초과(timed_out)는 실행 취소가 아니며, 그때 결과의 resume_after_seq를 rt_read의 after_seq로 써서 이어 읽음", InputSchema: object(map[string]schema{
 			"room": id, "text": text, "target": id, "wait_seconds": integer(0, &limit),
 		}, "room", "text")},
-		{Name: "rt_read", Description: "seq가 after_seq보다 큰 메시지를 오래된 순으로 조회(생략 시 처음부터). max_chars(기본 20000)는 본문 합계의 Unicode 문자 수이며 오래된 본문부터 줄이고 truncated로 표시", InputSchema: object(map[string]schema{
+		{Name: "rt_read", Description: "메시지를 오래된 순으로 조회. after_seq가 있으면 그보다 큰 seq만, 생략하면 최신 메시지까지. max_chars(기본 20000, 본문 합계의 Unicode 문자 수)는 최신 메시지부터 채움: 경계 메시지는 앞을 줄여 truncated, 담지 못한 오래된 메시지는 빼고 omitted_messages(개수)·first_seq(담긴 첫 seq)로 알림. reply_to는 그 답이 응답한 메시지의 seq", InputSchema: object(map[string]schema{
 			"room": id, "after_seq": integer(0, nil), "max_chars": integer(1, nil),
 		}, "room")},
-		{Name: "rt_discuss", Description: "토론 시작. blind_first 생략 시 방의 기본 설정 사용", InputSchema: object(map[string]schema{
+		{Name: "rt_discuss", Description: "토론 시작. blind_first 생략 시 방의 기본 설정 사용. 좌석들이 이미 같은 질문에 답했다면 블라인드 1라운드는 독립 답을 다시 받느라 호출을 좌석 수(N)만큼 더 쓰므로 blind_first:false를 고려", InputSchema: object(map[string]schema{
 			"room": id, "rounds": integer(1, nil), "blind_first": {Type: "boolean"},
 		}, "room", "rounds")},
 		{Name: "rt_requests", Description: "참가자 간 요청 목록과 상태 조회", InputSchema: object(map[string]schema{"room": id}, "room")},
 		{Name: "rt_cancel_request", Description: "참가자 간 요청 취소", InputSchema: object(map[string]schema{"room": id, "request": id}, "room", "request")},
-		{Name: "rt_decisions", Description: "결정 카드 목록 조회", InputSchema: object(map[string]schema{"room": id}, "room")},
+		{Name: "rt_decisions", Description: "결정 카드 목록 조회. status: proposed(좌석이 제안, 확정 대기)·active(안내문의 현재 결정)·superseded·dropped", InputSchema: object(map[string]schema{"room": id}, "room")},
+		{Name: "rt_update_decision", Description: "결정 카드 수정·상태 변경. 좌석이 [[DECISION]]으로 남긴 proposed 카드는 status active로 확정, dropped로 거절. 생략한 항목은 그대로이며 하나 이상 필요", InputSchema: object(map[string]schema{
+			"room": id, "id": id, "status": {Type: "string", Enum: []string{"active", "superseded", "dropped"}},
+			"text": text, "evidence": str, "dissent": str, "unverified": str,
+		}, "room", "id")},
 	}
 	out := make([]tool, 0, len(all))
 	for _, t := range all {
@@ -163,7 +168,13 @@ type arguments struct {
 	Rounds       int                `json:"rounds"`
 	BlindFirst   *bool              `json:"blind_first"`
 	Request      string             `json:"request"`
+	ID           string             `json:"id"`
 }
+
+const (
+	defaultListRooms = 20
+	maxListRooms     = 100
+)
 
 func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (any, error) {
 	var selected *tool
@@ -191,6 +202,9 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 	}
 	if a.MaxChars == 0 {
 		a.MaxChars = 20000
+	}
+	if a.Limit == 0 {
+		a.Limit = defaultListRooms
 	}
 	base := "/api/rooms/" + a.Room
 	switch name {
@@ -245,6 +259,21 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 			result = []json.RawMessage{}
 		}
 		return map[string]any{"decisions": result}, nil
+	case "rt_update_decision":
+		// The validated input minus the path ids is the PATCH body; omitted
+		// fields stay unchanged on the server.
+		body := map[string]any{}
+		for key, v := range value.(map[string]any) {
+			if key != "room" && key != "id" {
+				body[key] = v
+			}
+		}
+		if len(body) == 0 {
+			return nil, fmt.Errorf("바꿀 항목(status·text·evidence·dissent·unverified)이 하나 이상 필요함")
+		}
+		var result json.RawMessage
+		err := s.api(ctx, "PATCH", base+"/decisions/"+a.ID, body, &result)
+		return result, err
 	}
 	return nil, fmt.Errorf("알 수 없는 도구: %s", name)
 }

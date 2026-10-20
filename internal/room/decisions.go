@@ -21,7 +21,7 @@ type Decision struct {
 	Unverified string `json:"unverified"`
 	By         string `json:"by"`         // participant id or "user"
 	SourceMsg  string `json:"source_msg"` // message that recorded the card; empty for cards added on screen
-	Status     string `json:"status"`     // active | superseded | dropped
+	Status     string `json:"status"`     // proposed | active | superseded | dropped
 	At         int64  `json:"at"`         // time of this state line; strictly increases per card
 }
 
@@ -42,16 +42,20 @@ type DecisionInput struct {
 
 var decisionMarker = regexp.MustCompile(`^\[\[DECISION:\s*(.*?)\s*\|\s*근거:\s*(.*?)\s*\|\s*반대:\s*(.*?)\s*\|\s*미확인:\s*(.*?)\s*\]\]$`)
 
-const decisionMarkerForm = "[[DECISION: 결정 한 줄 | 근거: URL·파일·메시지 | 반대: 남은 반대 의견 또는 없음 | 미확인: 확인 못 한 것 또는 없음]]"
+const decisionMarkerSyntax = "[[DECISION: 결정 한 줄 | 근거: URL·파일·메시지 | 반대: 남은 반대 의견 또는 없음 | 미확인: 확인 못 한 것 또는 없음]]"
+
+// decisionMarkerForm is the marker line of the standing brief.
+const decisionMarkerForm = decisionMarkerSyntax + " — 제안으로 기록되고, 방 사용자가 확정해야 안내문의 현재 결정에 들어갑니다."
 
 // parseDecisionMarker reads one marker line. Every field is required; agents
-// write 없음 when there is no dissent or nothing unverified.
+// write 없음 when there is no dissent or nothing unverified. A seat only
+// proposes: the card stays out of the brief until someone sets it active.
 func parseDecisionMarker(line string) (Decision, error) {
 	m := decisionMarker.FindStringSubmatch(line)
 	if m == nil {
-		return Decision{}, fmt.Errorf("%s 한 줄 형식 필요", decisionMarkerForm)
+		return Decision{}, fmt.Errorf("%s 한 줄 형식 필요", decisionMarkerSyntax)
 	}
-	d := Decision{Text: m[1], Evidence: m[2], Dissent: m[3], Unverified: m[4], Status: "active"}
+	d := Decision{Text: m[1], Evidence: m[2], Dissent: m[3], Unverified: m[4], Status: "proposed"}
 	if d.Text == "" || d.Evidence == "" || d.Dissent == "" || d.Unverified == "" {
 		return Decision{}, fmt.Errorf("결정·근거·반대·미확인을 모두 채워야 함 (없으면 '없음')")
 	}
@@ -74,10 +78,10 @@ func validDecision(d Decision) error {
 		}
 	}
 	switch d.Status {
-	case "active", "superseded", "dropped":
+	case "proposed", "active", "superseded", "dropped":
 		return nil
 	}
-	return fmt.Errorf("알 수 없는 결정 상태: %s (active·superseded·dropped)", d.Status)
+	return fmt.Errorf("알 수 없는 결정 상태: %s (proposed·active·superseded·dropped)", d.Status)
 }
 
 func (s *Store) appendDecision(roomID string, d Decision) error {
@@ -128,7 +132,8 @@ func (h *Hub) saveDecision(rs *roomState, d Decision) error {
 
 // activeDecisionTexts is the "현재 결정" list of the standing brief: text only,
 // at most maxBriefDecisions, most recently changed first (later records win a
-// tie). A card recorded by a message above cap is left out with that message,
+// tie). proposed cards wait for confirmation and stay out. A card recorded by
+// a message above cap is left out with that message,
 // so a blind round-1 turn never sees a peer's round-1 decision.
 func (rs *roomState) activeDecisionTexts(cap int64) []string {
 	sources := map[string]int64{}
@@ -201,6 +206,8 @@ func (h *Hub) AddDecision(roomID string, in DecisionInput) (Decision, error) {
 }
 
 // UpdateDecision edits a card or changes its status. Status changes keep the card.
+// proposed is only the state a seat's marker creates; confirming sets active,
+// rejecting sets dropped, and no card returns to proposed.
 func (h *Hub) UpdateDecision(roomID, id string, in DecisionInput) (Decision, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -229,6 +236,9 @@ func (h *Hub) UpdateDecision(roomID, id string, in DecisionInput) (Decision, err
 		next.Unverified = trimmed(in.Unverified)
 	}
 	if in.Status != nil {
+		if *in.Status == "proposed" && old.Status != "proposed" {
+			return Decision{}, fmt.Errorf("proposed로 되돌릴 수 없음 (확정은 active, 거절은 dropped)")
+		}
 		next.Status = *in.Status
 	}
 	if err := validDecision(next); err != nil {
