@@ -5,7 +5,10 @@ import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { openSeq, participantLabel, state } from "./state.js";
 
+// K2: a card an agent wrote with [[DECISION]] is "proposed" until a person
+// confirms it (active) or rejects it (dropped); only active cards reach the brief.
 const DECISION_STATUS_LABELS = {
+  proposed: "제안",
   active: "유효",
   superseded: "대체됨",
   dropped: "폐기됨",
@@ -17,18 +20,34 @@ function decisionAuthor(d) {
   return d.by === "user" ? "사용자" : participantLabel(d.by);
 }
 
-// Active cards first, most recently changed first within each group; later
-// records win a tie. The standing brief picks active cards in the same order.
+// Proposed cards (waiting for the person) first, then active cards, then the
+// rest; most recently changed first within each group and later records win a
+// tie. The standing brief picks active cards in the same order.
+const STATUS_RANK = { proposed: 0, active: 1 };
 function sortedDecisions() {
   const list = Array.from(state.decisions.values());
   const order = new Map(list.map((d, i) => [d.id, i]));
   return list.sort((a, b) => {
-    const activeA = a.status === "active";
-    const activeB = b.status === "active";
-    if (activeA !== activeB) return activeA ? -1 : 1;
+    const rankA = STATUS_RANK[a.status] ?? 2;
+    const rankB = STATUS_RANK[b.status] ?? 2;
+    if (rankA !== rankB) return rankA - rankB;
     if (a.at !== b.at) return b.at - a.at;
     return order.get(b.id) - order.get(a.id);
   });
+}
+
+function buildProposedActions(d) {
+  const confirm = el("button", "primary dec-confirm", "확정");
+  confirm.type = "button";
+  confirm.title = "유효(active)로 바꿉니다. 다음 턴부터 모든 참가자의 안내문에 들어갑니다.";
+  confirm.setAttribute("aria-label", "결정 확정: " + d.text);
+  confirm.onclick = () => patchDecision(d.id, { status: "active" }, confirm);
+  const reject = el("button", "danger dec-reject", "거절");
+  reject.type = "button";
+  reject.title = "폐기(dropped)로 바꿉니다. 카드는 기록으로 남습니다.";
+  reject.setAttribute("aria-label", "결정 거절: " + d.text);
+  reject.onclick = () => patchDecision(d.id, { status: "dropped" }, reject);
+  return [confirm, reject];
 }
 
 // Decisions are never deleted and the server makes "at" strictly increase on
@@ -69,9 +88,12 @@ export function renderDecisions() {
   if (addBtn) addBtn.disabled = !state.roomId;
   const sorted = sortedDecisions();
   const active = sorted.filter((d) => d.status === "active").length;
+  const proposed = sorted.filter((d) => d.status === "proposed").length;
   if (cnt) {
-    cnt.textContent = String(active);
-    cnt.title = "유효 " + active + "건 / 전체 " + sorted.length + "건";
+    // Same rule as the 요청 badge: the total, highlighted while something waits for the person.
+    cnt.textContent = String(sorted.length);
+    cnt.className = "badge" + (proposed > 0 ? " warn" : "");
+    cnt.title = (proposed > 0 ? "확정 대기 " + proposed + "건 · " : "") + "유효 " + active + "건 · 전체 " + sorted.length + "건";
   }
   if (!ul) return;
   const sig = JSON.stringify(sorted.map((d) => [d.id, d.text, d.evidence, d.dissent, d.unverified, d.status, d.at, d.source_msg, decisionAuthor(d)]));
@@ -89,7 +111,13 @@ export function renderDecisions() {
     top.appendChild(el("div", "dec-item-text", d.text));
     top.appendChild(el("span", "badge dec-status-badge status-" + d.status, decisionStatusLabel(d.status)));
     li.appendChild(top);
-    li.appendChild(el("div", "dec-item-meta muted", decisionAuthor(d) + " · " + fmtTime(d.at)));
+    li.appendChild(
+      el(
+        "div",
+        "dec-item-meta muted",
+        decisionAuthor(d) + (d.status === "proposed" ? " 제안 · 확정해야 안내문에 들어갑니다 · " : " · ") + fmtTime(d.at)
+      )
+    );
 
     const details = el("details", "dec-details");
     details.appendChild(el("summary", "", "근거·반대·미확인"));
@@ -110,11 +138,15 @@ export function renderDecisions() {
     edit.setAttribute("aria-label", "결정 수정: " + d.text);
     edit.onclick = () => openDecisionDialog(d);
     actions.appendChild(edit);
-    const toggle = el("button", d.status === "active" ? "danger" : "", d.status === "active" ? "폐기" : "다시 유효");
-    toggle.type = "button";
-    toggle.setAttribute("aria-label", (d.status === "active" ? "결정 폐기: " : "결정 다시 유효: ") + d.text);
-    toggle.onclick = () => patchDecision(d.id, { status: d.status === "active" ? "dropped" : "active" }, toggle);
-    actions.appendChild(toggle);
+    if (d.status === "proposed") {
+      for (const b of buildProposedActions(d)) actions.appendChild(b);
+    } else {
+      const toggle = el("button", d.status === "active" ? "danger" : "", d.status === "active" ? "폐기" : "다시 유효");
+      toggle.type = "button";
+      toggle.setAttribute("aria-label", (d.status === "active" ? "결정 폐기: " : "결정 다시 유효: ") + d.text);
+      toggle.onclick = () => patchDecision(d.id, { status: d.status === "active" ? "dropped" : "active" }, toggle);
+      actions.appendChild(toggle);
+    }
     li.appendChild(actions);
     ul.appendChild(li);
   }
@@ -137,9 +169,14 @@ export function renderMessageDecisions(slot, m) {
   slot.replaceChildren();
   for (const d of cards) {
     const card = el("div", "msg-decision status-" + d.status);
-    card.appendChild(el("span", "msg-decision-label", "📌 결정"));
+    card.appendChild(el("span", "msg-decision-label", d.status === "proposed" ? "📌 결정 제안" : "📌 결정"));
     card.appendChild(el("span", "msg-decision-text", d.text));
     card.appendChild(el("span", "badge dec-status-badge status-" + d.status, decisionStatusLabel(d.status)));
+    if (d.status === "proposed") {
+      const acts = el("span", "msg-decision-actions");
+      for (const b of buildProposedActions(d)) acts.appendChild(b);
+      card.appendChild(acts);
+    }
     slot.appendChild(card);
   }
 }
@@ -153,7 +190,12 @@ async function patchDecision(id, patch, btn) {
     const updated = await api("PATCH", "/api/rooms/" + roomId + "/decisions/" + encodeURIComponent(id), patch);
     if (state.roomId !== roomId || openSeq !== sequence) return;
     upsertDecision(updated);
-    announce("결정이 " + decisionStatusLabel(state.decisions.get(id).status) + " 상태로 표시됩니다.");
+    const status = state.decisions.get(id).status;
+    announce(
+      status === "active"
+        ? "결정을 확정했습니다. 다음 턴부터 안내문에 들어갑니다."
+        : "결정이 " + decisionStatusLabel(status) + " 상태로 표시됩니다."
+    );
   } catch (e) {
     if (state.roomId === roomId && openSeq === sequence) alert(e.message);
   } finally {
@@ -192,7 +234,8 @@ async function onDecisionSubmit(e) {
     dissent: f.dissent.value.trim(),
     unverified: f.unverified.value.trim(),
   };
-  if (editingDecision) body.status = f.status.value;
+  // Only a changed status is sent, so editing the text of a card keeps its state line intact.
+  if (editingDecision && f.status.value !== editingDecision.status) body.status = f.status.value;
   submit.disabled = true;
   try {
     const saved = editingDecision

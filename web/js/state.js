@@ -114,7 +114,8 @@ export function resetParticipantNames() {
 export function modelLabel(provider, model) {
   const info = state.providers.find((p) => p.id === provider);
   const option = info && info.models && info.models.find((m) => m.id === model);
-  return option ? option.label : "직접 지정 모델";
+  // A model outside the catalog is shown by its ID so two custom seats stay distinguishable.
+  return option ? option.label : model ? model + " (직접 지정)" : "직접 지정 모델";
 }
 export const authorProvider = (id) => {
   const p = participant(id);

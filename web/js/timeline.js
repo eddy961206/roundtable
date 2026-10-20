@@ -366,6 +366,97 @@ export function scheduleTraceRender(id) {
   );
 }
 
+// K7: every message shows its #seq; a click copies "#seq" so the person can cite
+// the message in the composer with the same number the agents see in their history.
+function seqChipHtml(m) {
+  if (!m.seq) return "";
+  return (
+    '<button type="button" class="seq-chip" data-seq-copy="' +
+    esc(String(m.seq)) +
+    '" title="메시지 #' +
+    esc(String(m.seq)) +
+    ' · 누르면 참조(#' +
+    esc(String(m.seq)) +
+    ')를 복사합니다" aria-label="메시지 번호 ' +
+    esc(String(m.seq)) +
+    ', 참조 복사">#' +
+    esc(String(m.seq)) +
+    "</button>"
+  );
+}
+
+// K1: agent replies that answer the same trigger message (same reply_to), in seq order.
+function replySiblings(m) {
+  if (!m || m.kind !== "agent" || !m.reply_to) return [];
+  const list = [];
+  for (const id of state.order) {
+    const cand = state.messages.get(id);
+    if (cand && cand.kind === "agent" && cand.reply_to === m.reply_to) list.push(cand);
+  }
+  return list.sort((a, b) => a.seq - b.seq);
+}
+
+function replyChipHtml(m) {
+  if (m.kind !== "agent" || !m.reply_to) return [];
+  const target = state.messages.get(m.reply_to);
+  const label = target && target.seq ? "#" + target.seq : "원 메시지";
+  const who = target ? (target.kind === "user" ? "나" : participantLabel(target.author)) : "";
+  const out = [
+    '<button type="button" class="reply-chip" data-reply-to="' +
+      esc(m.reply_to) +
+      '" title="' +
+      esc((who ? who + "의 " : "") + "메시지 " + label + "에 대한 답 · 누르면 그 메시지로 이동합니다") +
+      '" aria-label="' +
+      esc("답한 메시지 " + label + "로 이동") +
+      '">↩ ' +
+      esc(label) +
+      "</button>",
+  ];
+  const siblings = replySiblings(m);
+  if (siblings.length >= 2) {
+    const k = siblings.findIndex((s) => s.id === m.id) + 1;
+    out.push(
+      '<span class="reply-group" title="' +
+        esc("같은 메시지(" + label + ")에 " + siblings.length + "명이 동시에 답했습니다") +
+        '">같은 질문의 답 ' +
+        k +
+        "/" +
+        siblings.length +
+        "</span>"
+    );
+  }
+  return out;
+}
+
+async function copySeqReference(seq, chip) {
+  const ref = "#" + seq;
+  try {
+    await navigator.clipboard.writeText(ref);
+  } catch (err) {
+    announce("참조를 복사하지 못했습니다: " + err.message);
+    return;
+  }
+  announce("메시지 " + ref + " 참조를 복사했습니다. 입력창에 붙여 넣어 인용할 수 있습니다.");
+  if (chip && chip.isConnected) {
+    chip.textContent = "복사됨";
+    setTimeout(() => {
+      if (chip.isConnected) chip.textContent = ref;
+    }, 1200);
+  }
+}
+
+function onTimelineClick(ev) {
+  const target = ev.target instanceof Element ? ev.target : null;
+  if (!target) return;
+  const seqChip = target.closest(".seq-chip");
+  if (seqChip && seqChip.dataset.seqCopy) {
+    copySeqReference(seqChip.dataset.seqCopy, seqChip);
+    return;
+  }
+  const replyChip = target.closest(".reply-chip");
+  if (replyChip && replyChip.dataset.replyTo) focusTimelineMessage(replyChip.dataset.replyTo);
+}
+
 function findPrevUserMessage(msgId) {
   const idx = state.order.indexOf(msgId);
   const start = idx >= 0 ? idx - 1 : state.order.length - 1;
@@ -473,11 +564,15 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
       esc(rewriteProseMentions(m.text, visibleMentions)) +
       '</span> <span class="muted">' +
       fmtTime(m.ts) +
-      "</span></div>";
+      "</span> " +
+      seqChipHtml(m) +
+      "</div>";
   } else {
     const who = m.kind === "user" ? "나" : participantLabel(m.author);
     const meta = [];
     meta.push('<span class="who ' + esc(authorProvider(m.author)) + '">' + esc(who) + "</span>");
+    meta.push(seqChipHtml(m));
+    meta.push(...replyChipHtml(m));
     if (m.kind === "user" && m.target) {
       meta.push(
         '<span class="steer-tag">→ ' +
@@ -726,6 +821,7 @@ export function bindTimeline() {
     timelineEl.addEventListener("touchmove", cancelPendingScrollRestore, { passive: true });
     timelineEl.addEventListener("pointerdown", cancelPendingScrollRestore, { passive: true });
     timelineEl.addEventListener("keydown", cancelPendingScrollRestore);
+    timelineEl.addEventListener("click", onTimelineClick);
     timelineEl.addEventListener("load", onTimelineImageLoad, true);
     timelineEl.addEventListener(
       "scroll",

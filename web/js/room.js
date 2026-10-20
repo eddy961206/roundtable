@@ -314,6 +314,13 @@ function upsertMessage(m) {
     }
   }
   if (!document.hidden) renderMessage(m.id, !existed);
+  // A new parallel reply changes the "같은 질문의 답 k/n" label of its siblings.
+  if (!existed && m.kind === "agent" && m.reply_to) {
+    for (const id of state.order.slice(state.winStart, state.winEnd)) {
+      const other = state.messages.get(id);
+      if (other && other.id !== m.id && other.kind === "agent" && other.reply_to === m.reply_to) scheduleRender(id);
+    }
+  }
   if (m.status === "done" && (m.part || m.review_step)) {
     refreshPartErrorMessages(m.part || "");
   }
