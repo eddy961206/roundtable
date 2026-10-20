@@ -144,9 +144,11 @@ var attachMarker = regexp.MustCompile(`^\[\[ATTACH:(.+)\]\]$`)
 var requestMarker = regexp.MustCompile(`^\[\[REQUEST:@([^\]\s]+)\]\]\s+(.+)$`)
 var resultMarker = regexp.MustCompile(`^\[\[REQUEST_(DONE|REJECT):([^\]\s]+)\]\](?:\s+(.*))?$`)
 
-func (h *Hub) markerError(rs *roomState, pr *prepared, marker, reason string) error {
+// markerError records which handler rejected the line and the reply it came
+// from; the model at that time is the source reply's Model.
+func (h *Hub) markerError(rs *roomState, pr *prepared, kind, marker, reason string) error {
 	m := rs.nextMessage("system", "system", fmt.Sprintf("@%s 마커 거절 (%s): %s", pr.p.ID, marker, reason))
-	m.NoticeFor = pr.p.ID
+	m.NoticeFor, m.NoticeMarker, m.NoticeMsg = pr.p.ID, kind, pr.msg.ID
 	if pr.part != nil {
 		m.Part = pr.part.ID
 	}
@@ -162,8 +164,8 @@ func (h *Hub) markerError(rs *roomState, pr *prepared, marker, reason string) er
 func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 	msg := pr.msg
 	var processingErr error
-	reject := func(marker, reason string) {
-		if err := h.markerError(rs, pr, marker, reason); err != nil {
+	reject := func(kind, marker, reason string) {
+		if err := h.markerError(rs, pr, kind, marker, reason); err != nil {
 			processingErr = err
 		}
 	}
@@ -174,47 +176,47 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 			switch {
 			case strings.HasPrefix(line, "[[ATTACH"):
 				if pr.opts.Mode == agent.ModeChat {
-					reject(line, "chat 모드는 파일 첨부를 처리하지 않음")
+					reject("attach", line, "chat 모드는 파일 첨부를 처리하지 않음")
 					continue
 				}
 				m := attachMarker.FindStringSubmatch(line)
 				if m == nil {
-					reject(line, "[[ATTACH:경로]] 한 줄 형식 필요")
+					reject("attach", line, "[[ATTACH:경로]] 한 줄 형식 필요")
 					continue
 				}
 				if len(msg.Attachments) >= MaxAttachments {
-					reject(line, "메시지당 최대 4장")
+					reject("attach", line, "메시지당 최대 4장")
 					continue
 				}
 				f, err := attachmentSource(m[1], pr.opts.Workspace, pr.opts.ScratchDir)
 				if err != nil {
-					reject(line, err.Error())
+					reject("attach", line, err.Error())
 					continue
 				}
 				a, err := h.store.saveAttachment(rs.room.ID, filepath.Base(m[1]), pr.p.ID, f)
 				f.Close()
 				if err != nil {
-					reject(line, err.Error())
+					reject("attach", line, err.Error())
 					continue
 				}
 				msg.Attachments = append(msg.Attachments, a)
 			case strings.HasPrefix(line, "[[REQUEST:"):
 				if pr.t.Reason == "discussion" || pr.t.Reason == "review" {
-					reject(line, "discussion·review 턴에서는 새 요청을 만들 수 없음")
+					reject("request", line, "discussion·review 턴에서는 새 요청을 만들 수 없음")
 					continue
 				}
 				m := requestMarker.FindStringSubmatch(line)
 				if m == nil || strings.TrimSpace(m[2]) == "" {
-					reject(line, "[[REQUEST:@좌석ID]] 요청 내용 한 줄 형식 필요")
+					reject("request", line, "[[REQUEST:@좌석ID]] 요청 내용 한 줄 형식 필요")
 					continue
 				}
 				to, why := rs.requestTarget(m[1])
 				if to == nil || to.ID == pr.p.ID {
-					reject(line, why+" · 다른 활성 좌석의 ID나 고유한 이름이 필요함")
+					reject("request", line, why+" · 다른 활성 좌석의 ID나 고유한 이름이 필요함")
 					continue
 				}
 				if part := rs.seatPart(to.ID); part != nil {
-					reject(line, fmt.Sprintf("@%s은 파트 %s 작업 중이라 요청을 받을 수 없음 · 파트가 끝난 뒤 다시 요청하거나 사용자에게 알려", to.ID, part.ID))
+					reject("request", line, fmt.Sprintf("@%s은 파트 %s 작업 중이라 요청을 받을 수 없음 · 파트가 끝난 뒤 다시 요청하거나 사용자에게 알려", to.ID, part.ID))
 					continue
 				}
 				r := Request{ID: newID(), From: pr.p.ID, To: to.ID, Text: strings.TrimSpace(m[2]), SourceMsg: msg.ID, Status: "pending", At: nowMs()}
@@ -226,20 +228,20 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 			case strings.HasPrefix(line, "[[REQUEST_DONE") || strings.HasPrefix(line, "[[REQUEST_REJECT"):
 				m := resultMarker.FindStringSubmatch(line)
 				if m == nil || i < signalStart {
-					reject(line, "요청 결과 신호는 응답 끝의 연속된 신호 줄 블록에 써야 함")
+					reject("request_result", line, "요청 결과 신호는 응답 끝의 연속된 신호 줄 블록에 써야 함")
 					continue
 				}
 				r := rs.request(m[2])
 				if r == nil || r.To != pr.p.ID || r.Status != "in_progress" || !slices.Contains(pr.requests, r.ID) {
-					reject(line, "이 턴에서 받은 진행 중 요청 ID가 아님")
+					reject("request_result", line, "이 턴에서 받은 진행 중 요청 ID가 아님")
 					continue
 				}
 				if m[1] == "REJECT" && strings.TrimSpace(m[3]) == "" {
-					reject(line, "거절 이유가 필요함")
+					reject("request_result", line, "거절 이유가 필요함")
 					continue
 				}
 				if m[1] == "DONE" && m[3] != "" {
-					reject(line, "완료 신호 뒤에는 내용을 쓰지 마세요")
+					reject("request_result", line, "완료 신호 뒤에는 내용을 쓰지 마세요")
 					continue
 				}
 				next := *r
@@ -251,11 +253,11 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 					processingErr = err
 				}
 			case strings.HasPrefix(line, "[[REQUEST"):
-				reject(line, "요청 마커 형식 오류: [[REQUEST:@좌석ID]] 내용 또는 [[REQUEST_DONE:요청ID]] / [[REQUEST_REJECT:요청ID]] 이유")
+				reject("request", line, "요청 마커 형식 오류: [[REQUEST:@좌석ID]] 내용 또는 [[REQUEST_DONE:요청ID]] / [[REQUEST_REJECT:요청ID]] 이유")
 			case strings.HasPrefix(line, "[[DECISION"):
 				d, err := parseDecisionMarker(line)
 				if err != nil {
-					reject(line, err.Error())
+					reject("decision", line, err.Error())
 					continue
 				}
 				d.ID, d.By, d.SourceMsg, d.At = newID(), pr.p.ID, msg.ID, nowMs()
@@ -293,9 +295,9 @@ func ordinaryMentionText(text string) string {
 func markerBrief(mode string) string {
 	text := "- 참가자에게 요청: [[REQUEST:@좌석ID 또는 @이름]] 확인할 내용 한 줄 (discussion·review 턴에서는 금지)\n- 받은 요청 완료(응답 끝 신호 블록): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 끝 신호 블록): [[REQUEST_REJECT:요청ID]] 거절 이유\n- 응답 끝 신호(요청 결과, 토론 신호, 파트 완료 신호)가 여럿이면 빈 줄 없이 한 줄씩 모으세요. 순서는 자유입니다. 이번 턴에 해당하는 신호만 쓰세요.\n- 끝나지 않은 파트를 맡은 좌석에는 요청할 수 없습니다. 파트가 끝난 뒤 다시 요청하거나 사용자에게 알리세요.\n- 결정 기록(한 줄, 결정이 정해졌을 때만):" + decisionMarkerForm + "\n"
 	if mode != agent.ModeChat {
-		text += "- 기존 이미지 공유(한 줄): [[ATTACH:이미지.png]] — 작업 폴더 또는 서버 scratch 안의 PNG·JPEG·WEBP, 파일당 10MB, 메시지당 4장.\n"
+		text += "- 기존 이미지 공유(한 줄): [[ATTACH:경로]] — PNG·JPEG·WEBP, 파일당 10MB, 메시지당 4장. 상대 경로는 작업 폴더 기준이고, 서버 scratch의 파일은 절대 경로로 쓰세요.\n"
 		if mode == agent.ModeWrite {
-			text += "- 직접 화면을 캡처할 수 있습니다. 저장 후 예: [[ATTACH:캡처.png]]\n"
+			text += "- 직접 화면을 캡처할 수 있습니다. 작업 폴더에 저장 후 예: [[ATTACH:캡처.png]]\n"
 		} else {
 			text += "- read 모드에서는 이미 있는 이미지만 공유하세요. 직접 캡처하거나 파일을 만들지 마세요.\n"
 		}

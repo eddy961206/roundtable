@@ -2,33 +2,39 @@ package room
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 	"sort"
 )
 
 type ModelStatsRow struct {
-	Provider              string  `json:"provider"`
-	Model                 string  `json:"model"`
-	Effort                string  `json:"effort"`
-	Role                  string  `json:"role"`
-	Turns                 int     `json:"turns"`
-	Errors                int     `json:"errors"`
-	MedianTotalMs         int64   `json:"median_total_ms"`
-	MedianFirstOutputMs   int64   `json:"median_first_output_ms"`
-	InputTokens           float64 `json:"input_tokens"`
-	OutputTokens          float64 `json:"output_tokens"`
-	CachedTokens          float64 `json:"cached_tokens"`
-	PartsAuthored         int     `json:"parts_authored"`
-	PartsPassedFirstRound int     `json:"parts_passed_first_round"`
-	FindingsRaised        int     `json:"findings_raised"`
-	FindingsFixed         int     `json:"findings_fixed"`
-	FindingsWithdrawn     int     `json:"findings_withdrawn"`
-	LastSeenAt            int64   `json:"last_seen_at"`
+	Provider              string         `json:"provider"`
+	Model                 string         `json:"model"`
+	Effort                string         `json:"effort"`
+	Role                  string         `json:"role"`
+	Turns                 int            `json:"turns"`
+	Errors                int            `json:"errors"`
+	MedianTotalMs         int64          `json:"median_total_ms"`
+	MedianFirstOutputMs   int64          `json:"median_first_output_ms"`
+	InputTokens           float64        `json:"input_tokens"`
+	OutputTokens          float64        `json:"output_tokens"`
+	CachedTokens          float64        `json:"cached_tokens"`
+	PartsAuthored         int            `json:"parts_authored"`
+	PartsPassedFirstRound int            `json:"parts_passed_first_round"`
+	FindingsRaised        int            `json:"findings_raised"`
+	FindingsFixed         int            `json:"findings_fixed"`
+	FindingsWithdrawn     int            `json:"findings_withdrawn"`
+	MarkerRejects         map[string]int `json:"marker_rejects"` // rejected marker lines by kind
+	ReviewFormatErrors    int            `json:"review_format_errors"`
+	LastSeenAt            int64          `json:"last_seen_at"`
 }
 
 type ModelStats struct {
-	Rows        []ModelStatsRow `json:"rows"`
-	GeneratedAt int64           `json:"generated_at"`
+	Rows []ModelStatsRow `json:"rows"`
+	// Rejection notices recorded before notice_msg existed name only a seat,
+	// whose model may have changed since; they are counted, not attributed.
+	UnattributedMarkerRejects int   `json:"unattributed_marker_rejects"`
+	GeneratedAt               int64 `json:"generated_at"`
 }
 
 type modelKey struct{ provider, model, effort, role string }
@@ -45,6 +51,7 @@ func (h *Hub) ModelStats() (*ModelStats, error) {
 		return nil, err
 	}
 	groups := map[modelKey]*modelSamples{}
+	unattributed := 0
 	rowFor := func(r *Room, m *Message) *modelSamples {
 		provider := m.Provider
 		// Legacy messages omitted provider; a seat's provider never changes.
@@ -55,13 +62,29 @@ func (h *Hub) ModelStats() (*ModelStats, error) {
 		}
 		key := modelKey{provider, m.Model, m.Effort, m.Role}
 		if groups[key] == nil {
-			groups[key] = &modelSamples{ModelStatsRow: ModelStatsRow{Provider: provider, Model: m.Model, Effort: m.Effort, Role: m.Role}}
+			groups[key] = &modelSamples{ModelStatsRow: ModelStatsRow{Provider: provider, Model: m.Model, Effort: m.Effort, Role: m.Role, MarkerRejects: map[string]int{}}}
 		}
 		return groups[key]
 	}
 	for _, r := range rooms {
 		msgs := messages[r.ID]
+		byID := map[string]*Message{}
 		for _, m := range msgs {
+			byID[m.ID] = m
+		}
+		for _, m := range msgs {
+			if m.Kind == "system" && m.NoticeFor != "" {
+				if m.NoticeMsg == "" {
+					unattributed++
+					continue
+				}
+				source := byID[m.NoticeMsg]
+				if source == nil {
+					return nil, fmt.Errorf("방 %s 마커 거절 %s: 원인 응답 %s 없음", r.ID, m.ID, m.NoticeMsg)
+				}
+				rowFor(r, source).MarkerRejects[m.NoticeMarker]++
+				continue
+			}
 			if m.Kind != "agent" || m.Status == "streaming" {
 				continue
 			}
@@ -69,6 +92,9 @@ func (h *Hub) ModelStats() (*ModelStats, error) {
 			row.Turns++
 			if m.Status == "error" {
 				row.Errors++
+			}
+			if m.ErrorKind == "review_format" {
+				row.ReviewFormatErrors++
 			}
 			row.LastSeenAt = max(row.LastSeenAt, m.TS)
 			if m.Timing != nil {
@@ -139,7 +165,7 @@ func (h *Hub) ModelStats() (*ModelStats, error) {
 			}
 		}
 	}
-	result := &ModelStats{Rows: []ModelStatsRow{}, GeneratedAt: nowMs()}
+	result := &ModelStats{Rows: []ModelStatsRow{}, UnattributedMarkerRejects: unattributed, GeneratedAt: nowMs()}
 	for _, row := range groups {
 		row.MedianTotalMs, row.MedianFirstOutputMs = medianMs(row.total), medianMs(row.first)
 		result.Rows = append(result.Rows, row.ModelStatsRow)

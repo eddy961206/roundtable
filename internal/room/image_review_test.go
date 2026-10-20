@@ -77,8 +77,8 @@ func TestQ1ReviewNoticeRetryKeepsImageCap(t *testing.T) {
 func TestQ1ReviewNoticeReplayAndOtherSeats(t *testing.T) {
 	h, r := newTestHub(t, &fakeProvider{id: "codex"}, &fakeProvider{id: "claude"})
 	rs := h.rooms[r.ID]
-	pr := &prepared{p: r.Participants[0], t: &Turn{}}
-	if err := h.markerError(rs, pr, "[[REQUEST broken]]", "fix this marker"); err != nil {
+	pr := &prepared{p: r.Participants[0], t: &Turn{}, msg: &Message{ID: "source"}}
+	if err := h.markerError(rs, pr, "request", "[[REQUEST broken]]", "fix this marker"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.store.SaveRoom(r); err != nil {

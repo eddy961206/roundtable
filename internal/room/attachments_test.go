@@ -252,6 +252,25 @@ func TestAttachmentMarkersAndFeedback(t *testing.T) {
 	if !found {
 		t.Fatal("no response")
 	}
+	var reply, notice *Message
+	for _, m := range snap.Messages {
+		switch {
+		case m.Kind == "agent":
+			reply = m
+		case m.Kind == "system" && m.NoticeFor != "":
+			notice = m
+		}
+	}
+	if notice == nil || notice.NoticeMarker != "attach" || notice.NoticeMsg != reply.ID {
+		t.Fatalf("rejection not attributed to its reply: %+v", notice)
+	}
+	stats, err := h.ModelStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.Rows) != 1 || stats.Rows[0].MarkerRejects["attach"] != 1 || stats.UnattributedMarkerRejects != 0 {
+		t.Fatalf("marker rejects not counted: %+v", stats)
+	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}

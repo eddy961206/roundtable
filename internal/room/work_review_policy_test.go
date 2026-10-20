@@ -216,6 +216,20 @@ func TestWorkReviewFormatCorrection(t *testing.T) {
 					}
 				}
 				assertWorkNote(t, f, "리뷰 표 형식 오류로 1회 다시 요청: "+parseErr.Error(), 1)
+				stats, err := f.hub.ModelStats()
+				if err != nil {
+					t.Fatal(err)
+				}
+				formatErrors, wantFormatErrors := 0, 2
+				if succeeds {
+					wantFormatErrors = 1
+				}
+				for _, row := range stats.Rows {
+					formatErrors += row.ReviewFormatErrors
+				}
+				if formatErrors != wantFormatErrors {
+					t.Fatalf("review format errors = %d, want %d: %+v", formatErrors, wantFormatErrors, stats.Rows)
+				}
 			})
 		}
 	}

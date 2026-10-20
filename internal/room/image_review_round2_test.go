@@ -63,11 +63,11 @@ func TestQ1R2NoticeStaysInOriginSession(t *testing.T) {
 				h, r := newTestHub(t, &fakeProvider{id: "codex"})
 				rs := h.rooms[r.ID]
 				p := r.Participants[0]
-				created := &prepared{p: p, t: &Turn{Part: origin}}
+				created := &prepared{p: p, t: &Turn{Part: origin}, msg: &Message{ID: "source"}}
 				if origin != "" {
 					created.part = &Part{ID: origin}
 				}
-				if err := h.markerError(rs, created, "[[REQUEST invalid]]", "ORIGIN-FEEDBACK"); err != nil {
+				if err := h.markerError(rs, created, "request", "[[REQUEST invalid]]", "ORIGIN-FEEDBACK"); err != nil {
 					t.Fatal(err)
 				}
 				notice := rs.msgs[len(rs.msgs)-1]
@@ -123,7 +123,7 @@ func TestQ1R2ReleasedPartAcceptsRequests(t *testing.T) {
 func TestQ1R2NoticeScopeSurvivesRestart(t *testing.T) {
 	h, r := newTestHub(t, &fakeProvider{id: "codex"})
 	rs := h.rooms[r.ID]
-	if err := h.markerError(rs, &prepared{p: r.Participants[0], t: &Turn{Part: "p1"}, part: &Part{ID: "p1"}}, "[[REQUEST invalid]]", "PART-ONLY-NOTICE"); err != nil {
+	if err := h.markerError(rs, &prepared{p: r.Participants[0], t: &Turn{Part: "p1"}, part: &Part{ID: "p1"}, msg: &Message{ID: "source"}}, "request", "[[REQUEST invalid]]", "PART-ONLY-NOTICE"); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.store.SaveRoom(r); err != nil {
@@ -167,8 +167,8 @@ func TestQ1R2NoticeOriginUsesActualSession(t *testing.T) {
 	rs := h.rooms[r.ID]
 	// A queued turn can retain its former part tag after that part finishes.
 	// The prepared invocation now runs in the room session (part == nil).
-	pr := &prepared{p: r.Participants[0], t: &Turn{Part: "finished-part"}}
-	if err := h.markerError(rs, pr, "[[REQUEST invalid]]", "ROOM-NOTICE"); err != nil {
+	pr := &prepared{p: r.Participants[0], t: &Turn{Part: "finished-part"}, msg: &Message{ID: "source"}}
+	if err := h.markerError(rs, pr, "request", "[[REQUEST invalid]]", "ROOM-NOTICE"); err != nil {
 		t.Fatal(err)
 	}
 	rs.addTurnNotices(pr)

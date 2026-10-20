@@ -77,6 +77,8 @@ func (r *Room) enabled() []*Participant {
 type Message struct {
 	NoticeFor        string         `json:"notice_for,omitempty"` // durable out-of-cap feedback to this seat; visible to everyone
 	NoticeDelivered  bool           `json:"notice_delivered,omitempty"`
+	NoticeMarker     string         `json:"notice_marker,omitempty"` // rejected marker kind: attach | request | request_result | decision
+	NoticeMsg        string         `json:"notice_msg,omitempty"`    // reply whose marker was rejected
 	Attachments      []Attachment   `json:"attachments,omitempty"`
 	Requests         []string       `json:"requests,omitempty"`
 	Decisions        []string       `json:"decisions,omitempty"` // decision cards recorded by this reply's markers
@@ -97,6 +99,7 @@ type Message struct {
 	Part             string         `json:"part,omitempty"`
 	ReviewStep       string         `json:"review_step,omitempty"` // findings | author_reply | rebuttal | recheck
 	Error            string         `json:"error,omitempty"`
+	ErrorKind        string         `json:"error_kind,omitempty"` // review_format: the review table was not applied
 	Model            string         `json:"model,omitempty"`
 	Provider         string         `json:"provider,omitempty"`
 	SessionID        string         `json:"session_id,omitempty"`

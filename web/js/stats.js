@@ -31,8 +31,12 @@ const COLUMNS = [
   { key: "findings_raised", label: "지적 제기", num: true, text: (r) => String(r.findings_raised || 0) },
   { key: "findings_fixed", label: "지적 수정됨", num: true, text: (r) => String(r.findings_fixed || 0) },
   { key: "findings_withdrawn", label: "지적 철회", num: true, text: (r) => String(r.findings_withdrawn || 0) },
+  { key: "marker_reject_total", label: "마커 거절", num: true, text: (r) => String(r.marker_reject_total), title: (r) => Object.entries(r.marker_rejects).map(([kind, n]) => (MARKER_KIND[kind] || kind) + " " + n).join(" · ") },
+  { key: "review_format_errors", label: "리뷰 형식 오류", num: true, text: (r) => String(r.review_format_errors) },
   { key: "last_seen_at", label: "최근 관측", num: true, text: (r) => (r.last_seen_at ? new Date(r.last_seen_at).toLocaleDateString("ko-KR") : "–"), title: (r) => (r.last_seen_at ? new Date(r.last_seen_at).toLocaleString("ko-KR") : "") },
 ];
+
+const MARKER_KIND = { attach: "첨부", request: "요청", request_result: "요청 결과", decision: "결정" };
 
 let rows = [];
 let generatedAt = 0;
@@ -105,13 +109,14 @@ export async function openModelStatsDialog() {
   try {
     const data = await api("GET", "/api/stats/models");
     if (!data || !Array.isArray(data.rows)) throw new Error("응답에 rows 배열이 없습니다");
-    rows = data.rows;
+    // Sorting needs one number; the per-kind counts stay in the cell tooltip.
+    rows = data.rows.map((r) => ({ ...r, marker_reject_total: Object.values(r.marker_rejects).reduce((a, b) => a + b, 0) }));
     generatedAt = Number(data.generated_at) || 0;
     if (!rows.length) {
       status.textContent = "아직 기록된 에이전트 턴이 없습니다. 방에서 대화하면 여기에 쌓입니다.";
       return;
     }
-    status.textContent = rows.length + "행 · 계산 시각 " + (generatedAt ? new Date(generatedAt).toLocaleString("ko-KR") : "알 수 없음") + " · 저장된 방 데이터에서 계산한 값이며, 표본(턴 수)이 적은 행은 참고만 하세요.";
+    status.textContent = rows.length + "행 · 계산 시각 " + (generatedAt ? new Date(generatedAt).toLocaleString("ko-KR") : "알 수 없음") + " · 저장된 방 데이터에서 계산한 값이며, 표본(턴 수)이 적은 행은 참고만 하세요." + (data.unattributed_marker_rejects > 0 ? " 모델 기록 이전의 마커 거절 " + data.unattributed_marker_rejects + "건은 당시 모델을 알 수 없어 표에서 뺐습니다." : "");
     renderTable();
   } catch (err) {
     status.className = "warn";

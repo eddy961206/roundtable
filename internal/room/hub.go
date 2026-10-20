@@ -1496,7 +1496,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		var applyErr error
 		nextStep, outcome, applyErr = pr.part.Review.Apply(text)
 		if applyErr != nil {
-			msg.Status, msg.Error = "error", "리뷰 표 형식 오류: "+applyErr.Error()
+			msg.Status, msg.Error, msg.ErrorKind = "error", "리뷰 표 형식 오류: "+applyErr.Error(), "review_format"
 			nextStep = pr.part.Review.RetryFormat(applyErr)
 			if nextStep != nil {
 				outcome = "format_retry"
