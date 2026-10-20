@@ -37,9 +37,9 @@ func TestStandingBriefRolesAndPriority(t *testing.T) {
 			t.Errorf("standingBrief missing %q:\n%s", want, brief)
 		}
 	}
-	for _, gone := range []string{"@agy-c(Argon):", "비활성 좌석 역할"} {
+	for _, gone := range []string{"@agy-c(Argon):", "비활성 좌석 역할", "해당 공급자의 모든 활성 참가자를 호출합니다"} {
 		if strings.Contains(brief, gone) {
-			t.Errorf("standingBrief must omit empty or disabled role %q:\n%s", gone, brief)
+			t.Errorf("standingBrief must omit %q:\n%s", gone, brief)
 		}
 	}
 
@@ -56,6 +56,47 @@ func TestStandingBriefRolesAndPriority(t *testing.T) {
 	}
 }
 
+func TestStandingBriefProviderGroupMentions(t *testing.T) {
+	r := &Room{
+		Title: "설계방",
+		Mode:  agent.ModeRead,
+		Participants: []*Participant{
+			{ID: "claude-a", Provider: "claude", Label: "Fable", Enabled: true},
+			{ID: "codex-a", Provider: "codex", Label: "Astra", Enabled: true},
+			{ID: "codex-b", Provider: "codex", Label: "Sol", Enabled: false},
+			{ID: "codex-c", Provider: "codex", Label: "Removed", Enabled: true, Removed: true},
+			{ID: "agy-a", Provider: "agy", Label: "Argon", Enabled: true},
+		},
+	}
+	me := r.Participants[0]
+
+	singlePerProvider := standingBrief(r, me, nil, "")
+	if strings.Contains(singlePerProvider, "해당 공급자의 모든 활성 참가자를 호출합니다") {
+		t.Fatalf("group mention line must be omitted when no provider has >=2 active seats:\n%s", singlePerProvider)
+	}
+
+	r.Participants[2].Enabled = true // codex now has 2 active seats
+	codexGroup := standingBrief(r, me, nil, "")
+	wantCodex := "- @codex는 해당 공급자의 모든 활성 참가자를 호출합니다. 한 명만 부르려면 위 목록의 고유 @ID를 쓰세요.\n"
+	if !strings.Contains(codexGroup, wantCodex) {
+		t.Fatalf("standingBrief missing codex group mention line %q:\n%s", wantCodex, codexGroup)
+	}
+	if briefKey(singlePerProvider) == briefKey(codexGroup) {
+		t.Fatal("enabling a second seat of a provider must change briefKey")
+	}
+
+	r.Participants = append(r.Participants,
+		&Participant{ID: "claude-b", Provider: "claude", Label: "Sonnet", Enabled: true},
+		&Participant{ID: "agy-b", Provider: "agy", Label: "Pro", Enabled: true},
+	)
+	r.Participants[2].Enabled = false // codex back to 1 active seat; claude and agy have 2 each
+	multiGroup := standingBrief(r, me, nil, "")
+	wantMulti := "- @claude, @agy는 해당 공급자의 모든 활성 참가자를 호출합니다. 한 명만 부르려면 위 목록의 고유 @ID를 쓰세요.\n"
+	if !strings.Contains(multiGroup, wantMulti) {
+		t.Fatalf("standingBrief missing multi-provider group mention line %q:\n%s", wantMulti, multiGroup)
+	}
+}
+
 func TestBriefedReminderIncludesRoleAndSignalBlockRule(t *testing.T) {
 	r := &Room{
 		Title: "설계방",
@@ -65,30 +106,84 @@ func TestBriefedReminderIncludesRoleAndSignalBlockRule(t *testing.T) {
 		},
 	}
 	me := r.Participants[0]
-	hist := []*Message{{Kind: "user", Author: "user", Text: "확인해줘", Status: "done"}}
+	hist := []*Message{{Seq: 7, Kind: "user", Author: "user", Text: "확인해줘", Status: "done"}}
 
-	withRole := BuildPrompt(r, me, hist, turnContext{Reason: "mention", Briefed: true})
-	for _, want := range []string{
-		"당신의 역할: 문구·소통과 시각 검토를 먼저 깊게 본다. 다른 문제도 말한다.",
-		"강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.",
-		"응답 끝 신호 블록",
-		"[[REQUEST_DONE:요청ID]]",
-		"[[REQUEST_REJECT:요청ID]]",
-		"[[DISCUSSION:...]]",
-		"WORK:DONE",
+	for _, reason := range []string{"mention", "broadcast"} {
+		ordinary := BuildPrompt(r, me, hist, turnContext{Reason: reason, Briefed: true})
+		for _, want := range []string{
+			"당신의 역할: 문구·소통과 시각 검토를 먼저 깊게 본다. 다른 문제도 말한다.",
+			"강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.",
+			"[#7 User] 확인해줘",
+		} {
+			if !strings.Contains(ordinary, want) {
+				t.Errorf("briefed %s prompt missing %q:\n%s", reason, want, ordinary)
+			}
+		}
+		if strings.Contains(ordinary, "응답 끝 신호 블록") {
+			t.Errorf("briefed %s prompt without part must omit signal block rule:\n%s", reason, ordinary)
+		}
+	}
+
+	part := &Part{ID: "p3", Title: "P3 안내문", Branch: "rt/room/p3"}
+	for _, tc := range []turnContext{
+		{Reason: "discussion", Round: 1, TotalRounds: 2, Briefed: true},
+		{Reason: "part", Part: part, Briefed: true},
+		{Reason: "mention", Part: part, Briefed: true},
 	} {
-		if !strings.Contains(withRole, want) {
-			t.Errorf("briefed prompt with role missing %q:\n%s", want, withRole)
+		withSignals := BuildPrompt(r, me, hist, tc)
+		for _, want := range []string{
+			"당신의 역할: 문구·소통과 시각 검토를 먼저 깊게 본다. 다른 문제도 말한다.",
+			"응답 끝 신호 블록",
+			"[[REQUEST_DONE:요청ID]]",
+			"[[REQUEST_REJECT:요청ID]]",
+			"[[DISCUSSION:...]]",
+			"WORK:DONE",
+		} {
+			if !strings.Contains(withSignals, want) {
+				t.Errorf("briefed %s (part=%v) prompt missing %q:\n%s", tc.Reason, tc.Part != nil, want, withSignals)
+			}
 		}
 	}
 
 	me.Role = ""
-	withoutRole := BuildPrompt(r, me, hist, turnContext{Reason: "mention", Briefed: true})
-	if strings.Contains(withoutRole, "당신의 역할:") {
-		t.Errorf("briefed prompt without role must omit role line:\n%s", withoutRole)
+	withoutRoleMention := BuildPrompt(r, me, hist, turnContext{Reason: "mention", Briefed: true})
+	if strings.Contains(withoutRoleMention, "당신의 역할:") || strings.Contains(withoutRoleMention, "응답 끝 신호 블록") {
+		t.Errorf("briefed mention prompt without role/part must omit both lines:\n%s", withoutRoleMention)
 	}
-	if !strings.Contains(withoutRole, "응답 끝 신호 블록") {
-		t.Errorf("briefed prompt must always include signal block rule:\n%s", withoutRole)
+	withoutRoleDiscussion := BuildPrompt(r, me, hist, turnContext{Reason: "discussion", Round: 1, TotalRounds: 2, Briefed: true})
+	if strings.Contains(withoutRoleDiscussion, "당신의 역할:") {
+		t.Errorf("briefed discussion prompt without role must omit role line:\n%s", withoutRoleDiscussion)
+	}
+	if !strings.Contains(withoutRoleDiscussion, "응답 끝 신호 블록") {
+		t.Errorf("briefed discussion prompt must include signal block rule:\n%s", withoutRoleDiscussion)
+	}
+}
+
+func TestRenderHistoryFormatsSeqAndSpeaker(t *testing.T) {
+	r := &Room{
+		Title: "설계방",
+		Mode:  agent.ModeChat,
+		Participants: []*Participant{
+			{ID: "claude-a", Provider: "claude", Label: "Fable", Enabled: true},
+			{ID: "codex-b", Provider: "codex", Label: "Sol", Enabled: true},
+		},
+	}
+	hist := []*Message{
+		{Seq: 1, Kind: "user", Author: "user", Text: "첫 질문", Status: "done"},
+		{Seq: 2, Kind: "system", Author: "system", Text: "토론 시작", Status: "done"},
+		{Seq: 3, Kind: "agent", Author: "codex-b", Text: "내 답변", Status: "done"},
+		{Seq: 4, Kind: "agent", Author: "removed-seat", Status: "error", Error: "exit 1"},
+	}
+	got := renderHistory(r, hist)
+	for _, want := range []string{
+		"[#1 User] 첫 질문\n",
+		"[#2 System] 토론 시작\n",
+		"[#3 @codex-b (Sol)] 내 답변\n",
+		"[#4 @removed-seat] (응답 실패: exit 1)\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("renderHistory missing %q:\n%s", want, got)
+		}
 	}
 }
 

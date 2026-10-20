@@ -147,7 +147,7 @@ func TestBroadcastAndDelta(t *testing.T) {
 	if got := agentTexts(snap, "codex"); len(got) != 1 {
 		t.Fatalf("codex messages %v", got)
 	}
-	if !strings.Contains(a.prompts[0], "[User] 첫 질문") || !strings.Contains(a.prompts[0], "지금까지의 대화") {
+	if !strings.Contains(a.prompts[0], "] 첫 질문") || !strings.Contains(a.prompts[0], "지금까지의 대화") {
 		t.Fatalf("first prompt should carry the whole transcript: %s", a.prompts[0])
 	}
 	p := snap.Room.participant("claude")
@@ -160,7 +160,7 @@ func TestBroadcastAndDelta(t *testing.T) {
 	waitIdle(t, hub, r.ID)
 	second := a.prompts[1]
 	_, hist, ok := strings.Cut(second, "새로 올라온 메시지 ===")
-	if !ok || strings.Contains(hist, "[User] 첫 질문") || strings.Count(hist, "[@codex (CODEX 1)] 답변 codex") != 1 || strings.Contains(hist, "[@claude (CLAUDE 1)]") || !strings.Contains(hist, "[User] 둘째 질문") {
+	if !ok || strings.Contains(hist, "] 첫 질문") || strings.Count(hist, "@codex (CODEX 1)] 답변 codex") != 1 || strings.Contains(hist, "@claude (CLAUDE 1)]") || !strings.Contains(hist, "] 둘째 질문") {
 		t.Fatalf("delta prompt wrong:\n%s", second)
 	}
 }
@@ -250,7 +250,7 @@ func TestDiscussionEndsOnAgreement(t *testing.T) {
 		t.Fatal("end-of-discussion notice missing")
 	}
 	// discussion turns are sequential: codex's round-1 prompt must contain claude's round-1 reply
-	if !strings.Contains(b.prompts[0], "[@claude (CLAUDE 1)] 의견 A") {
+	if !strings.Contains(b.prompts[0], "@claude (CLAUDE 1)] 의견 A") {
 		t.Fatalf("sequential delivery broken:\n%s", b.prompts[0])
 	}
 }
@@ -296,7 +296,7 @@ func TestSteerLiveAndQueued(t *testing.T) {
 	if a.calls() != 1 {
 		t.Fatalf("live steer must not create another claude turn, calls=%d", a.calls())
 	}
-	if b.calls() != 2 || !strings.Contains(b.prompts[1], "[User] 너도 바꿔") || strings.Contains(b.prompts[1], "방향 바꿔") {
+	if b.calls() != 2 || !strings.Contains(b.prompts[1], "] 너도 바꿔") || strings.Contains(b.prompts[1], "방향 바꿔") {
 		t.Fatalf("queued steer wrong: calls=%d prompt=%s", b.calls(), b.prompts[len(b.prompts)-1])
 	}
 }
@@ -325,7 +325,7 @@ func TestFailedTurnRedeliversMessages(t *testing.T) {
 		t.Fatalf("calls %d", a.calls())
 	}
 	second := a.prompts[1]
-	if !strings.Contains(second, "[User] 첫 질문") || !strings.Contains(second, "[User] 둘째 질문") {
+	if !strings.Contains(second, "] 첫 질문") || !strings.Contains(second, "] 둘째 질문") {
 		t.Fatalf("messages of the failed turn must be redelivered: %s", second)
 	}
 	snap, _ := hub.Snapshot(r.ID)

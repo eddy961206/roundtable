@@ -11,25 +11,25 @@ func TestBriefedPromptOmitsStandingBrief(t *testing.T) {
 	r := &Room{Title: "설계", Mode: "read", Workspace: "ws", Note: "결정은 사람이 한다",
 		Participants: []*Participant{{ID: "claude-a", Provider: "claude", Label: "Opus", Enabled: true}, {ID: "codex-b", Provider: "codex", Label: "Astra", Enabled: true}}}
 	me := r.Participants[0]
-	hist := []*Message{{Kind: "user", Author: "user", Text: "다음 질문", Status: "done"}}
+	hist := []*Message{{Seq: 1, Kind: "user", Author: "user", Text: "다음 질문", Status: "done"}}
 	full := BuildPrompt(r, me, hist, turnContext{Reason: "mention"})
 	short := BuildPrompt(r, me, hist, turnContext{Reason: "mention", Briefed: true})
 	if !strings.Contains(full, "결정은 사람이 한다") || !strings.Contains(full, "규칙:") {
 		t.Fatal("unbriefed resume must carry the standing brief")
 	}
-	for _, gone := range []string{"결정은 사람이 한다", "규칙:", "@codex-b(Astra)"} {
+	for _, gone := range []string{"결정은 사람이 한다", "규칙:", "@codex-b(Astra)", "응답 끝 신호 블록"} {
 		if strings.Contains(short, gone) {
 			t.Errorf("briefed prompt repeats %q", gone)
 		}
 	}
-	for _, want := range []string{"받은 그대로", `"@claude-a"(Opus)`, "[User] 다음 질문"} {
+	for _, want := range []string{"받은 그대로", `"@claude-a"(Opus)`, "[#1 User] 다음 질문"} {
 		if !strings.Contains(short, want) {
 			t.Errorf("briefed prompt missing %q", want)
 		}
 	}
 	d := BuildPrompt(r, me, nil, turnContext{Reason: "discussion", Round: 1, TotalRounds: 2, Briefed: true})
-	if !strings.Contains(d, "추가로 호출할 수 없습니다") || !strings.Contains(d, "토론 1/2") {
-		t.Error("turn rules must survive a briefed prompt")
+	if !strings.Contains(d, "추가로 호출할 수 없습니다") || !strings.Contains(d, "토론 1/2") || !strings.Contains(d, "응답 끝 신호 블록") {
+		t.Error("turn rules and signal block reminder must survive a briefed discussion prompt")
 	}
 }
 

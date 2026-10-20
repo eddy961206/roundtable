@@ -25,7 +25,7 @@ func TestQueueReviewComparisonReadsCompletedReply(t *testing.T) {
 			finishCall(first[later], "other first answer")
 			secondLate := nextCall(t, ps[later])
 			if strings.Contains(secondLate.opts.Prompt, "unfinished first answer") ||
-				!strings.Contains(secondLate.opts.Prompt, "[@"+ps[earlier].id+" ("+r.participant(ps[earlier].id).Label+")] completed first answer") {
+				!strings.Contains(secondLate.opts.Prompt, "@"+ps[earlier].id+" ("+r.participant(ps[earlier].id).Label+")] completed first answer") {
 				t.Fatalf("completed answer was frozen as streaming: %s", secondLate.opts.Prompt)
 			}
 			s := queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return s.Room.participant(ps[later].id).Turns == 1 })
@@ -73,8 +73,8 @@ func TestQueueReviewLateUndeliveredLiveIsDelivered(t *testing.T) {
 				}
 			}
 			correction := nextCall(t, ps[0])
-			if !strings.Contains(correction.opts.Prompt, "[User] late correction") ||
-				!strings.Contains(correction.opts.Prompt, "[User] @claude next question") {
+			if !strings.Contains(correction.opts.Prompt, "] late correction") ||
+				!strings.Contains(correction.opts.Prompt, "] @claude next question") {
 				t.Fatalf("late correction or queued question missing: %s", correction.opts.Prompt)
 			}
 			hub.mu.Lock()
@@ -123,7 +123,7 @@ func TestQueueReviewUndeliveredLiveCreatesItsOwnTurn(t *testing.T) {
 				}
 			}
 			next := nextCall(t, ps[0])
-			if !strings.Contains(next.opts.Prompt, "[User] correction without another question") {
+			if !strings.Contains(next.opts.Prompt, "] correction without another question") {
 				t.Fatalf("correction was not retried: %s", next.opts.Prompt)
 			}
 			finishCall(next, "received")
@@ -140,8 +140,8 @@ func TestQueueReviewPriorityConsumesOrdinaryWithoutEmptyRun(t *testing.T) {
 	postQueueMessage(t, hub, r.ID, "priority target", "codex")
 	finishCall(first, "first reply")
 	urgent := nextCall(t, ps[0])
-	if !strings.Contains(urgent.opts.Prompt, "[User] ordinary broadcast") ||
-		!strings.Contains(urgent.opts.Prompt, "[User] priority target") {
+	if !strings.Contains(urgent.opts.Prompt, "] ordinary broadcast") ||
+		!strings.Contains(urgent.opts.Prompt, "] priority target") {
 		t.Fatalf("ordinary or target input was lost: %s", urgent.opts.Prompt)
 	}
 	finishCall(urgent, "urgent reply")
@@ -185,7 +185,7 @@ func TestQueueReviewOrdinaryWaitsForDiscussion(t *testing.T) {
 				}
 				finishCall(codex, "codex view\n[[DISCUSSION:AGREE]]")
 				agy := nextCall(t, ps[2])
-				if route == "broadcast" && !strings.Contains(agy.opts.Prompt, "[User] ordinary during discussion") {
+				if route == "broadcast" && !strings.Contains(agy.opts.Prompt, "] ordinary during discussion") {
 					t.Fatalf("broadcast was not delivered in the discussion: %s", agy.opts.Prompt)
 				}
 				finishCall(agy, "agy view\n[[DISCUSSION:AGREE]]")
@@ -204,7 +204,7 @@ func TestQueueReviewOrdinaryWaitsForDiscussion(t *testing.T) {
 			}
 			finishCall(claude, "claude view\n[[DISCUSSION:AGREE]]")
 			codex := nextCall(t, ps[1])
-			if !strings.Contains(codex.opts.Prompt, "[User] codex target during discussion") {
+			if !strings.Contains(codex.opts.Prompt, "] codex target during discussion") {
 				t.Fatalf("target was not delivered to the discussion speaker: %s", codex.opts.Prompt)
 			}
 			if !strings.Contains(codex.opts.Prompt, "자율 토론") {
@@ -285,7 +285,7 @@ func TestQueueReviewResetDoesNotRefreezeWaitingTurn(t *testing.T) {
 	finishCall(firstCodex, "old codex result")
 	next := nextCall(t, ps[1])
 	if next.opts.SessionID != "" || strings.Contains(next.opts.Prompt, "unfinished before reset") ||
-		!strings.Contains(next.opts.Prompt, "[@claude (CLAUDE 1)] claude before codex finishes") {
+		!strings.Contains(next.opts.Prompt, "@claude (CLAUDE 1)] claude before codex finishes") {
 		t.Fatalf("queued reset session did not read current completed content: %+v", next.opts)
 	}
 	finishCall(next, "fresh result")
@@ -353,7 +353,7 @@ func TestQueueReviewStopPersistsUndeliveredLiveWithoutRestart(t *testing.T) {
 	}
 	postQueueMessage(t, hub, r.ID, "explicit restart", "claude")
 	next := nextCall(t, ps[0])
-	if !strings.Contains(next.opts.Prompt, "[User] correction before stop") {
+	if !strings.Contains(next.opts.Prompt, "] correction before stop") {
 		t.Fatal("stopped correction was lost")
 	}
 	finishCall(next, "handled after explicit restart")

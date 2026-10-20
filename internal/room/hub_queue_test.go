@@ -119,7 +119,7 @@ func TestTargetRunsWhileOtherParticipantIsBusy(t *testing.T) {
 
 	postQueueMessage(t, hub, r.ID, "codex target while claude runs", "codex")
 	targeted := nextCall(t, ps[1])
-	if !strings.Contains(targeted.opts.Prompt, "[User] codex target while claude runs") {
+	if !strings.Contains(targeted.opts.Prompt, "] codex target while claude runs") {
 		t.Fatalf("target behind streaming reply was lost: %s", targeted.opts.Prompt)
 	}
 	finishCall(targeted, "target completed")
@@ -137,8 +137,8 @@ func TestTargetRunsWhileOtherParticipantIsBusy(t *testing.T) {
 	// once on the next turn, while the already delivered target stays excluded.
 	postQueueMessage(t, hub, r.ID, "read the late reply", "codex")
 	later := nextCall(t, ps[1])
-	if strings.Count(later.opts.Prompt, "[@claude (CLAUDE 1)] slow reply after target") != 1 ||
-		strings.Contains(later.opts.Prompt, "[User] codex target while claude runs") {
+	if strings.Count(later.opts.Prompt, "@claude (CLAUDE 1)] slow reply after target") != 1 ||
+		strings.Contains(later.opts.Prompt, "] codex target while claude runs") {
 		t.Fatalf("out-of-order delta is wrong: %s", later.opts.Prompt)
 	}
 	finishCall(later, "read")
@@ -174,8 +174,8 @@ func TestParticipantQueuedTargetsRunInOrder(t *testing.T) {
 	}
 	finishCall(first, "first reply")
 	second := nextCall(t, ps[0])
-	if second.opts.SessionID != "codex-session" || !strings.Contains(second.opts.Prompt, "[User] second") ||
-		strings.Contains(second.opts.Prompt, "[User] third") {
+	if second.opts.SessionID != "codex-session" || !strings.Contains(second.opts.Prompt, "] second") ||
+		strings.Contains(second.opts.Prompt, "] third") {
 		t.Fatalf("second turn wrong: %+v", second.opts)
 	}
 	select {
@@ -185,8 +185,8 @@ func TestParticipantQueuedTargetsRunInOrder(t *testing.T) {
 	}
 	finishCall(second, "second reply")
 	third := nextCall(t, ps[0])
-	if third.opts.SessionID != "codex-session" || !strings.Contains(third.opts.Prompt, "[User] third") ||
-		strings.Contains(third.opts.Prompt, "[User] second") {
+	if third.opts.SessionID != "codex-session" || !strings.Contains(third.opts.Prompt, "] third") ||
+		strings.Contains(third.opts.Prompt, "] second") {
 		t.Fatalf("third turn wrong: %+v", third.opts)
 	}
 	finishCall(third, "third reply")
@@ -202,8 +202,8 @@ func TestBroadcastSnapshotSurvivesBusyParticipant(t *testing.T) {
 	queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return s.Room.participant("codex").Status == "idle" })
 	finishCall(slow, "prior claude answer")
 	delayed := nextCall(t, ps[0])
-	if !strings.Contains(fast.opts.Prompt, "[User] shared broadcast") ||
-		!strings.Contains(delayed.opts.Prompt, "[User] shared broadcast") ||
+	if !strings.Contains(fast.opts.Prompt, "] shared broadcast") ||
+		!strings.Contains(delayed.opts.Prompt, "] shared broadcast") ||
 		strings.Contains(delayed.opts.Prompt, "fast broadcast answer") {
 		t.Fatalf("broadcast snapshot changed:\nfast=%s\ndelayed=%s", fast.opts.Prompt, delayed.opts.Prompt)
 	}
@@ -269,8 +269,8 @@ func TestQueuedTargetRetriesFailedInput(t *testing.T) {
 	postQueueMessage(t, hub, r.ID, "second input", "codex")
 	first.result <- controlledResult{err: errors.New("first failed")}
 	second := nextCall(t, ps[0])
-	if !strings.Contains(second.opts.Prompt, "[User] retry first input") ||
-		!strings.Contains(second.opts.Prompt, "[User] second input") {
+	if !strings.Contains(second.opts.Prompt, "] retry first input") ||
+		!strings.Contains(second.opts.Prompt, "] second input") {
 		t.Fatalf("failed input lost from already queued turn: %s", second.opts.Prompt)
 	}
 	finishCall(second, "retried")
@@ -289,7 +289,7 @@ func TestQueuedTurnReceivesUndeliveredLiveSteer(t *testing.T) {
 	// This provider never writes steering to a CLI and reports Steered == 0.
 	finishCall(first, "first reply")
 	queued := nextCall(t, ps[0])
-	if !strings.Contains(queued.opts.Prompt, "[User] undelivered live correction") {
+	if !strings.Contains(queued.opts.Prompt, "] undelivered live correction") {
 		t.Fatalf("frozen Live flag lost an undelivered correction: %s", queued.opts.Prompt)
 	}
 	finishCall(queued, "correction received")
@@ -307,9 +307,9 @@ func TestResetRefreshesQueuedSessionAndPrompt(t *testing.T) {
 	next := nextCall(t, ps[0])
 	if next.opts.SessionID != "" ||
 		!strings.Contains(next.opts.Prompt, "지금까지의 대화") ||
-		!strings.Contains(next.opts.Prompt, "[User] first before reset") ||
-		!strings.Contains(next.opts.Prompt, "[User] queued before reset") ||
-		strings.Contains(next.opts.Prompt, "[System] 세션을 초기화했어.") {
+		!strings.Contains(next.opts.Prompt, "] first before reset") ||
+		!strings.Contains(next.opts.Prompt, "] queued before reset") ||
+		strings.Contains(next.opts.Prompt, "] 세션을 초기화했어.") {
 		t.Fatalf("queued turn did not refresh after reset: %+v", next.opts)
 	}
 	finishCall(next, "fresh session")
@@ -331,7 +331,7 @@ func TestCancelQueuedTargetPreservesFollowingTurn(t *testing.T) {
 	}
 	finishCall(first, "first reply")
 	third := nextCall(t, ps[0])
-	if !strings.Contains(third.opts.Prompt, "[User] third") {
+	if !strings.Contains(third.opts.Prompt, "] third") {
 		t.Fatalf("following target lost: %s", third.opts.Prompt)
 	}
 	finishCall(third, "third reply")
@@ -365,8 +365,8 @@ func TestUnfinishedReplyGapPersistsAcrossReload(t *testing.T) {
 	})
 	postQueueMessage(t, restored, r.ID, "after reload", "codex")
 	next := nextCall(t, ps[1])
-	if !strings.Contains(next.opts.Prompt, "[@claude (CLAUDE 1)] late reply persisted") ||
-		strings.Contains(next.opts.Prompt, "[User] past gap") {
+	if !strings.Contains(next.opts.Prompt, "@claude (CLAUDE 1)] late reply persisted") ||
+		strings.Contains(next.opts.Prompt, "] past gap") {
 		t.Fatalf("persisted out-of-order delivery wrong: %s", next.opts.Prompt)
 	}
 	finishCall(next, "read after reload")
@@ -391,7 +391,7 @@ func TestLiveSteerCountBelongsToCurrentTurn(t *testing.T) {
 	}
 	postQueueMessage(t, hub, r.ID, "last", "claude")
 	last := nextCall(t, ps[0])
-	if strings.Contains(last.opts.Prompt, "[User] first live") || strings.Contains(last.opts.Prompt, "[User] second live") {
+	if strings.Contains(last.opts.Prompt, "] first live") || strings.Contains(last.opts.Prompt, "] second live") {
 		t.Fatalf("delivered steer repeated: %s", last.opts.Prompt)
 	}
 	finishCall(last, "done")
@@ -415,8 +415,8 @@ func TestTargetKeepsPriorityOverOrdinaryQueuedTurn(t *testing.T) {
 	}
 	finishCall(first, "first reply")
 	urgent := nextCall(t, ps[0])
-	if !strings.Contains(urgent.opts.Prompt, "[User] priority target") ||
-		!strings.Contains(urgent.opts.Prompt, "[User] ordinary broadcast") {
+	if !strings.Contains(urgent.opts.Prompt, "] priority target") ||
+		!strings.Contains(urgent.opts.Prompt, "] ordinary broadcast") {
 		t.Fatalf("ordinary turn ran before target: %s", urgent.opts.Prompt)
 	}
 	finishCall(urgent, "urgent reply")

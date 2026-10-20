@@ -14,17 +14,23 @@ func TestMentionIdentityPrecedesLabels(t *testing.T) {
 		{ID: "claude-a", Provider: "claude", Label: "codex-a", Enabled: true},
 		{ID: "claude-b", Provider: "claude", Label: "codex", Enabled: true},
 	}
-	for text, want := range map[string][]string{
-		"@codex-a":  {"codex-a"},
-		"@codex-a야": {"codex-a"},
-		"@codex":    {"codex-a", "codex-b"},
-		"@codex에게":  {"codex-a", "codex-b"},
-	} {
+	for _, text := range []string{"@codex-a", "@codex-a야", "@codex", "@codex에게"} {
+		want := map[string][]string{
+			"@codex-a":  {"codex-a"},
+			"@codex-a야": {"codex-a"},
+			"@codex":    {"codex-a", "codex-b"},
+			"@codex에게":  {"codex-a", "codex-b"},
+		}[text]
 		t.Run(text, func(t *testing.T) {
 			if got := ParseParticipantMentions(text, ps); !reflect.DeepEqual(got, want) {
 				t.Fatalf("got %v want %v", got, want)
 			}
 		})
+	}
+	r := &Room{Title: "t", Participants: ps}
+	brief := standingBrief(r, ps[0], nil, "")
+	if !strings.Contains(brief, "- @codex, @claude는 해당 공급자의 모든 활성 참가자를 호출합니다. 한 명만 부르려면 위 목록의 고유 @ID를 쓰세요.\n") {
+		t.Fatalf("standingBrief did not list active multi-seat providers in order:\n%s", brief)
 	}
 }
 

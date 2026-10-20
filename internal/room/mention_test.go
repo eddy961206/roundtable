@@ -51,15 +51,15 @@ func TestBuildPrompt(t *testing.T) {
 	r := &Room{Title: "설계 검토", Mode: "read", Workspace: `D:\ws`, Note: "결정은 사람이 한다",
 		Participants: []*Participant{{ID: "claude-seat", Provider: "claude", Label: "Claude Code", Enabled: true}, {ID: "codex-seat", Provider: "codex", Label: "Codex", Enabled: true}, {ID: "agy-seat", Provider: "agy", Label: "Antigravity", Enabled: false}}}
 	me := r.Participants[0]
-	hist := []*Message{{Kind: "user", Author: "user", Text: "안녕", Status: "done"}, {Kind: "agent", Author: "codex-seat", Text: "반가워", Status: "done"}, {Kind: "agent", Author: "agy-seat", Status: "error", Error: "exit 1"}}
+	hist := []*Message{{Seq: 1, Kind: "user", Author: "user", Text: "안녕", Status: "done"}, {Seq: 2, Kind: "agent", Author: "codex-seat", Text: "반가워", Status: "done"}, {Seq: 3, Kind: "agent", Author: "agy-seat", Status: "error", Error: "exit 1"}}
 	p := BuildPrompt(r, me, hist, turnContext{Reason: "broadcast", Parallel: true, FirstTurn: true})
-	for _, want := range []string{`"@claude-seat"`, "@codex-seat(Codex)", "결정은 사람이 한다", "[User] 안녕", "[@codex-seat (Codex)] 반가워", "(응답 실패: exit 1)", "동시에 받았습니다", "지금까지의 대화", `D:\ws`, "@all", "@claude, @codex, @agy는 해당 공급자의 모든 활성 참가자를 호출합니다", "고유 @ID"} {
+	for _, want := range []string{`"@claude-seat"`, "@codex-seat(Codex)", "결정은 사람이 한다", "[#1 User] 안녕", "[#2 @codex-seat (Codex)] 반가워", "[#3 @agy-seat (Antigravity)] (응답 실패: exit 1)", "동시에 받았습니다", "지금까지의 대화", `D:\ws`, "@all"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt missing %q", want)
 		}
 	}
-	if strings.Contains(p, "@agy-seat(") {
-		t.Error("disabled participant must not be in the roster")
+	if strings.Contains(p, "@agy-seat(") || strings.Contains(p, "해당 공급자의 모든 활성 참가자를 호출합니다") {
+		t.Error("disabled participant or single-seat provider group line must not be in the prompt")
 	}
 	d := BuildPrompt(r, me, nil, turnContext{Reason: "discussion", Round: 2, TotalRounds: 3})
 	for _, want := range []string{"토론 2/3", "[[DISCUSSION:CONTINUE]]", "(없음)", "새로 올라온 메시지", "추가로 호출할 수 없습니다"} {
