@@ -1,15 +1,19 @@
 package room
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Shutdown stops room-owned CLI invocations and waits for their final messages
 // to be persisted. Interactive CLI windows opened by the user are independent.
 func (h *Hub) Shutdown(ctx context.Context) error {
 	h.mu.Lock()
+	var stopErr error
 	if !h.closing {
 		h.closing = true
 		for _, rs := range h.rooms {
-			rs.stopLocked("서버 종료")
+			stopErr = errors.Join(stopErr, h.stopLocked(rs, "서버 종료"))
 			for ch := range rs.subs {
 				close(ch)
 			}
@@ -25,9 +29,9 @@ func (h *Hub) Shutdown(ctx context.Context) error {
 	go func() { h.turnWG.Wait(); close(done) }()
 	select {
 	case <-done:
-		return h.waitLimits(ctx)
+		return errors.Join(stopErr, h.waitLimits(ctx))
 	case <-ctx.Done():
 		_ = h.waitLimits(ctx) // cancel usage RPCs even when a CLI did not drain in time
-		return ctx.Err()
+		return errors.Join(stopErr, ctx.Err())
 	}
 }

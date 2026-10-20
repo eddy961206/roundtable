@@ -147,13 +147,19 @@ var resultMarker = regexp.MustCompile(`^\[\[REQUEST_(DONE|REJECT):([^\]\s]+)\]\]
 // markerError records which handler rejected the line and the reply it came
 // from; the model at that time is the source reply's Model.
 func (h *Hub) markerError(rs *roomState, pr *prepared, kind, marker, reason string) error {
-	m := rs.nextMessage("system", "system", fmt.Sprintf("@%s 마커 거절 (%s): %s", pr.p.ID, marker, reason))
+	return h.addSeatNotice(rs, pr, kind, fmt.Sprintf("@%s 마커 거절 (%s): %s", pr.p.ID, marker, reason))
+}
+
+func (h *Hub) addSeatNotice(rs *roomState, pr *prepared, kind, text string) error {
+	m := rs.nextMessage("system", "system", text)
 	m.NoticeFor, m.NoticeMarker, m.NoticeMsg = pr.p.ID, kind, pr.msg.ID
 	if pr.part != nil {
 		m.Part = pr.part.ID
 	}
 	if err := h.store.AppendMessage(rs.room.ID, m); err != nil {
-		return err
+		rs.msgs = rs.msgs[:len(rs.msgs)-1]
+		// An unsuccessful append must not make this sequence reusable.
+		return h.reportPersistenceError(rs, "마커 공지", err)
 	}
 	rs.broadcast("message", m)
 	return nil

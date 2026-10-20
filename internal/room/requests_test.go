@@ -10,6 +10,52 @@ import (
 	"roundtable/internal/agent"
 )
 
+func TestRequestResultRoutesOnceWithChainLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason, status, text string
+		depth                      int
+		disabled                   bool
+		want                       int
+	}{
+		{name: "done", status: "done", want: 1},
+		{name: "rejected", status: "rejected", want: 1},
+		{name: "ordinary mention deduplicated", status: "done", text: "@codex result", want: 1},
+		{name: "pending", status: "pending"},
+		{name: "cancelled", status: "cancelled"},
+		{name: "depth at limit", status: "done", depth: 2},
+		{name: "discussion", reason: "discussion", status: "done", text: "@codex result"},
+		{name: "review", reason: "review", status: "done", text: "@codex result"},
+		{name: "inactive requester", status: "done", disabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, r := newTestHub(t, &fakeProvider{id: "codex"}, &fakeProvider{id: "claude"})
+			rs := h.rooms[r.ID]
+			r.Participants[0].Enabled = !tc.disabled
+			msg := rs.nextMessage("agent", "claude", tc.text)
+			// Two result markers for the same requester still produce one turn.
+			for _, id := range []string{"r1", "r2"} {
+				rs.requests = append(rs.requests, Request{ID: id, From: "codex", To: "claude", ResultMsg: msg.ID, Status: tc.status})
+			}
+			h.chainMentions(rs, msg, &Turn{Reason: tc.reason, Depth: tc.depth})
+			if len(rs.queue) != tc.want {
+				t.Fatalf("queue: %+v", rs.queue)
+			}
+			if tc.want > 0 {
+				got := rs.queue[0]
+				if got.Agent != "codex" || got.Reason != "mention" || got.Group != msg.ID || got.Cap != msg.Seq || got.Depth != tc.depth+1 {
+					t.Fatalf("result turn: %+v", got)
+				}
+			}
+			if tc.depth == 2 {
+				_, saved, err := h.store.LoadRooms()
+				if err != nil || len(saved[r.ID]) != 1 || !strings.Contains(saved[r.ID][0].Text, "연쇄 한도") {
+					t.Fatalf("chain-limit note not durable: %+v %v", saved, err)
+				}
+			}
+		})
+	}
+}
+
 func TestRequestLifecycleAndReplay(t *testing.T) {
 	for _, outcome := range []string{"done", "rejected", "pending", "cancelled", "error"} {
 		t.Run(outcome, func(t *testing.T) {
@@ -58,6 +104,13 @@ func TestRequestLifecycleAndReplay(t *testing.T) {
 				to.result <- controlledResult{text: "[[REQUEST_DONE:" + req.ID + "]]", err: os.ErrPermission}
 			} else {
 				to.result <- controlledResult{text: text}
+			}
+			if outcome == "done" || outcome == "rejected" {
+				result := nextCall(t, ps[0])
+				if !strings.Contains(result.opts.Prompt, text) {
+					t.Fatalf("requester did not receive result: %s", result.opts.Prompt)
+				}
+				finishCall(result, "result received")
 			}
 			waitIdle(t, h, r.ID)
 			snap, _ = h.Snapshot(r.ID)

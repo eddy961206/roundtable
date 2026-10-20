@@ -62,6 +62,12 @@ func main() {
 	}
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
+	// Reserve the address before startup recovery can mutate persisted rooms.
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		logger.Fatalf("listen %s: %v", *addr, err)
+	}
+	defer ln.Close()
 	store, err := room.NewStore(*data)
 	if err != nil {
 		logger.Fatalf("data dir: %v", err)
@@ -96,10 +102,6 @@ func main() {
 	}
 	srv := server.New(hub, reg, web)
 
-	ln, err := net.Listen("tcp", *addr)
-	if err != nil {
-		logger.Fatalf("listen %s: %v", *addr, err)
-	}
 	url := "http://" + ln.Addr().String()
 	for _, info := range reg.Infos() {
 		state := "없음"

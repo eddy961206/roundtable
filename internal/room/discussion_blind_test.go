@@ -10,6 +10,149 @@ import (
 	"roundtable/internal/agent"
 )
 
+func TestDiscussionFailuresAreExcludedAndPersisted(t *testing.T) {
+	for _, state := range []string{"error", "cancelled", "all_failed"} {
+		t.Run(state, func(t *testing.T) {
+			h, r, ps := controlledHub(t, "claude", "codex")
+			if err := h.StartDiscussion(r.ID, 1, nil); err != nil {
+				t.Fatal(err)
+			}
+			a, b := nextCall(t, ps[0]), nextCall(t, ps[1])
+			if state == "cancelled" {
+				s, _ := h.Snapshot(r.ID)
+				for _, turn := range s.Queue {
+					if turn.Agent == "claude" {
+						if err := h.CancelTurn(r.ID, turn.ID); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			} else {
+				a.result <- controlledResult{text: "partial\n[[DISCUSSION:CONCLUDE]]", err: os.ErrPermission}
+			}
+			if state == "all_failed" {
+				b.result <- controlledResult{err: os.ErrPermission}
+			} else {
+				finishCall(b, "[[DISCUSSION:AGREE]]")
+			}
+			queueSnapshot(t, h, r.ID, func(s *Snapshot) bool { return s.Discussion == nil && len(s.Queue) == 0 })
+			restarted, err := NewHub(h.store, h.reg, h.scratch, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s, _ := restarted.Snapshot(r.ID)
+			failed := roundMessage(s, "claude", 1)
+			if failed == nil || failed.Status == "done" || failed.Signal != "" {
+				t.Fatalf("failed signal persisted: %+v", failed)
+			}
+			var ending string
+			for _, m := range s.Messages {
+				if m.Kind == "system" && strings.Contains(m.Text, "토론 종료") {
+					ending = m.Text
+				}
+			}
+			if !strings.Contains(ending, "@claude 실패로 제외") || strings.Contains(ending, "전원 동의") || strings.Contains(ending, "결론 제시") {
+				t.Fatal(ending)
+			}
+			if state == "all_failed" && (strings.Contains(ending, "동의/패스") || !strings.Contains(ending, "@codex 실패로 제외")) {
+				t.Fatal(ending)
+			}
+		})
+	}
+}
+
+func TestMissingDiscussionSignalCreatesDurableSeatNotice(t *testing.T) {
+	h, r, ps := controlledHub(t, "claude", "codex")
+	if err := h.StartDiscussion(r.ID, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	finishCall(nextCall(t, ps[0]), "no signal")
+	finishCall(nextCall(t, ps[1]), "[[DISCUSSION:AGREE]]")
+	waitIdle(t, h, r.ID)
+	restarted, err := NewHub(h.store, h.reg, h.scratch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := restarted.Snapshot(r.ID)
+	reply := roundMessage(s, "claude", 1)
+	if reply == nil || reply.Signal != "CONTINUE" || reply.Status != "done" || reply.ReplyTo != "" {
+		t.Fatal(reply)
+	}
+	found := false
+	for _, m := range s.Messages {
+		if m.NoticeFor == "claude" && m.NoticeMarker == "discussion" && m.NoticeMsg == reply.ID && strings.Contains(m.Text, "토론 신호가 없어 CONTINUE로 처리함") {
+			if strings.Contains(m.Text, "마커 거절") {
+				t.Fatal(m.Text)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing durable discussion notice")
+	}
+}
+
+func TestDiscussionRecoveredSeatParticipatesInFinalAgreement(t *testing.T) {
+	h, r, ps := controlledHub(t, "claude", "codex")
+	if err := h.StartDiscussion(r.ID, 3, sequentialFirst); err != nil {
+		t.Fatal(err)
+	}
+	nextCall(t, ps[0]).result <- controlledResult{err: os.ErrPermission}
+	finishCall(nextCall(t, ps[1]), "[[DISCUSSION:CONTINUE]]")
+	finishCall(nextCall(t, ps[0]), "[[DISCUSSION:CONTINUE]]")
+	finishCall(nextCall(t, ps[1]), "[[DISCUSSION:AGREE]]")
+	finishCall(nextCall(t, ps[0]), "[[DISCUSSION:AGREE]]")
+	finishCall(nextCall(t, ps[1]), "[[DISCUSSION:AGREE]]")
+	waitIdle(t, h, r.ID)
+	_, saved, err := h.store.LoadRooms()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ending string
+	for _, m := range saved[r.ID] {
+		if m.Kind == "system" && strings.Contains(m.Text, "토론 종료") {
+			ending = m.Text
+		}
+	}
+	if !strings.Contains(ending, "3라운드에서 전원 동의/패스") || strings.Contains(ending, "실패로 제외") {
+		t.Fatal(ending)
+	}
+}
+
+func TestDiscussionMissingSignalNoticeWaitsForCompletionHandlers(t *testing.T) {
+	h, r, ps := controlledHub(t, "claude", "codex")
+	if err := h.StartDiscussion(r.ID, 1, sequentialFirst); err != nil {
+		t.Fatal(err)
+	}
+	call := nextCall(t, ps[0])
+	// The provider succeeds, but a later completion handler cannot save its card.
+	if err := os.Mkdir(filepath.Join(h.store.roomDir(r.ID), "decisions.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	finishCall(call, "answer without discussion signal\n[[DECISION: proposal | 근거: source | 반대: 없음 | 미확인: 없음]]")
+	finishCall(nextCall(t, ps[1]), "[[DISCUSSION:AGREE]]")
+	waitIdle(t, h, r.ID)
+	_, saved, err := h.store.LoadRooms()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range saved[r.ID] {
+		if m.Kind == "agent" && m.Author == "claude" {
+			found = true
+			if m.Status != "error" || m.Signal != "" {
+				t.Fatalf("failed completion retained a vote: %+v", m)
+			}
+		}
+		if m.NoticeMarker == "discussion" && m.NoticeFor == "claude" {
+			t.Fatalf("failed completion retained CONTINUE feedback: %+v", m)
+		}
+	}
+	if !found {
+		t.Fatal("missing failed reply")
+	}
+}
+
 // sequentialFirst keeps the pre-blind behaviour for tests about sequential rounds.
 var sequentialFirst = func() *bool { v := false; return &v }()
 

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +14,211 @@ import (
 
 	"roundtable/internal/agent"
 )
+
+func TestSystemMessagesPersistAndResumeSequence(t *testing.T) {
+	h, r := newTestHub(t, &fakeProvider{id: "codex"})
+	rs := h.rooms[r.ID]
+	m, err := h.addSystem(rs, "durable system note")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.workNote(rs, "durable work note")
+	lastSeq := rs.room.Seq
+	// Deliberately leave room.json behind messages.jsonl, as a crash would.
+	restarted, err := NewHub(h.store, h.reg, h.scratch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay := restarted.rooms[r.ID]
+	if len(replay.msgs) != 2 || replay.msgs[0].ID != m.ID || replay.msgs[1].Text != "durable work note" {
+		t.Fatalf("system history was lost or duplicated: %+v", replay.msgs)
+	}
+	next, err := restarted.addSystem(replay, "after restart")
+	if err != nil || next.Seq != lastSeq+1 || next.ReplyTo != "" {
+		t.Fatalf("sequence/reply_to after restart: %+v, %v", next, err)
+	}
+}
+
+func TestSystemSaveFailureIsReportedWithoutPublishingSuccess(t *testing.T) {
+	h, r := newTestHub(t, &fakeProvider{id: "codex"}, &fakeProvider{id: "claude"})
+	rs := h.rooms[r.ID]
+	var logs strings.Builder
+	h.Log = log.New(&logs, "", 0)
+	ch, unsub, err := h.Subscribe(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsub()
+	if err := os.Mkdir(filepath.Join(h.store.roomDir(r.ID), "messages.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seq := r.Seq
+	if err := h.StartDiscussion(r.ID, 1, nil); err == nil {
+		t.Fatal("discussion started without a durable start message")
+	}
+	if rs.disc != nil || len(rs.queue) != 0 || len(rs.msgs) != 1 || r.Seq != seq+2 {
+		t.Fatal("failed system save changed discussion/history")
+	}
+	h.workNote(rs, "background note failure")
+	if !strings.Contains(logs.String(), "시스템 메시지 저장 실패") {
+		t.Fatal(logs.String())
+	}
+	found := false
+	for len(ch) > 0 {
+		var event struct {
+			Type string  `json:"type"`
+			Data Message `json:"data"`
+		}
+		if err := json.Unmarshal(<-ch, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == "message" {
+			if event.Data.Kind != "system" || event.Data.Status != "error" || !strings.Contains(event.Data.Text, "메모리에만") {
+				t.Fatalf("failed write must visibly identify an unsaved error: %+v", event.Data)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing persistence error event")
+	}
+}
+
+func TestExportIncludesSeatIDAndLabel(t *testing.T) {
+	h, r := newTestHub(t, &fakeProvider{id: "codex"})
+	rs := h.rooms[r.ID]
+	rs.nextMessage("agent", "codex", "answer")
+	r.Participants[0].Label = "Writer"
+	text, err := h.ExportMarkdown(r.ID)
+	if err != nil || !strings.Contains(text, "### @codex (Writer) · ") {
+		t.Fatalf("export: %s (%v)", text, err)
+	}
+}
+
+func TestRoomSaveFailureStillRoutesAcceptedMessage(t *testing.T) {
+	for _, target := range []string{"codex", ""} {
+		t.Run("target="+target, func(t *testing.T) {
+			h, r, ps := controlledHub(t, "codex")
+			if err := os.Mkdir(filepath.Join(h.store.roomDir(r.ID), "room.json.tmp"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			m, err := h.PostUser(r.ID, "accepted despite metadata failure", target)
+			if err != nil || m == nil {
+				t.Fatalf("accepted input returned an error: %+v %v", m, err)
+			}
+			call := nextCall(t, ps[0])
+			if !strings.Contains(call.opts.Prompt, m.Text) {
+				t.Fatal(call.opts.Prompt)
+			}
+			finishCall(call, "received")
+			waitIdle(t, h, r.ID)
+			_, saved, err := h.store.LoadRooms()
+			if err != nil {
+				t.Fatal(err)
+			}
+			users, replies, warnings := 0, 0, 0
+			for _, got := range saved[r.ID] {
+				if got.Kind == "user" {
+					users++
+				}
+				if got.Kind == "agent" && got.ReplyTo == m.ID && got.Status == "done" {
+					replies++
+				}
+				if got.Kind == "system" && got.Status == "error" && strings.Contains(got.Text, "방 저장 실패") {
+					warnings++
+				}
+			}
+			if users != 1 || replies != 1 || warnings == 0 {
+				t.Fatalf("users=%d replies=%d warnings=%d", users, replies, warnings)
+			}
+		})
+	}
+}
+
+func TestResetSessionsCommitsStateIndependentlyOfNotice(t *testing.T) {
+	for _, failedFile := range []string{"messages.jsonl", "room.json.tmp"} {
+		t.Run(failedFile, func(t *testing.T) {
+			h, r := newTestHub(t, &fakeProvider{id: "codex"})
+			rs, p := h.rooms[r.ID], r.Participants[0]
+			p.SessionID, p.LastSeen, p.ContextTokens, p.Unseen = "old-session", 7, 123, []int64{3}
+			if err := h.store.SaveRoom(r); err != nil {
+				t.Fatal(err)
+			}
+			events, unsub, err := h.Subscribe(r.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer unsub()
+			if err := os.Mkdir(filepath.Join(h.store.roomDir(r.ID), failedFile), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			err = h.ResetSessions(r.ID)
+			roomEvents := 0
+			for len(events) > 0 {
+				var event struct {
+					Type string `json:"type"`
+				}
+				if e := json.Unmarshal(<-events, &event); e != nil {
+					t.Fatal(e)
+				}
+				if event.Type == "room" {
+					roomEvents++
+				}
+			}
+			// Remove only the failure fixture so the persisted state can be replayed.
+			if e := os.Remove(filepath.Join(h.store.roomDir(r.ID), failedFile)); e != nil {
+				t.Fatal(e)
+			}
+			restarted, e := NewHub(h.store, h.reg, h.scratch, nil)
+			if e != nil {
+				t.Fatal(e)
+			}
+			saved := restarted.rooms[r.ID].room.Participants[0]
+			if failedFile == "messages.jsonl" {
+				if err != nil || rs.resetGen != 1 || roomEvents != 1 || p.SessionID != "" || saved.SessionID != "" || p.LastSeen != 0 || saved.LastSeen != 0 || saved.ContextTokens != 0 || len(saved.Unseen) != 0 {
+					t.Fatalf("reset was not committed: memory=%+v saved=%+v gen=%d events=%d err=%v", p, saved, rs.resetGen, roomEvents, err)
+				}
+			} else if err == nil || rs.resetGen != 0 || roomEvents != 0 || p.SessionID != "old-session" || saved.SessionID != p.SessionID || p.LastSeen != 7 || len(p.Unseen) != 1 || p.ContextTokens != 123 {
+				t.Fatalf("failed reset changed state: memory=%+v saved=%+v gen=%d events=%d err=%v", p, saved, rs.resetGen, roomEvents, err)
+			}
+			if r.Participants[0] != p {
+				t.Fatal("reset replaced a participant pointer held by a running turn")
+			}
+		})
+	}
+}
+
+func TestSessionAndStopNotesSurviveRestart(t *testing.T) {
+	h, r, ps := controlledHub(t, "codex")
+	postQueueMessage(t, h, r.ID, "start", "codex")
+	nextCall(t, ps[0])
+	if err := h.ResetSessions(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Stop(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, h, r.ID)
+	restarted, err := NewHub(h.store, h.reg, h.scratch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := restarted.Snapshot(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset, stopped := false, false
+	for _, m := range s.Messages {
+		if m.Kind != "system" {
+			continue
+		}
+		reset = reset || strings.Contains(m.Text, "세션을 초기화")
+		stopped = stopped || strings.Contains(m.Text, "중지: 사용자가 중지함")
+	}
+	if !reset || !stopped {
+		t.Fatalf("lost reset/stop note: reset=%v stopped=%v", reset, stopped)
+	}
+}
 
 // fakeProvider scripts replies and records what it was asked.
 type fakeProvider struct {

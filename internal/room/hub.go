@@ -82,7 +82,8 @@ type discussion struct {
 	Expected int
 	Done     int
 	Signals  map[string]string
-	Blind    bool // round 1 runs concurrently from the start cap (blind first)
+	Failed   []string // seats excluded in the current round
+	Blind    bool     // round 1 runs concurrently from the start cap (blind first)
 }
 
 func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logger) (*Hub, error) {
@@ -566,7 +567,7 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	return json.Marshal(rs.room)
 }
 
-// dropQueuedFor removes a disabled participant's waiting turns; a discussion counts them as PASS.
+// dropQueuedFor removes a disabled participant's waiting turns; discussions exclude them.
 func (rs *roomState) dropQueuedFor(h *Hub, agentID string) {
 	var dropped []*Turn
 	kept := rs.queue[:0]
@@ -601,14 +602,27 @@ func (h *Hub) ResetSessions(id string) error {
 	if !ok {
 		return fmt.Errorf("방 없음: %s", id)
 	}
-	for _, p := range rs.room.Participants {
-		p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
-		p.Unseen = nil
+	next := *rs.room
+	next.Participants = make([]*Participant, len(rs.room.Participants))
+	next.UpdatedAt = nowMs()
+	for i, p := range rs.room.Participants {
+		copy := *p
+		copy.SessionID, copy.LastSeen, copy.ContextTokens = "", 0, 0
+		copy.Unseen = nil
+		next.Participants[i] = &copy
 	}
+	if err := h.store.SaveRoom(&next); err != nil {
+		return h.reportPersistenceError(rs, "세션 초기화", err)
+	}
+	// Running turns retain participant pointers; apply only after the save commits.
+	for i, p := range rs.room.Participants {
+		*p = *next.Participants[i]
+	}
+	rs.room.UpdatedAt = next.UpdatedAt
 	rs.resetGen++
-	rs.addSystem("세션을 초기화했어. 다음 턴부터 각 에이전트는 대화 전체를 새로 읽어.")
 	rs.broadcast("room", rs.room)
-	return h.store.SaveRoom(rs.room)
+	h.addSystem(rs, "세션을 초기화했어. 다음 턴부터 각 에이전트는 대화 전체를 새로 읽어.")
+	return nil // the reset is committed even if its explanatory note cannot be saved
 }
 
 func (h *Hub) DeleteRoom(id string) error {
@@ -623,7 +637,7 @@ func (h *Hub) DeleteRoom(id string) error {
 		return fmt.Errorf("방 없음: %s", id)
 	}
 	rs.deleted = true
-	rs.stopLocked("방 삭제")
+	h.stopLocked(rs, "방 삭제") // deletion still cancels turns if the stop note cannot be saved
 	delete(h.rooms, id)
 	for ch := range rs.subs {
 		close(ch)
@@ -784,10 +798,42 @@ func (rs *roomState) nextMessage(kind, author, text string) *Message {
 	return m
 }
 
-func (rs *roomState) addSystem(text string) *Message {
-	m := rs.nextMessage("system", "system", text)
+// reportPersistenceError also covers background transitions with no API caller.
+// Use the existing message event so both live clients and later snapshots show
+// the failure. Attempt to persist it once, without recursively reporting errors.
+func (h *Hub) reportPersistenceError(rs *roomState, operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	err = fmt.Errorf("%s 저장 실패: %w", operation, err)
+	if h.Log != nil {
+		h.Log.Printf("room %s: %v", rs.room.ID, err)
+	}
+	m := rs.nextMessage("system", "system", "서버 저장 오류: "+err.Error())
+	m.Status, m.Error = "error", err.Error()
+	if noteErr := h.store.AppendMessage(rs.room.ID, m); noteErr != nil {
+		m.Text += "\n이 오류 알림도 저장하지 못했어. 현재 서버 메모리에만 남아 있고 재시작하면 사라져."
+		if h.Log != nil {
+			h.Log.Printf("room %s: 오류 알림 저장 실패: %v", rs.room.ID, noteErr)
+		}
+	}
 	rs.broadcast("message", m)
-	return m
+	return err
+}
+
+func (h *Hub) saveRoom(rs *roomState) error {
+	return h.reportPersistenceError(rs, "방", h.store.SaveRoom(rs.room))
+}
+
+func (h *Hub) addSystem(rs *roomState, text string) (*Message, error) {
+	m := rs.nextMessage("system", "system", text)
+	if err := h.store.AppendMessage(rs.room.ID, m); err != nil {
+		rs.msgs = rs.msgs[:len(rs.msgs)-1]
+		// Keep the sequence reserved: a write/close error may follow a partial append.
+		return nil, h.reportPersistenceError(rs, "시스템 메시지", err)
+	}
+	rs.broadcast("message", m)
+	return m, nil
 }
 
 func (h *Hub) enabledIDs(rs *roomState) []string {
@@ -830,25 +876,27 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 	m.Target = target
 	mentioned := append([]string{}, ParseParticipantMentions(text, rs.room.Participants)...)
 	m.Mentions = &mentioned
+	var liveRun *running
+	if target != "" && len(attachments) == 0 {
+		if run := rs.runningFor(target); run != nil && run.steer != nil && len(run.steer) < cap(run.steer) {
+			// h.mu serializes all senders; the provider can only free capacity.
+			liveRun = run
+			m.Live, m.Part = true, run.turn.Part
+		}
+	}
 	if err := h.store.AppendMessage(id, m); err != nil {
 		rs.msgs = rs.msgs[:len(rs.msgs)-1]
-		return nil, err
+		return nil, h.reportPersistenceError(rs, "사용자 메시지", err)
 	}
+	// The message append is the acceptance boundary. Subsequent metadata or
+	// explanatory-note failures must not tell the caller to resend accepted input.
+	if liveRun != nil {
+		liveRun.steer <- text
+		liveRun.live = append(liveRun.live, m)
+	}
+	rs.broadcast("message", m)
+	h.saveRoom(rs)
 	if target != "" {
-		if run := rs.runningFor(target); run != nil && run.steer != nil && len(attachments) == 0 {
-			select {
-			case run.steer <- text:
-				m.Live = true
-				m.Part = run.turn.Part
-				run.live = append(run.live, m)
-			default:
-			}
-		}
-		rs.broadcast("message", m)
-		if m.Live {
-			_ = h.store.AppendMessage(id, m)
-		}
-		_ = h.store.SaveRoom(rs.room)
 		if !m.Live {
 			rs.enqueueFront(&Turn{ID: newID(), Agent: target, Reason: "mention", Group: m.ID, Cap: m.Seq, Created: nowMs(), Status: "queued"})
 			h.pump(rs)
@@ -856,8 +904,6 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 		mc := *m
 		return &mc, nil
 	}
-	rs.broadcast("message", m)
-	_ = h.store.SaveRoom(rs.room)
 	ids := h.enabledIDs(rs)
 	var targets []string
 	for _, id := range mentioned {
@@ -868,7 +914,7 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 	reason := "mention"
 	switch {
 	case len(mentioned) > 0 && len(targets) == 0:
-		rs.addSystem(fmt.Sprintf("@%s 는 비활성 또는 삭제 상태라 아무도 답하지 않아. 다른 활성 참가자를 불러.", strings.Join(mentioned, ", @")))
+		h.addSystem(rs, fmt.Sprintf("@%s 는 비활성 또는 삭제 상태라 아무도 답하지 않아. 다른 활성 참가자를 불러.", strings.Join(mentioned, ", @")))
 		mc := *m
 		return &mc, nil
 	case len(mentioned) == 0:
@@ -938,12 +984,14 @@ func (h *Hub) StartDiscussion(id string, rounds int, blindFirst *bool) error {
 	if blindFirst != nil {
 		blind = *blindFirst
 	}
-	rs.disc = &discussion{Total: rounds, Round: 1, Signals: map[string]string{}, Blind: blind}
 	order := "순서대로 발언"
 	if blind {
 		order = "1라운드 블라인드(동시 답변, 2라운드에 공개)"
 	}
-	rs.addSystem(fmt.Sprintf("토론 시작 · 최대 %d라운드 · %s · 참가 %s", rounds, order, strings.Join(ids, ", ")))
+	if _, err := h.addSystem(rs, fmt.Sprintf("토론 시작 · 최대 %d라운드 · %s · 참가 %s", rounds, order, strings.Join(ids, ", "))); err != nil {
+		return err
+	}
+	rs.disc = &discussion{Total: rounds, Round: 1, Signals: map[string]string{}, Blind: blind}
 	rs.enqueueRound(ids)
 	rs.broadcast("discussion", rs.discView())
 	h.pump(rs)
@@ -953,6 +1001,7 @@ func (h *Hub) StartDiscussion(id string, rounds int, blindFirst *bool) error {
 func (rs *roomState) enqueueRound(ids []string) {
 	rs.disc.Expected, rs.disc.Done = len(ids), 0
 	rs.disc.Signals = map[string]string{}
+	rs.disc.Failed = nil
 	blind := rs.disc.Blind && rs.disc.Round == 1
 	group := newID()
 	for _, id := range ids {
@@ -988,11 +1037,11 @@ func (h *Hub) Stop(id string) error {
 			h.reviewTurnLost(rs, t, "사용자가 중지해 리뷰 턴이 취소됨")
 		}
 	}
-	rs.stopLocked("사용자가 중지함")
-	return nil
+	h.stopLocked(rs, "사용자가 중지함")
+	return nil // cancellation is complete; notice failures are reported separately
 }
 
-func (rs *roomState) stopLocked(why string) {
+func (h *Hub) stopLocked(rs *roomState, why string) error {
 	dropped := len(rs.queue)
 	rs.queue = nil
 	rs.stopGen++
@@ -1001,11 +1050,13 @@ func (rs *roomState) stopLocked(why string) {
 	}
 	rs.disc = nil
 	rs.refreshParticipantStates()
+	var err error
 	if dropped > 0 || len(rs.running) > 0 {
-		rs.addSystem(fmt.Sprintf("중지: %s (대기 %d건 취소, 실행 중 %d건 중단)", why, dropped, len(rs.running)))
+		_, err = h.addSystem(rs, fmt.Sprintf("중지: %s (대기 %d건 취소, 실행 중 %d건 중단)", why, dropped, len(rs.running)))
 	}
 	rs.broadcast("queue", rs.queueView())
 	rs.broadcast("discussion", nil)
+	return err
 }
 
 // CancelTurn removes one queued turn or cancels a running one.
@@ -1143,7 +1194,7 @@ func (h *Hub) pump(rs *roomState) {
 	rs.refreshParticipantStates()
 	rs.broadcast("queue", rs.queueView())
 	if skipped {
-		_ = h.store.SaveRoom(rs.room)
+		h.saveRoom(rs) // background failures are reported to the log and event stream
 	}
 }
 
@@ -1291,6 +1342,13 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	t, p, prov := pr.t, pr.p, pr.prov
 	msg := rs.nextMessage("agent", p.ID, "")
 	msg.Status, msg.TurnID, msg.Reason, msg.Round, msg.Model = "streaming", t.ID, t.Reason, t.Round, p.Model
+	// Discussion/work grouping can use synthetic IDs with no trigger message.
+	for _, trigger := range rs.msgs {
+		if trigger.ID == t.Group {
+			msg.ReplyTo = t.Group
+			break
+		}
+	}
 	msg.Part, msg.ReviewStep = t.Part, t.step
 	msg.Provider, msg.SessionID, msg.Mode, msg.Effort = p.Provider, pr.opts.SessionID, pr.opts.Mode, pr.opts.Effort
 	msg.Role = p.Role
@@ -1356,8 +1414,14 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			if e.Text != "" {
 				msg.SessionID = e.Text
 				h.keepSession(rs, pr, e.Text)
-				_ = h.store.AppendMessage(rs.room.ID, msg)
-				_ = h.store.SaveRoom(rs.room)
+				if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
+					tracePersistenceError = h.reportPersistenceError(rs, "세션 메시지", err)
+					cancel()
+					return
+				}
+				// The session message is durable. Report metadata failures without
+				// discarding the answer; completion saves the room again.
+				h.saveRoom(rs)
 				rs.broadcast("message", msg)
 			}
 		case agent.KindTextDelta:
@@ -1433,10 +1497,6 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	var signal string
 	if t.Reason == "discussion" {
 		text, signal = ParseSignal(text)
-		if signal == "" {
-			signal = "CONTINUE"
-		}
-		msg.Signal = signal
 	}
 	workDone := false
 	if pr.part != nil && t.Reason != "review" && t.Reason != "discussion" {
@@ -1457,6 +1517,10 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		msg.Status, msg.Error = "error", err.Error()
 	default:
 		msg.Status = "done"
+	}
+	missingDiscussionSignal := t.Reason == "discussion" && signal == ""
+	if missingDiscussionSignal {
+		signal = "CONTINUE"
 	}
 	if msg.Status == "done" && t.Reason != "review" {
 		if pr.part != nil {
@@ -1511,15 +1575,28 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	}
 	p.Turns++
 	rs.room.UpdatedAt = nowMs()
-	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
-		msg.Status, msg.Error = "error", fmt.Sprintf("메시지 저장 실패: %v", err)
-	}
 	if msg.Status == "done" {
 		if err := h.acknowledgeNotices(rs, pr); err != nil {
 			msg.Status, msg.Error = "error", fmt.Sprintf("공지 전달 기록 저장 실패: %v", err)
 		}
 	}
+	if t.Reason == "discussion" && msg.Status == "done" {
+		// Persist a vote only after all completion handlers have succeeded.
+		msg.Signal = signal
+	}
+	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
+		msg.Status, msg.Error = "error", fmt.Sprintf("메시지 저장 실패: %v", err)
+		if t.Reason == "discussion" {
+			msg.Signal = ""
+		}
+		h.reportPersistenceError(rs, "메시지", err)
+	}
 	rs.broadcast("message", msg)
+	if missingDiscussionSignal && msg.Status == "done" {
+		// No completion handler after this point can invalidate the recorded vote.
+		// A failed notice save reports its own storage error, not a failed answer.
+		h.addSeatNotice(rs, pr, "discussion", fmt.Sprintf("@%s 토론 신호가 없어 CONTINUE로 처리함", p.ID))
+	}
 	if h.Log != nil {
 		h.Log.Printf("turn %s %s/%s status=%s %dms err=%v", rs.room.ID, p.ID, p.Model, msg.Status, msg.Duration, err)
 	}
@@ -1538,7 +1615,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	}
 	previousStatus, previousText := p.Status, p.StatusText
 	h.pump(rs)
-	_ = h.store.SaveRoom(rs.room)
+	h.saveRoom(rs)
 	if p.Status == previousStatus && p.StatusText == previousText {
 		// The state helper already publishes transitions. Publish unchanged
 		// state here only to deliver the updated turn/session/usage counters.
@@ -1644,6 +1721,9 @@ func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, part
 }
 
 func (h *Hub) chainMentions(rs *roomState, msg *Message, t *Turn) {
+	if t.Reason == "discussion" || t.Reason == "review" {
+		return
+	}
 	var targets []string
 	for _, id := range msg.mentionIDs(rs.room.Participants) {
 		if p := rs.room.participant(id); p != nil && p.Enabled && !p.Removed && p.ID != msg.Author {
@@ -1655,11 +1735,21 @@ func (h *Hub) chainMentions(rs *roomState, msg *Message, t *Turn) {
 			targets = append(targets, r.To)
 		}
 	}
+	// A result is a new trigger for its requester, even without an explicit @.
+	// Merge with ordinary mentions and other results before applying max_chain.
+	for _, r := range rs.requests {
+		if r.ResultMsg != msg.ID || (r.Status != "done" && r.Status != "rejected") || slices.Contains(targets, r.From) {
+			continue
+		}
+		if p := rs.room.participant(r.From); p != nil && p.Enabled && !p.Removed && p.ID != msg.Author {
+			targets = append(targets, p.ID)
+		}
+	}
 	if len(targets) == 0 {
 		return
 	}
 	if t.Depth+1 > rs.room.MaxChain {
-		rs.addSystem(fmt.Sprintf("@%s 가 %s 를 호출했지만 연쇄 한도(%d)에 도달해 멈췄어. 이어가려면 직접 호출해.", msg.Author, strings.Join(targets, ", "), rs.room.MaxChain))
+		h.addSystem(rs, fmt.Sprintf("@%s 가 %s 를 호출했지만 연쇄 한도(%d)에 도달해 멈췄어. 이어가려면 직접 호출해.", msg.Author, strings.Join(targets, ", "), rs.room.MaxChain))
 		return
 	}
 	for _, id := range targets {
@@ -1673,15 +1763,18 @@ func (h *Hub) discussionStep(rs *roomState, agentID, signal, status string) {
 		return
 	}
 	if status != "done" {
-		signal = "PASS"
+		if !slices.Contains(d.Failed, agentID) {
+			d.Failed = append(d.Failed, agentID)
+		}
+	} else {
+		d.Signals[agentID] = signal
 	}
-	d.Signals[agentID] = signal
 	d.Done++
 	rs.broadcast("discussion", rs.discView())
 	if d.Done < d.Expected {
 		return
 	}
-	concluded, allAgree := false, true
+	concluded, allAgree := false, len(d.Signals) > 0
 	for _, s := range d.Signals {
 		if s == "CONCLUDE" {
 			concluded = true
@@ -1693,25 +1786,33 @@ func (h *Hub) discussionStep(rs *roomState, agentID, signal, status string) {
 	// Nobody has seen a peer's answer at the end of a blind round 1, so its
 	// CONCLUDE/AGREE cannot end the discussion; the reveal round always runs.
 	revealPending := d.Blind && d.Round == 1 && d.Round < d.Total && len(rs.room.enabled()) >= 2
+	var ending string
 	switch {
 	case revealPending:
 		d.Round++
 		rs.enqueueRound(h.enabledIDs(rs))
 	case concluded:
-		rs.addSystem(fmt.Sprintf("토론 종료 · %d라운드에서 결론 제시(CONCLUDE)", d.Round))
-		rs.disc = nil
+		ending = fmt.Sprintf("토론 종료 · %d라운드에서 결론 제시(CONCLUDE)", d.Round)
 	case allAgree:
-		rs.addSystem(fmt.Sprintf("토론 종료 · %d라운드에서 전원 동의/패스 (의견 일치일 뿐 검증은 아님)", d.Round))
-		rs.disc = nil
+		who := "전원"
+		if len(d.Failed) > 0 {
+			who = "성공한 참가자"
+		}
+		ending = fmt.Sprintf("토론 종료 · %d라운드에서 %s 동의/패스 (의견 일치일 뿐 검증은 아님)", d.Round, who)
 	case d.Round >= d.Total:
-		rs.addSystem(fmt.Sprintf("토론 종료 · 최대 %d라운드 도달", d.Total))
-		rs.disc = nil
+		ending = fmt.Sprintf("토론 종료 · 최대 %d라운드 도달", d.Total)
 	case len(rs.room.enabled()) < 2:
-		rs.addSystem("토론 종료 · 활성 참가자가 2명 미만이야")
-		rs.disc = nil
+		ending = "토론 종료 · 활성 참가자가 2명 미만이야"
 	default:
 		d.Round++
 		rs.enqueueRound(h.enabledIDs(rs))
+	}
+	if ending != "" {
+		for _, id := range d.Failed {
+			ending += " · @" + id + " 실패로 제외"
+		}
+		h.addSystem(rs, ending)
+		rs.disc = nil
 	}
 	rs.broadcast("discussion", rs.discView())
 }
@@ -1731,6 +1832,11 @@ func (h *Hub) ExportMarkdown(id string) (string, error) {
 		who := m.Author
 		if m.Kind == "user" {
 			who = "사용자"
+		} else if m.Kind == "agent" {
+			who = "@" + m.Author
+			if p := snapshot.Room.participant(m.Author); p != nil {
+				who += " (" + p.Label + ")"
+			}
 		}
 		fmt.Fprintf(&b, "### %s · %s", who, ts)
 		if m.Model != "" {
