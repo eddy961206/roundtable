@@ -26,6 +26,7 @@ type turnContext struct {
 	Part        *Part    // the seat's working/fixing part (D9)
 	BlindFirst  bool     // the discussion started with a blind round 1
 	Decisions   []string // active decision texts, newest first (standing brief)
+	Scratch     string   // server scratch directory named in the standing brief
 }
 
 var signalRe = regexp.MustCompile(`^\[\[DISCUSSION:(CONTINUE|AGREE|PASS|CONCLUDE)\]\]$`)
@@ -80,7 +81,7 @@ func oneLineRole(role string) string {
 // standingBrief is the part of a prompt that only changes with room settings
 // and active decisions. A resumed session that already holds the same brief
 // gets a one-line reminder; a changed decision changes the key and re-sends it.
-func standingBrief(r *Room, me *Participant, decisions []string) string {
+func standingBrief(r *Room, me *Participant, decisions []string, scratch string) string {
 	var b strings.Builder
 	others := make([]string, 0)
 	otherRoles := make([]string, 0)
@@ -131,7 +132,7 @@ func standingBrief(r *Room, me *Participant, decisions []string) string {
 		b.WriteString("- 도구 실행이나 파일 수정 없이 대화로만 답하세요.\n")
 	}
 	b.WriteString("- 대화에서 쓰인 언어로 답하세요. 채팅에 어울리게 간결하되, 판단에 필요한 근거는 생략하지 마세요.\n")
-	b.WriteString(markerBrief(r.Mode))
+	b.WriteString(markerBrief(r.Mode, scratch))
 	return b.String()
 }
 
@@ -151,7 +152,7 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 		}
 		b.WriteString("(응답 끝 신호 블록: 요청 결과 [[REQUEST_DONE:요청ID]]/[[REQUEST_REJECT:요청ID]] 이유, 토론 [[DISCUSSION:...]], 파트 완료 WORK:DONE 중 이번 턴에 해당하는 신호만 응답 맨 끝에 빈 줄 없이 한 줄씩 모으세요.)\n")
 	} else {
-		b.WriteString(standingBrief(r, me, tc.Decisions))
+		b.WriteString(standingBrief(r, me, tc.Decisions, tc.Scratch))
 	}
 	if tc.Parallel || tc.Reason == "discussion" || tc.Part != nil {
 		b.WriteString("\n이번 턴:\n")
@@ -193,7 +194,7 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 }
 
 // BuildPartPrompt starts a part session from the plan alone; room history is never included (D9).
-func BuildPartPrompt(plan *WorkPlan, part *Part, role string) string {
+func BuildPartPrompt(plan *WorkPlan, part *Part, role, scratch string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "작업 계획의 파트 %s \"%s\"를 맡았습니다.\n\n", part.ID, part.Title)
 	if r := oneLineRole(role); r != "" {
@@ -209,7 +210,7 @@ func BuildPartPrompt(plan *WorkPlan, part *Part, role string) string {
 	fmt.Fprintf(&b, "- 파트를 끝냈으면 응답 끝 신호 블록에 %s 한 줄을 쓰세요. 그러면 다른 공급사 참가자가 diff를 리뷰합니다.\n", workDoneSignal)
 	b.WriteString("- 무엇을 바꿨는지 답변에 적으세요.\n")
 	b.WriteString("- UI·화면을 바꾸는 작업이라면 직접 화면을 캡처해 [[ATTACH:캡처.png]]로 올리거나, 이미지 판독·시각 검토에 강점이 있는 좌석에 [[REQUEST:@좌석ID]]로 시각 검토를 요청하세요.\n")
-	b.WriteString(markerBrief(agent.ModeWrite))
+	b.WriteString(markerBrief(agent.ModeWrite, scratch))
 	return b.String()
 }
 

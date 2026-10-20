@@ -1199,8 +1199,8 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		return nil
 	}
 	decisions := rs.activeDecisionTexts(cap)
-	brief := briefKey(standingBrief(rs.room, p, decisions))
-	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Briefed: !first && p.Brief == brief, Decisions: decisions}
+	brief := briefKey(standingBrief(rs.room, p, decisions, h.scratch))
+	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Briefed: !first && p.Brief == brief, Decisions: decisions, Scratch: h.scratch}
 	if rs.disc != nil && t.Reason == "discussion" {
 		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
@@ -1224,7 +1224,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 	var hist []*Message
 	switch {
 	case part.SessionID == "":
-		prompt = BuildPartPrompt(rs.room.Work, part, p.Role)
+		prompt = BuildPartPrompt(rs.room.Work, part, p.Role, h.scratch)
 		if t.prompt != "" {
 			prompt += "\n\n" + t.prompt
 		}
@@ -1239,7 +1239,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 			part.LastSeen, part.Unseen = seen, unseen
 			return nil
 		}
-		tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, Part: part, Decisions: rs.activeDecisionTexts(cap)}
+		tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, Part: part, Decisions: rs.activeDecisionTexts(cap), Scratch: h.scratch}
 		if rs.disc != nil && t.Reason == "discussion" {
 			tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 		}

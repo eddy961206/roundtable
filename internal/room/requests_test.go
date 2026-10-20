@@ -205,7 +205,7 @@ func TestMarkersOnlyApplyToDoneAndModeBrief(t *testing.T) {
 	for _, mode := range []string{agent.ModeChat, agent.ModeRead, agent.ModeWrite} {
 		r := &Room{Mode: mode}
 		p := &Participant{ID: "codex"}
-		brief := standingBrief(r, p, nil)
+		brief := standingBrief(r, p, nil, "")
 		for _, marker := range []string{"[[REQUEST:@좌석ID 또는 @이름]]", "[[REQUEST_DONE:요청ID]]", "[[REQUEST_REJECT:요청ID]]"} {
 			if !strings.Contains(brief, marker) {
 				t.Fatal(brief)

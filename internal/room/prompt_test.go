@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestStandingBriefRolesAndPriority(t *testing.T) {
 		},
 	}
 	me := r.Participants[0]
-	brief := standingBrief(r, me, nil)
+	brief := standingBrief(r, me, nil, "")
 	for _, want := range []string{
 		"당신의 역할:\n큰 그림과 UX를 먼저 깊게 본다.",
 		"강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.",
@@ -46,7 +47,7 @@ func TestStandingBriefRolesAndPriority(t *testing.T) {
 	keyWithRoles := briefKey(brief)
 	r.Participants[0].Role = ""
 	r.Participants[1].Role = "   "
-	emptyBrief := standingBrief(r, me, nil)
+	emptyBrief := standingBrief(r, me, nil, "")
 	if strings.Contains(emptyBrief, "당신의 역할") || strings.Contains(emptyBrief, "다른 참가자들의 역할") {
 		t.Fatalf("empty roles must be omitted:\n%s", emptyBrief)
 	}
@@ -95,12 +96,16 @@ func TestBuildPartPromptRoleAndVisualReview(t *testing.T) {
 	plan := &WorkPlan{Goal: "화면 개선", BaseSHA: "abc1234"}
 	part := &Part{ID: "p1", Title: "UI 카드", Brief: "역할 카드 추가", Scope: []string{"web/js/"}, Worktree: "/tmp/wt", Branch: "rt/room/p1"}
 
-	noRolePrompt := BuildPartPrompt(plan, part, "")
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	noRolePrompt := BuildPartPrompt(plan, part, "", scratch)
 	if strings.Contains(noRolePrompt, "당신의 역할:") {
 		t.Errorf("part prompt without role must omit role line:\n%s", noRolePrompt)
 	}
+	// A part cannot leave untracked files, so the brief names the server scratch it may attach from.
 	for _, want := range []string{
 		"[[ATTACH:캡처.png]]",
+		"서버 scratch 폴더 " + scratch + " 의 파일은 절대 경로로",
+		"[[ATTACH:" + filepath.Join(scratch, "캡처.png") + "]]",
 		"[[REQUEST:@좌석ID]]",
 		"시각 검토",
 	} {
@@ -109,7 +114,7 @@ func TestBuildPartPromptRoleAndVisualReview(t *testing.T) {
 		}
 	}
 
-	customPrompt := BuildPartPrompt(plan, part, "큰 그림·UX를 먼저 깊게 본다.")
+	customPrompt := BuildPartPrompt(plan, part, "큰 그림·UX를 먼저 깊게 본다.", scratch)
 	for _, want := range []string{
 		"당신의 역할: 큰 그림·UX를 먼저 깊게 본다.",
 		"강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.",

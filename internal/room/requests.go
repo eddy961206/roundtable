@@ -292,12 +292,14 @@ func ordinaryMentionText(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-func markerBrief(mode string) string {
+// scratch is the server scratch directory; agents cannot discover it on their
+// own, so the brief names it for images that must not stay in the worktree.
+func markerBrief(mode, scratch string) string {
 	text := "- 참가자에게 요청: [[REQUEST:@좌석ID 또는 @이름]] 확인할 내용 한 줄 (discussion·review 턴에서는 금지)\n- 받은 요청 완료(응답 끝 신호 블록): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 끝 신호 블록): [[REQUEST_REJECT:요청ID]] 거절 이유\n- 응답 끝 신호(요청 결과, 토론 신호, 파트 완료 신호)가 여럿이면 빈 줄 없이 한 줄씩 모으세요. 순서는 자유입니다. 이번 턴에 해당하는 신호만 쓰세요.\n- 끝나지 않은 파트를 맡은 좌석에는 요청할 수 없습니다. 파트가 끝난 뒤 다시 요청하거나 사용자에게 알리세요.\n- 결정 기록(한 줄, 결정이 정해졌을 때만):" + decisionMarkerForm + "\n"
 	if mode != agent.ModeChat {
-		text += "- 기존 이미지 공유(한 줄): [[ATTACH:경로]] — PNG·JPEG·WEBP, 파일당 10MB, 메시지당 4장. 상대 경로는 작업 폴더 기준이고, 서버 scratch의 파일은 절대 경로로 쓰세요.\n"
+		text += "- 기존 이미지 공유(한 줄): [[ATTACH:경로]] — PNG·JPEG·WEBP, 파일당 10MB, 메시지당 4장. 상대 경로는 작업 폴더 기준입니다. 서버 scratch 폴더 " + scratch + " 의 파일은 절대 경로로 쓰세요. 다른 폴더(각 CLI 자체 임시 폴더 등)는 거절됩니다.\n"
 		if mode == agent.ModeWrite {
-			text += "- 직접 화면을 캡처할 수 있습니다. 작업 폴더에 저장 후 예: [[ATTACH:캡처.png]]\n"
+			text += "- 직접 화면을 캡처할 수 있습니다. 커밋하지 않을 캡처는 서버 scratch 폴더에 저장하고 절대 경로로 첨부하세요. 예: [[ATTACH:" + filepath.Join(scratch, "캡처.png") + "]]\n"
 		} else {
 			text += "- read 모드에서는 이미 있는 이미지만 공유하세요. 직접 캡처하거나 파일을 만들지 마세요.\n"
 		}
