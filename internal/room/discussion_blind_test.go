@@ -36,10 +36,14 @@ func TestBlindFirstRoundHidesPeersUntilRoundTwo(t *testing.T) {
 		t.Fatal(a1.opts.Prompt)
 	}
 	finishCall(a1, "claude-blind-answer\n[[DECISION: claude-blind-decision | 근거: x | 반대: 없음 | 미확인: 없음]]\n[[DISCUSSION:CONTINUE]]")
-	queueSnapshot(t, h, r.ID, func(s *Snapshot) bool {
+	answered := queueSnapshot(t, h, r.ID, func(s *Snapshot) bool {
 		m := roundMessage(s, "claude", 1)
 		return m != nil && m.Status == "done"
 	})
+	// A seat's card is only proposed; confirm it so the cap is what hides it.
+	if _, err := h.UpdateDecision(r.ID, answered.Decisions[0].ID, DecisionInput{Status: ptr("active")}); err != nil {
+		t.Fatal(err)
+	}
 	finishCall(busy, "busy reply")
 	b1 := nextCall(t, ps[1])
 	// Neither the history nor the standing brief's current decisions may carry

@@ -7,8 +7,9 @@ import (
 )
 
 // Decision cards (docs/에이전트MCP_블라인드토론_결정카드_계약.md, C). GET returns
-// the cards in recorded order; POST adds a person's card; PATCH edits or
-// changes status. Every change is also sent as the SSE event "decision".
+// the cards in recorded order; POST adds a person's card (active); PATCH edits
+// or changes status, which confirms (active) or rejects (dropped) a seat's
+// proposed card. Every change is also sent as the SSE event "decision".
 
 func (s *Server) listDecisions(w http.ResponseWriter, r *http.Request) {
 	decisions, err := s.hub.Decisions(r.PathValue("id"))

@@ -98,6 +98,15 @@ func TestToolsHTTP(t *testing.T) {
 			io.WriteString(w, `{"id":"q1","status":"cancelled"}`)
 		case "GET /api/rooms/r1/decisions":
 			io.WriteString(w, `[{"id":"d1","text":"채택","evidence":"메시지 2","dissent":"없음","unverified":"실행","by":"s1","source_msg":"m2","status":"active","at":1}]`)
+		case "PATCH /api/rooms/r1/decisions/d1":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if !reflect.DeepEqual(body, map[string]any{"status": "active", "dissent": ""}) {
+				t.Errorf("decision patch body: %v", body)
+			}
+			io.WriteString(w, `{"id":"d1","text":"채택","status":"active","dissent":""}`)
 		default:
 			t.Errorf("unexpected path: %s", r.URL)
 			http.NotFound(w, r)
@@ -109,7 +118,7 @@ func TestToolsHTTP(t *testing.T) {
 		t.Fatalf("rooms: %v", row)
 	}
 	seat := row["participants"].([]any)[0].(map[string]any)
-	if seat["id"] != "s1" || seat["label"] != "검토자" || seat["provider"] != "codex" || seat["model"] != "chosen-model" || seat["role"] != "정확성" {
+	if _, role := seat["role"]; seat["id"] != "s1" || seat["label"] != "검토자" || seat["provider"] != "codex" || seat["model"] != "chosen-model" || role {
 		t.Fatalf("seat: %v", seat)
 	}
 	if got := call(t, s, "rt_create_room", `{"title":"논의","workspace":"","mode":"chat","participants":[{"provider":"codex","model":"chosen-model","effort":"","label":"검토자","role":"정확성"}]}`); got["room"] != "created" {
@@ -136,7 +145,10 @@ func TestToolsHTTP(t *testing.T) {
 	if d["unverified"] != "실행" || d["status"] != "active" {
 		t.Fatal(d)
 	}
-	if len(paths) != 9 {
+	if got := call(t, s, "rt_update_decision", `{"room":"r1","id":"d1","status":"active","dissent":""}`); got["status"] != "active" {
+		t.Fatal(got)
+	}
+	if len(paths) != 10 {
 		t.Fatalf("requests: %v", paths)
 	}
 }
@@ -159,6 +171,10 @@ func TestInputValidationDoesNotCallHTTP(t *testing.T) {
 		{"rt_discuss", `{"room":"r1","rounds":0}`}, {"rt_discuss", `{"room":"r1","rounds":1,"blind_first":1}`},
 		{"rt_requests", `{"room":"../x"}`}, {"rt_cancel_request", `{"room":"r1"}`}, {"rt_cancel_request", `{"room":"r1","request":"q?x"}`},
 		{"rt_decisions", `{"room":null}`}, {"rt_decisions", `{"room":1}`}, {"unknown", `{}`},
+		{"rt_list_rooms", `{"limit":0}`}, {"rt_list_rooms", `{"limit":101}`},
+		{"rt_update_decision", `{"room":"r1","id":"d1"}`}, {"rt_update_decision", `{"room":"r1","status":"active"}`},
+		{"rt_update_decision", `{"room":"r1","id":"d1","status":"proposed"}`}, {"rt_update_decision", `{"room":"r1","id":"d1","text":" "}`},
+		{"rt_update_decision", `{"room":"r1","id":"../d1","status":"dropped"}`}, {"rt_update_decision", `{"room":"r1","id":"d1","by":"user"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+tc.args, func(t *testing.T) {
@@ -203,7 +219,7 @@ func TestReadOnly(t *testing.T) {
 		}
 		call(t, s, name, args)
 	}
-	for _, name := range []string{"rt_create_room", "rt_post", "rt_discuss", "rt_cancel_request"} {
+	for _, name := range []string{"rt_create_room", "rt_post", "rt_discuss", "rt_cancel_request", "rt_update_decision"} {
 		if _, err := s.call(context.Background(), name, json.RawMessage(`{}`)); err == nil {
 			t.Fatalf("write exposed: %s", name)
 		}
@@ -222,24 +238,113 @@ func TestReadPaginationAndUnicodeBudget(t *testing.T) {
 			t.Error(r.URL)
 		}
 	}, false)
+	// The budget fills from the newest message. seq 3 crosses it and keeps its
+	// end; seq 2 is left out whole and only counted.
 	got := call(t, s, "rt_read", `{"room":"r1","after_seq":1,"max_chars":4}`)
-	if got["truncated"] != true || got["next_seq"] != float64(4) || got["omitted_chars"] != float64(5) {
+	if got["truncated"] != true || got["next_seq"] != float64(4) || got["omitted_chars"] != float64(1) || got["omitted_messages"] != float64(1) || got["first_seq"] != float64(3) {
 		t.Fatal(got)
 	}
 	m := got["messages"].([]any)
-	if len(m) != 3 || m[0].(map[string]any)["text"] != "" || m[1].(map[string]any)["text"] != "나다" || m[2].(map[string]any)["text"] != "🌕별" {
+	if len(m) != 2 || m[0].(map[string]any)["text"] != "나다" || m[0].(map[string]any)["truncated"] != true || m[1].(map[string]any)["text"] != "🌕별" {
 		t.Fatal(m)
-	}
-	if m[0].(map[string]any)["error"] != "failed" || m[0].(map[string]any)["truncated"] != true {
-		t.Fatal(m[0])
 	}
 	if !reflect.DeepEqual(pages, []string{"", "3"}) {
 		t.Fatal(pages)
 	}
 	pages = nil
 	got = call(t, s, "rt_read", `{"room":"r1","after_seq":4}`)
-	if len(got["messages"].([]any)) != 0 || len(pages) != 1 || got["next_seq"] != float64(4) {
+	if _, ok := got["first_seq"]; len(got["messages"].([]any)) != 0 || len(pages) != 1 || got["next_seq"] != float64(4) || ok {
 		t.Fatal(got, pages)
+	}
+}
+
+// Without after_seq the read starts from the newest message and stops paging
+// once the budget is spent; the history total counts what it did not read.
+func TestReadWithoutAfterSeqStopsAtBudget(t *testing.T) {
+	var pages []string
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		before := r.URL.Query().Get("before")
+		pages = append(pages, before)
+		switch before {
+		case "":
+			io.WriteString(w, strings.Replace(snapshotBody(`[{"id":"m5","seq":5,"author":"user","status":"done","text":"질문"},{"id":"m6","seq":6,"author":"s1","status":"done","text":"답변","reply_to":"m5"}]`, `[]`), `"has_more":false`, `"has_more":true,"before_seq":5,"total":6`, 1))
+		case "5":
+			io.WriteString(w, strings.Replace(snapshotBody(`[{"id":"m3","seq":3,"author":"user","status":"done","text":"옛 질문"},{"id":"m4","seq":4,"author":"s1","status":"done","text":"옛 답"}]`, `[]`), `"has_more":false`, `"has_more":true,"before_seq":3,"total":6`, 1))
+		default:
+			t.Error(r.URL)
+		}
+	}, false)
+	got := call(t, s, "rt_read", `{"room":"r1","max_chars":3}`)
+	m := got["messages"].([]any)
+	if len(m) != 2 || m[0].(map[string]any)["text"] != "문" || m[1].(map[string]any)["reply_to"] != float64(5) {
+		t.Fatal(m)
+	}
+	if got["omitted_messages"] != float64(4) || got["first_seq"] != float64(5) || got["next_seq"] != float64(6) || got["omitted_chars"] != float64(1) {
+		t.Fatal(got)
+	}
+	if !reflect.DeepEqual(pages, []string{""}) {
+		t.Fatalf("paged past the spent budget: %v", pages)
+	}
+	// A budget that fits the first page reads on, and stops at the next one.
+	pages = nil
+	got = call(t, s, "rt_read", `{"room":"r1","max_chars":6}`)
+	if len(got["messages"].([]any)) != 3 || got["omitted_messages"] != float64(3) || got["first_seq"] != float64(4) || !reflect.DeepEqual(pages, []string{"", "5"}) {
+		t.Fatal(got, pages)
+	}
+}
+
+func TestReadMessageFieldsOnlyWhenSet(t *testing.T) {
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, snapshotBody(`[
+			{"id":"m1","seq":1,"kind":"user","author":"user","status":"done","text":"봐 줘","target":"s1","attachments":[{"id":"a1","name":"화면.png","mime":"image/png","bytes":10}]},
+			{"id":"m2","seq":2,"kind":"agent","author":"s1","status":"done","text":"봤어","reply_to":"m1","requests":["q1"],"decisions":["d1"],"turn_id":"t1"}]`, `[]`))
+	}, false)
+	got := call(t, s, "rt_read", `{"room":"r1"}`)
+	m := got["messages"].([]any)
+	question, answer := m[0].(map[string]any), m[1].(map[string]any)
+	if question["kind"] != "user" || question["target"] != "s1" || !reflect.DeepEqual(question["attachments"], []any{map[string]any{"id": "a1", "name": "화면.png"}}) {
+		t.Fatal(question)
+	}
+	for _, key := range []string{"reply_to", "requests", "decisions", "truncated", "error"} {
+		if _, ok := question[key]; ok {
+			t.Fatalf("empty %s present: %v", key, question)
+		}
+	}
+	if answer["reply_to"] != float64(1) || !reflect.DeepEqual(answer["requests"], []any{"q1"}) || !reflect.DeepEqual(answer["decisions"], []any{"d1"}) {
+		t.Fatal(answer)
+	}
+	for _, key := range []string{"target", "attachments", "turn_id", "id"} {
+		if _, ok := answer[key]; ok {
+			t.Fatalf("%s present: %v", key, answer)
+		}
+	}
+	if _, ok := got["omitted_messages"]; ok {
+		t.Fatal(got)
+	}
+}
+
+// reply_to is resolved through older pages; a trigger missing from the whole
+// history is a contract failure, not a silently dropped field.
+func TestReadReplyToResolvesThroughOlderPages(t *testing.T) {
+	missing := false
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("before") == "" {
+			trigger := "m1"
+			if missing {
+				trigger = "gone"
+			}
+			io.WriteString(w, strings.Replace(snapshotBody(`[{"id":"m2","seq":2,"author":"s1","status":"done","text":"답","reply_to":"`+trigger+`"}]`, `[]`), `"has_more":false`, `"has_more":true,"before_seq":2,"total":2`, 1))
+			return
+		}
+		io.WriteString(w, snapshotBody(`[{"id":"m1","seq":1,"author":"user","status":"done","text":"질문"}]`, `[]`))
+	}, false)
+	got := call(t, s, "rt_read", `{"room":"r1","after_seq":1}`)
+	if m := got["messages"].([]any); len(m) != 1 || m[0].(map[string]any)["reply_to"] != float64(1) {
+		t.Fatal(got)
+	}
+	missing = true
+	if _, err := s.call(context.Background(), "rt_read", json.RawMessage(`{"room":"r1","after_seq":1}`)); err == nil || !strings.Contains(err.Error(), "gone") {
+		t.Fatal(err)
 	}
 }
 
@@ -263,7 +368,9 @@ func TestEmptyRoomList(t *testing.T) {
 	}
 }
 
-func TestRoomListPreservesSeatAvailability(t *testing.T) {
+// Removed seats cannot be addressed, so the list leaves them out; a stopped
+// seat stays with enabled:false.
+func TestRoomListLeavesOutRemovedSeats(t *testing.T) {
 	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/rooms" {
 			io.WriteString(w, `[{"id":"r1","active":false}]`)
@@ -272,8 +379,27 @@ func TestRoomListPreservesSeatAvailability(t *testing.T) {
 		io.WriteString(w, `{"room":{"id":"r1","participants":[{"id":"active","enabled":true},{"id":"stopped","enabled":false},{"id":"archived","enabled":false,"removed":true}]}}`)
 	}, false)
 	seats := call(t, s, "rt_list_rooms", `{}`)["rooms"].([]any)[0].(map[string]any)["participants"].([]any)
-	if len(seats) != 3 || seats[0].(map[string]any)["enabled"] != true || seats[1].(map[string]any)["enabled"] != false || seats[2].(map[string]any)["removed"] != true {
+	if len(seats) != 2 || seats[0].(map[string]any)["enabled"] != true || seats[1].(map[string]any)["id"] != "stopped" || seats[1].(map[string]any)["enabled"] != false {
 		t.Fatal(seats)
+	}
+}
+
+func TestRoomListDefaultLimit(t *testing.T) {
+	snapshots := 0
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/rooms" {
+			var rooms []string
+			for i := range defaultListRooms + 5 {
+				rooms = append(rooms, fmt.Sprintf(`{"id":"r%d"}`, i))
+			}
+			io.WriteString(w, "["+strings.Join(rooms, ",")+"]")
+			return
+		}
+		snapshots++
+		io.WriteString(w, `{"room":{"id":"`+strings.TrimPrefix(r.URL.Path, "/api/rooms/")+`","participants":[]}}`)
+	}, false)
+	if rooms := call(t, s, "rt_list_rooms", `{}`)["rooms"].([]any); len(rooms) != defaultListRooms || snapshots != defaultListRooms {
+		t.Fatal(len(rooms), snapshots)
 	}
 }
 
@@ -409,10 +535,15 @@ func TestStdioProtocol(t *testing.T) {
 			codes[int(e["code"].(float64))]++
 		}
 	}
-	if byID["1"]["result"].(map[string]any)["protocolVersion"] != protocolVersion {
+	initialized := byID["1"]["result"].(map[string]any)
+	if initialized["protocolVersion"] != protocolVersion {
 		t.Fatal(byID["1"])
 	}
-	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 8 {
+	// The two SKILL.md rules reach agents that only see the MCP instructions.
+	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고 rt_read") || !strings.Contains(text, "사람에게 확인받는다") {
+		t.Fatal(initialized["instructions"])
+	}
+	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 9 {
 		t.Fatal(byID["list"])
 	}
 	content := byID["3"]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)

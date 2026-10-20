@@ -19,8 +19,8 @@ func TestDecisionMarkerRecordsCard(t *testing.T) {
 	defer unsub()
 	postQueueMessage(t, h, r.ID, "decide", "codex")
 	call := nextCall(t, ps[0])
-	if !strings.Contains(call.opts.Prompt, "[[DECISION: 결정 한 줄 | 근거:") {
-		t.Fatal("standing brief must explain the decision marker")
+	if !strings.Contains(call.opts.Prompt, "[[DECISION: 결정 한 줄 | 근거:") || !strings.Contains(call.opts.Prompt, "방 사용자가 확정해야") {
+		t.Fatal("standing brief must explain the decision marker and that it only proposes")
 	}
 	finishCall(call, "합의했어.\n[[DECISION: 캐시는 30초 | 근거: docs/a.md:12 | 반대: 없음 | 미확인: 부하 시험]]\n끝.")
 	waitIdle(t, h, r.ID)
@@ -29,7 +29,7 @@ func TestDecisionMarkerRecordsCard(t *testing.T) {
 		t.Fatalf("%+v", snap.Decisions)
 	}
 	d := snap.Decisions[0]
-	if d.Text != "캐시는 30초" || d.Evidence != "docs/a.md:12" || d.Dissent != "없음" || d.Unverified != "부하 시험" || d.By != "codex" || d.Status != "active" || d.SourceMsg == "" || d.At == 0 {
+	if d.Text != "캐시는 30초" || d.Evidence != "docs/a.md:12" || d.Dissent != "없음" || d.Unverified != "부하 시험" || d.By != "codex" || d.Status != "proposed" || d.SourceMsg == "" || d.At == 0 {
 		t.Fatalf("%+v", d)
 	}
 	var source *Message
@@ -151,6 +151,51 @@ func TestDecisionEditsReplayAfterRestart(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// A seat's card is only proposed, whatever its dissent says: it stays out of
+// the standing brief (and so does not re-send the brief) until someone sets it
+// active, and it never returns to proposed.
+func TestProposedDecisionJoinsBriefOnlyWhenConfirmed(t *testing.T) {
+	a := &fakeProvider{id: "claude", reply: func(n int, _ string) string {
+		if n == 1 {
+			return "[[DECISION: 제안 카드 | 근거: 메시지 | 반대: 없음 | 미확인: 없음]]"
+		}
+		return "ok"
+	}}
+	h, r := newTestHub(t, a)
+	h.PostUser(r.ID, "first", "")
+	waitIdle(t, h, r.ID)
+	cards, _ := h.Decisions(r.ID)
+	if len(cards) != 1 || cards[0].Status != "proposed" {
+		t.Fatalf("%+v", cards)
+	}
+	h.PostUser(r.ID, "second", "")
+	waitIdle(t, h, r.ID)
+	if strings.Contains(a.prompts[1], "현재 결정") || strings.Contains(a.prompts[1], "제안 카드") {
+		t.Fatalf("a proposed card reached the brief:\n%s", a.prompts[1])
+	}
+	if _, err := h.UpdateDecision(r.ID, cards[0].ID, DecisionInput{Text: ptr("고친 제안")}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := h.Decisions(r.ID); got[0].Status != "proposed" {
+		t.Fatalf("an edit must not confirm: %+v", got[0])
+	}
+	confirmed, err := h.UpdateDecision(r.ID, cards[0].ID, DecisionInput{Status: ptr("active")})
+	if err != nil || confirmed.Status != "active" {
+		t.Fatal(confirmed, err)
+	}
+	h.PostUser(r.ID, "third", "")
+	waitIdle(t, h, r.ID)
+	if !strings.Contains(a.prompts[2], "현재 결정(최신순):\n- 고친 제안\n") {
+		t.Fatalf("a confirmed card must re-send the brief:\n%s", a.prompts[2])
+	}
+	if _, err := h.UpdateDecision(r.ID, cards[0].ID, DecisionInput{Status: ptr("proposed")}); err == nil {
+		t.Fatal("an active card went back to proposed")
+	}
+	if _, err := h.AddDecision(r.ID, DecisionInput{Text: ptr("사람 제안"), Status: ptr("proposed")}); err == nil {
+		t.Fatal("a person's card starts active")
+	}
+}
 
 // The client drops any card state whose at is older than the one it shows
 // (web/js/decisions.js isStaleDecision); that is sound only if every change of
