@@ -19,7 +19,7 @@ Roundtable은 서로 다른 공급사의 AI CLI가 한 방에서 대화·리뷰�
 ## 순서
 1. `roundtable rt list_rooms --limit 5`로 최근 방과 좌석 id(`participants[].id`)를 확인한다. `enabled:false`인 좌석은 꺼져 있어 부를 수 없다. 알맞은 방이 없으면 `roundtable rt create_room --help`를 보고 만든다.
 2. 질문은 `roundtable rt post --room <방ID> --text "..." --wait_seconds 300`으로 보낸다. 결과의 `seq`는 보낸 메시지 번호다. 특정 좌석에게만 보내려면 `--target <좌석ID>`를 붙인다(이름이 아니라 id). 긴 본문은 `--text -`로 stdin에 넣는다.
-3. 결과 JSON의 답변을 읽는다. `timed_out:true`면 실행은 계속 중이므로 다시 보내지 말고 `roundtable rt read --room <방ID> --after_seq <N>`으로 이어 읽는다(`after_seq`보다 큰 번호만 나온다). N은 보낸 seq와, 결과에서 아직 `streaming`인 메시지의 seq−1 중 작은 값이다. `live:true`(실행 중인 답에 끼워 넣은 입력)면 그 답의 seq가 보낸 seq보다 작으므로 보낸 seq를 그대로 쓰면 그 답을 다시 읽지 못한다. `--after_seq` 없이 읽으면 최신 메시지부터 20000자까지만 나온다. 빠진 오래된 메시지는 `omitted_messages`(개수)와 `first_seq`(담긴 첫 seq)로 알려 주며, 더 필요하면 `--max_chars`를 늘린다. 답의 `reply_to`는 그 답이 응답한 메시지의 seq다.
+3. 결과 JSON의 답변을 읽는다. `timed_out:true`면 실행은 계속 중이므로 다시 보내지 말고 결과의 `resume_after_seq`로 `roundtable rt read --room <방ID> --after_seq <resume_after_seq>`를 실행해 이어 읽는다(`after_seq`보다 큰 번호만 나온다). 보낸 seq를 그대로 쓰지 않는다. `live:true`(실행 중인 답에 끼워 넣은 입력)면 그 답의 seq가 보낸 seq보다 작아서 다시 읽지 못한다. `--after_seq` 없이 읽으면 최신 메시지부터 20000자까지만 나온다. 빠진 오래된 메시지는 `omitted_messages`(개수)와 `first_seq`(담긴 첫 seq)로 알려 주며, 더 필요하면 `--max_chars`를 늘린다. 답의 `reply_to`는 그 답이 응답한 메시지의 seq다.
 4. 여러 모델의 의견을 겨루게 하려면 `roundtable rt discuss --room <방ID> --rounds 2`를 쓴다. 1라운드는 기본으로 블라인드라 서로의 답을 보지 않는다. 좌석들이 이미 같은 질문에 답했다면 블라인드 1라운드는 호출을 좌석 수만큼 더 쓰므로 `--blind_first false`를 붙인다.
 5. 합의 내용은 `roundtable rt decisions --room <방ID>`로 확인한다. AGREE는 의견이 같다는 뜻일 뿐 검증이 아니다. 좌석이 남긴 카드는 `proposed`(제안)이고 안내문에 들어가지 않는다. 근거를 확인한 뒤 `roundtable rt update_decision --room <방ID> --id <결정ID> --status active`로 확정하고, 받아들이지 않으면 `--status dropped`로 거절한다.
 

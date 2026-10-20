@@ -191,6 +191,9 @@ type readResult struct {
 	OmittedChars    int64         `json:"omitted_chars"`
 	OmittedMessages int           `json:"omitted_messages,omitempty"`
 	FirstSeq        int64         `json:"first_seq,omitempty"`
+	// unsettled is the lowest selected seq still streaming or left out whole,
+	// counted even when the message is not in the array; 0 when none.
+	unsettled int64
 }
 
 func (s *Server) read(ctx context.Context, room string, after, maxChars int64) (*readResult, error) {
@@ -242,6 +245,9 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 				continue
 			}
 			result.NextSeq = max(result.NextSeq, m.Seq)
+			if m.Status == "streaming" || remaining == 0 {
+				result.unsettled = m.Seq // pages and messages run newest first
+			}
 			if remaining == 0 {
 				result.OmittedMessages++
 				continue
@@ -311,11 +317,22 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 	return result, nil
 }
 
+// resume_after_seq is set on timed_out: the after_seq for rt_read that still
+// covers every reply that was streaming or left out, including a steering
+// reply older than the sent message.
 type postResult struct {
 	Seq  int64 `json:"seq"`
 	Live bool  `json:"live,omitempty"`
 	*readResult
-	TimedOut *bool `json:"timed_out,omitempty"`
+	TimedOut       *bool  `json:"timed_out,omitempty"`
+	ResumeAfterSeq *int64 `json:"resume_after_seq,omitempty"`
+}
+
+func resumeAfterSeq(sent int64, read *readResult) int64 {
+	if read.unsettled > 0 {
+		return min(sent, read.unsettled-1)
+	}
+	return sent
 }
 
 func (s *Server) post(ctx context.Context, a arguments) (any, error) {
@@ -425,5 +442,9 @@ func (s *Server) post(ctx context.Context, a arguments) (any, error) {
 		return nil, fmt.Errorf("메시지 seq=%d 전송됨; 답변 조회 실패(재전송하지 말 것): %w", sent.Seq, err)
 	}
 	result.readResult, result.TimedOut = read, &timedOut
+	if timedOut {
+		resume := resumeAfterSeq(sent.Seq, read)
+		result.ResumeAfterSeq = &resume
+	}
 	return result, nil
 }

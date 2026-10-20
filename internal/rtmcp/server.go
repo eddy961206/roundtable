@@ -245,7 +245,7 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 			"protocolVersion": protocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "roundtable", "version": "1"},
-			"instructions":    "Roundtable HTTP API. rt_post의 timed_out은 대기만 종료하며 실행 중인 턴을 취소하지 않는다. timed_out이면 같은 메시지를 다시 보내지 말고 rt_read로 이어 읽는다. after_seq는 보낸 seq와, 결과에서 아직 streaming인 메시지의 seq-1 중 작은 값이다(live:true면 기존 답의 seq가 보낸 seq보다 작다).\n사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.",
+			"instructions":    "Roundtable HTTP API. rt_post의 timed_out은 대기만 종료하며 실행 중인 턴을 취소하지 않는다. timed_out이면 같은 메시지를 다시 보내지 말고 결과의 resume_after_seq를 after_seq로 주어 rt_read로 이어 읽는다(live:true면 기존 답의 seq가 보낸 seq보다 작아 보낸 seq로는 그 답이 빠진다).\n사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.",
 		}, nil
 	case "ping":
 		return map[string]any{}, nil

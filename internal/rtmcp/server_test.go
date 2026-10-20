@@ -540,7 +540,7 @@ func TestStdioProtocol(t *testing.T) {
 		t.Fatal(byID["1"])
 	}
 	// The two SKILL.md rules reach agents that only see the MCP instructions.
-	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고 rt_read") || !strings.Contains(text, "streaming인 메시지의 seq-1 중 작은 값") || !strings.Contains(text, "사람에게 확인받는다") {
+	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고") || !strings.Contains(text, "resume_after_seq를 after_seq로") || !strings.Contains(text, "사람에게 확인받는다") {
 		t.Fatal(initialized["instructions"])
 	}
 	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 9 {

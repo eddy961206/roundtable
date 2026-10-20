@@ -12,13 +12,13 @@
 - 도구(이름·입력은 이대로):
   - `rt_list_rooms` {limit?} → 최근 갱신순 `limit`개(기본 20, 최대 100) 방의 id·제목·모드·실행 중 여부와 좌석(id·이름·공급사·모델·enabled). 삭제된 좌석은 빼고 역할은 넣지 않는다.
   - `rt_create_room` {title, workspace, mode, participants:[{provider, model, effort, label, role}]} → room id.
-  - `rt_post` {room, text, target?, wait_seconds?} → 보낸 메시지 seq. `wait_seconds`(0~600)가 있으면 그 메시지로 시작된 턴들이 끝나거나 시간이 다할 때까지 기다린 뒤 아래 `rt_read`와 같은 형식으로 새 답을 돌려준다.
+  - `rt_post` {room, text, target?, wait_seconds?} → 보낸 메시지 seq. `wait_seconds`(0~600)가 있으면 그 메시지로 시작된 턴들이 끝나거나 시간이 다할 때까지 기다린 뒤 아래 `rt_read`와 같은 형식으로 새 답을 돌려준다. `timed_out:true`면 `resume_after_seq`(보낸 seq와, 아직 `streaming`이거나 예산 밖으로 빠진 답 중 가장 작은 seq−1 가운데 작은 값)를 함께 돌려준다.
   - `rt_read` {room, after_seq?, max_chars?} → after_seq 이후 메시지(생략하면 최신 메시지부터 예산까지)를 오래된 순으로(seq·작성자·이름·역할·상태·본문). 본문 합계 예산 max_chars(기본 20000)는 최신 메시지부터 채운다. 경계 메시지는 앞을 줄여 `truncated`로 표시하고, 예산 밖 메시지는 배열에서 빼고 `omitted_messages`(개수)·`first_seq`(담긴 첫 seq)로 알린다. `kind`·`target`·`attachments[{id,name}]`·`requests`·`decisions`·`reply_to`(계기 메시지의 seq)는 값이 있을 때만 넣는다.
   - `rt_discuss` {room, rounds, blind_first?} → 토론 시작. 이미 답이 있는 질문에 블라인드 1라운드를 쓰면 호출이 좌석 수만큼 더 든다고 설명에 적는다.
   - `rt_requests` {room} → 요청 목록과 상태. `rt_cancel_request` {room, request}.
   - `rt_decisions` {room} → 결정 카드 목록(C).
   - `rt_update_decision` {room, id, status?, text?, evidence?, dissent?, unverified?} → C의 `PATCH`를 감싼 쓰기 도구. status는 `active`(확정)·`superseded`·`dropped`(거절). 바꿀 항목이 하나 이상 필요하다.
-- MCP `initialize` instructions에 두 규칙: `timed_out`이면 재전송하지 말고 `rt_read`로 읽는다(`after_seq`는 보낸 seq와, 아직 `streaming`인 결과 메시지의 seq−1 중 작은 값. `live:true`면 기존 답의 seq가 보낸 seq보다 작다). 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정은 사람에게 확인받는다.
+- MCP `initialize` instructions에 두 규칙: `timed_out`이면 재전송하지 말고 결과의 `resume_after_seq`를 `after_seq`로 주어 `rt_read`로 읽는다. 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정은 사람에게 확인받는다.
 - 쓰기 도구는 기본 켜짐. `--read-only`면 조회 도구만 노출. 서버가 loopback 전용인 기존 보안 경계는 그대로다.
 - README에 Claude Code·Codex·agy에서 이 MCP를 등록하는 예시 한 줄씩.
 
