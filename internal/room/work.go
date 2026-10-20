@@ -111,13 +111,15 @@ func shortSHA(sha string) string {
 
 // workNote records a plan state change as a persisted system message (D13).
 func (h *Hub) workNote(rs *roomState, text string) {
-	m := rs.addSystem(text)
-	_ = h.store.AppendMessage(rs.room.ID, m)
+	h.addSystem(rs, text) // addSystem reports persistence failures, including background work
 }
 
 func (h *Hub) saveWork(rs *roomState) error {
+	if err := h.saveRoom(rs); err != nil {
+		return err
+	}
 	rs.broadcast("work", rs.room.Work)
-	return h.store.SaveRoom(rs.room)
+	return nil
 }
 
 func (h *Hub) blockPart(rs *roomState, part *Part, kind, from, message string, result *CommandResult) {
@@ -767,7 +769,7 @@ func (h *Hub) reviewTurnLost(rs *roomState, t *Turn, why string) {
 		return
 	}
 	h.blockPart(rs, part, "review", "reviewing", why, nil)
-	_ = h.saveWork(rs)
+	h.saveWork(rs) // saveWork reports background persistence failures
 }
 
 // ---- merge queue (§5) ---------------------------------------------------------
@@ -832,7 +834,7 @@ func (h *Hub) mergePart(rs *roomState, part *Part, submitSHA, beforeSHA, branch,
 	}
 	if block != nil {
 		h.blockPart(rs, part, block.Kind, "queued", block.Message, block.Result)
-		_ = h.saveWork(rs)
+		h.saveWork(rs)
 		h.mu.Unlock()
 		return
 	}
@@ -860,7 +862,7 @@ func (h *Hub) mergePart(rs *roomState, part *Part, submitSHA, beforeSHA, branch,
 		h.startWorktreeCleanup(rs)
 	}
 	h.advanceQueue(rs)
-	_ = h.saveWork(rs)
+	h.saveWork(rs)
 }
 
 func (h *Hub) completeMerge(rs *roomState, part *Part, mergeSHA string) {

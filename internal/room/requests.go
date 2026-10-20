@@ -153,7 +153,9 @@ func (h *Hub) markerError(rs *roomState, pr *prepared, kind, marker, reason stri
 		m.Part = pr.part.ID
 	}
 	if err := h.store.AppendMessage(rs.room.ID, m); err != nil {
-		return err
+		rs.msgs = rs.msgs[:len(rs.msgs)-1]
+		// An unsuccessful append must not make this sequence reusable.
+		return h.reportPersistenceError(rs, "마커 공지", err)
 	}
 	rs.broadcast("message", m)
 	return nil

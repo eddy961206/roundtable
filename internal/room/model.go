@@ -77,7 +77,7 @@ func (r *Room) enabled() []*Participant {
 type Message struct {
 	NoticeFor        string         `json:"notice_for,omitempty"` // durable out-of-cap feedback to this seat; visible to everyone
 	NoticeDelivered  bool           `json:"notice_delivered,omitempty"`
-	NoticeMarker     string         `json:"notice_marker,omitempty"` // rejected marker kind: attach | request | request_result | decision
+	NoticeMarker     string         `json:"notice_marker,omitempty"` // marker feedback: attach | request | request_result | decision | discussion
 	NoticeMsg        string         `json:"notice_msg,omitempty"`    // reply whose marker was rejected
 	Attachments      []Attachment   `json:"attachments,omitempty"`
 	Requests         []string       `json:"requests,omitempty"`
@@ -93,7 +93,8 @@ type Message struct {
 	Target           string         `json:"target,omitempty"` // user message addressed to one agent only
 	Live             bool           `json:"live,omitempty"`   // injected into a running turn (steering)
 	TurnID           string         `json:"turn_id,omitempty"`
-	Reason           string         `json:"reason,omitempty"` // mention | broadcast | discussion | part | review
+	ReplyTo          string         `json:"reply_to,omitempty"` // triggering message ID, when the turn has one
+	Reason           string         `json:"reason,omitempty"`   // mention | broadcast | discussion | part | review
 	Round            int            `json:"round,omitempty"`
 	Signal           string         `json:"signal,omitempty"` // discussion signal or WORK:DONE
 	Part             string         `json:"part,omitempty"`

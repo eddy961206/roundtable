@@ -80,9 +80,12 @@ func (s *Store) appendLine(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = f.Write(append(b, '\n'))
-	return err
+	_, writeErr := f.Write(append(b, '\n'))
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }
 
 // SaveLimits keeps the last known vendor limits so they survive a restart.
@@ -194,6 +197,12 @@ func (s *Store) readRoomSnapshot(id string) (*Room, []*Message, error) {
 		if err != nil {
 			return nil, nil, err
 		}
+	}
+	// Messages can be committed after the last room metadata save (system
+	// notes, or a crash during a turn). Never reuse their sequence numbers.
+	for _, m := range messages {
+		r.Seq = max(r.Seq, m.Seq)
+		r.UpdatedAt = max(r.UpdatedAt, m.TS)
 	}
 	return &r, messages, nil
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +14,130 @@ import (
 
 	"roundtable/internal/agent"
 )
+
+func TestSystemMessagesPersistAndResumeSequence(t *testing.T) {
+	h, r := newTestHub(t, &fakeProvider{id: "codex"})
+	rs := h.rooms[r.ID]
+	m, err := h.addSystem(rs, "durable system note")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.workNote(rs, "durable work note")
+	lastSeq := rs.room.Seq
+	// Deliberately leave room.json behind messages.jsonl, as a crash would.
+	restarted, err := NewHub(h.store, h.reg, h.scratch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay := restarted.rooms[r.ID]
+	if len(replay.msgs) != 2 || replay.msgs[0].ID != m.ID || replay.msgs[1].Text != "durable work note" {
+		t.Fatalf("system history was lost or duplicated: %+v", replay.msgs)
+	}
+	next, err := restarted.addSystem(replay, "after restart")
+	if err != nil || next.Seq != lastSeq+1 || next.ReplyTo != "" {
+		t.Fatalf("sequence/reply_to after restart: %+v, %v", next, err)
+	}
+}
+
+func TestSystemSaveFailureIsReportedWithoutPublishingSuccess(t *testing.T) {
+	h, r := newTestHub(t, &fakeProvider{id: "codex"}, &fakeProvider{id: "claude"})
+	rs := h.rooms[r.ID]
+	var logs strings.Builder
+	h.Log = log.New(&logs, "", 0)
+	ch, unsub, err := h.Subscribe(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsub()
+	if err := os.Mkdir(filepath.Join(h.store.roomDir(r.ID), "messages.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seq := r.Seq
+	if err := h.StartDiscussion(r.ID, 1, nil); err == nil {
+		t.Fatal("discussion started without a durable start message")
+	}
+	if rs.disc != nil || len(rs.queue) != 0 || len(rs.msgs) != 0 || r.Seq != seq+1 {
+		t.Fatal("failed system save changed discussion/history")
+	}
+	h.workNote(rs, "background note failure")
+	if !strings.Contains(logs.String(), "시스템 메시지 저장 실패") {
+		t.Fatal(logs.String())
+	}
+	found := false
+	for len(ch) > 0 {
+		var event struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(<-ch, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == "message" {
+			t.Fatal("failed write broadcast a successful message")
+		}
+		found = found || event.Type == "error"
+	}
+	if !found {
+		t.Fatal("missing persistence error event")
+	}
+}
+
+func TestExportIncludesSeatIDAndLabel(t *testing.T) {
+	h, r := newTestHub(t, &fakeProvider{id: "codex"})
+	rs := h.rooms[r.ID]
+	rs.nextMessage("agent", "codex", "answer")
+	r.Participants[0].Label = "Writer"
+	text, err := h.ExportMarkdown(r.ID)
+	if err != nil || !strings.Contains(text, "### @codex (Writer) · ") {
+		t.Fatalf("export: %s (%v)", text, err)
+	}
+}
+
+func TestRoomSaveFailurePreventsStartingNewTurn(t *testing.T) {
+	p := &fakeProvider{id: "codex"}
+	h, r := newTestHub(t, p)
+	if err := os.Mkdir(filepath.Join(h.store.roomDir(r.ID), "room.json.tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.PostUser(r.ID, "do not start after save failure", "codex"); err == nil || !strings.Contains(err.Error(), "방 저장 실패") {
+		t.Fatalf("save error hidden: %v", err)
+	}
+	s, err := h.Snapshot(r.ID)
+	if err != nil || len(s.Queue) != 0 || p.calls() != 0 {
+		t.Fatalf("turn ran after room persistence failed: %+v %v", s, err)
+	}
+}
+
+func TestSessionAndStopNotesSurviveRestart(t *testing.T) {
+	h, r, ps := controlledHub(t, "codex")
+	postQueueMessage(t, h, r.ID, "start", "codex")
+	nextCall(t, ps[0])
+	if err := h.ResetSessions(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Stop(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, h, r.ID)
+	restarted, err := NewHub(h.store, h.reg, h.scratch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := restarted.Snapshot(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset, stopped := false, false
+	for _, m := range s.Messages {
+		if m.Kind != "system" {
+			continue
+		}
+		reset = reset || strings.Contains(m.Text, "세션을 초기화")
+		stopped = stopped || strings.Contains(m.Text, "중지: 사용자가 중지함")
+	}
+	if !reset || !stopped {
+		t.Fatalf("lost reset/stop note: reset=%v stopped=%v", reset, stopped)
+	}
+}
 
 // fakeProvider scripts replies and records what it was asked.
 type fakeProvider struct {
@@ -147,7 +273,7 @@ func TestBroadcastAndDelta(t *testing.T) {
 	if got := agentTexts(snap, "codex"); len(got) != 1 {
 		t.Fatalf("codex messages %v", got)
 	}
-	if !strings.Contains(a.prompts[0], "[User] 첫 질문") || !strings.Contains(a.prompts[0], "지금까지의 대화") {
+	if !strings.Contains(a.prompts[0], "] 첫 질문") || !strings.Contains(a.prompts[0], "지금까지의 대화") {
 		t.Fatalf("first prompt should carry the whole transcript: %s", a.prompts[0])
 	}
 	p := snap.Room.participant("claude")
@@ -160,7 +286,7 @@ func TestBroadcastAndDelta(t *testing.T) {
 	waitIdle(t, hub, r.ID)
 	second := a.prompts[1]
 	_, hist, ok := strings.Cut(second, "새로 올라온 메시지 ===")
-	if !ok || strings.Contains(hist, "[User] 첫 질문") || strings.Count(hist, "[@codex (CODEX 1)] 답변 codex") != 1 || strings.Contains(hist, "[@claude (CLAUDE 1)]") || !strings.Contains(hist, "[User] 둘째 질문") {
+	if !ok || strings.Contains(hist, "] 첫 질문") || strings.Count(hist, "@codex (CODEX 1)] 답변 codex") != 1 || strings.Contains(hist, "@claude (CLAUDE 1)]") || !strings.Contains(hist, "] 둘째 질문") {
 		t.Fatalf("delta prompt wrong:\n%s", second)
 	}
 }
@@ -250,7 +376,7 @@ func TestDiscussionEndsOnAgreement(t *testing.T) {
 		t.Fatal("end-of-discussion notice missing")
 	}
 	// discussion turns are sequential: codex's round-1 prompt must contain claude's round-1 reply
-	if !strings.Contains(b.prompts[0], "[@claude (CLAUDE 1)] 의견 A") {
+	if !strings.Contains(b.prompts[0], "@claude (CLAUDE 1)] 의견 A") {
 		t.Fatalf("sequential delivery broken:\n%s", b.prompts[0])
 	}
 }
@@ -296,7 +422,7 @@ func TestSteerLiveAndQueued(t *testing.T) {
 	if a.calls() != 1 {
 		t.Fatalf("live steer must not create another claude turn, calls=%d", a.calls())
 	}
-	if b.calls() != 2 || !strings.Contains(b.prompts[1], "[User] 너도 바꿔") || strings.Contains(b.prompts[1], "방향 바꿔") {
+	if b.calls() != 2 || !strings.Contains(b.prompts[1], "] 너도 바꿔") || strings.Contains(b.prompts[1], "방향 바꿔") {
 		t.Fatalf("queued steer wrong: calls=%d prompt=%s", b.calls(), b.prompts[len(b.prompts)-1])
 	}
 }
@@ -325,7 +451,7 @@ func TestFailedTurnRedeliversMessages(t *testing.T) {
 		t.Fatalf("calls %d", a.calls())
 	}
 	second := a.prompts[1]
-	if !strings.Contains(second, "[User] 첫 질문") || !strings.Contains(second, "[User] 둘째 질문") {
+	if !strings.Contains(second, "] 첫 질문") || !strings.Contains(second, "] 둘째 질문") {
 		t.Fatalf("messages of the failed turn must be redelivered: %s", second)
 	}
 	snap, _ := hub.Snapshot(r.ID)
