@@ -342,12 +342,16 @@ kbd {
   flex: 1;
   min-width: 0;
 }
-.room-item .room-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.room-item .mode-icon {
   flex: none;
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
 }
+.room-item .mode-icon svg { width: 14px; height: 14px; }
+.mode-icon.read { color: var(--ok); }
+.mode-icon.write { color: var(--warn); }
+.mode-icon.chat { color: var(--accent); }
 .dot {
   width: 8px;
   height: 8px;
@@ -2664,7 +2668,7 @@ dialog.dlg-lightbox[open] {
   opacity: 0.8;
 }
 
-/* ---------- v1 usability: inline rename, room ⋯ menu, role cards, CLI versions, model stats ---------- */
+/* ---------- v1 usability: inline rename, room context menu, role cards, CLI versions, model stats ---------- */
 .title-row .rename-btn {
   font-size: 13px;
   color: var(--muted);
@@ -2682,21 +2686,6 @@ dialog.dlg-lightbox[open] {
   min-height: 28px;
 }
 
-.room-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-.room-row .room-item { flex: 1; min-width: 0; }
-.room-menu-btn {
-  flex: none;
-  color: var(--muted);
-  opacity: 0.55;
-  font-size: 14px;
-  line-height: 1;
-}
-.room-row:hover .room-menu-btn, .room-menu-btn:focus-visible, .room-menu-btn[aria-expanded="true"] { opacity: 1; color: var(--text); }
-@media (hover: none) { .room-menu-btn { opacity: 1; } }
 #room-list li { position: relative; }
 .room-menu-pop {
   position: absolute;

@@ -1,4 +1,4 @@
-// Room list in the sidebar (with the per-room ⋯ menu) and the open room's header (with inline rename).
+// Room list in the sidebar (with the per-room context menu) and the open room's header (with inline rename).
 import { $, $$, announce, el } from "./util.js";
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
@@ -83,7 +83,16 @@ export function exportRoom(id) {
 }
 
 // ---------- room list ----------
-// Which room's ⋯ menu is open and which is being renamed inline; both survive re-renders.
+const svgIcon = (paths) =>
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + paths + "</svg>";
+const ROOM_MODE = Object.freeze({
+  read: { name: "read 모드 (읽기·검색)", icon: svgIcon('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>') },
+  chat: { name: "chat 모드 (대화)", icon: svgIcon('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>') },
+  write: { name: "write 모드 (파일 수정)", icon: svgIcon('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>') },
+});
+
+// Which room's context menu (right-click, Shift+F10, long-press) is open and which is
+// being renamed inline; both survive re-renders.
 let menuOpenFor = "";
 let renamingId = "";
 let renameDraft = "";
@@ -95,9 +104,16 @@ function closeRoomMenu(restoreFocus = true) {
   menuOpenFor = "";
   renderRoomList();
   if (restoreFocus) {
-    const trigger = $('#room-list .room-menu-btn[data-room="' + CSS.escape(id) + '"]');
+    const trigger = $('#room-list .room-item[data-room="' + CSS.escape(id) + '"]');
     if (trigger) trigger.focus();
   }
+}
+
+function openRoomMenu(id) {
+  menuOpenFor = id;
+  renderRoomList();
+  const first = $("#room-list li[data-menu-open] .room-menu-item");
+  if (first) first.focus();
 }
 
 function beginRename(id) {
@@ -197,7 +213,7 @@ export function renderRoomList() {
   const caret = prevInput && document.activeElement === prevInput
     ? { start: prevInput.selectionStart, end: prevInput.selectionEnd, dir: prevInput.selectionDirection }
     : null;
-  // Same for an open ⋯ menu driven by the keyboard: remember which item had focus.
+  // Same for an open room menu driven by the keyboard: remember which item had focus.
   const menuItems = menuOpenFor ? $$(".room-menu-pop .room-menu-item", ul) : [];
   const menuIdx = menuItems.indexOf(document.activeElement);
   rebuildingList = true;
@@ -216,7 +232,7 @@ export function renderRoomList() {
   }
   if (menuIdx >= 0 && menuOpenFor) {
     const items = $$(".room-menu-pop .room-menu-item", ul);
-    const next = items[menuIdx] || $('.room-menu-btn[data-room="' + CSS.escape(menuOpenFor) + '"]', ul);
+    const next = items[menuIdx] || $('.room-item[data-room="' + CSS.escape(menuOpenFor) + '"]', ul);
     if (next) next.focus();
   }
 }
@@ -242,43 +258,41 @@ function buildRoomListItems(ul) {
       ul.appendChild(li);
       continue;
     }
-    const rowBox = el("div", "room-row");
+    // The whole row is the title: the mode is a 14px icon and the room actions open
+    // from the context menu (right-click, Shift+F10 or the menu key, long-press).
     const btn = el("button", "room-item");
     btn.type = "button";
+    btn.dataset.room = r.id;
     if (isAct) btn.setAttribute("aria-current", "page");
+    btn.title = r.title + "\n" + ROOM_MODE[r.mode].name + " · 우클릭: 이름 바꾸기·삭제·내보내기";
+    btn.setAttribute("aria-description", ROOM_MODE[r.mode].name + ". Shift+F10으로 이름 바꾸기·삭제·내보내기 메뉴");
+    const icon = el("span", "mode-icon " + r.mode);
+    icon.innerHTML = ROOM_MODE[r.mode].icon;
+    icon.setAttribute("aria-hidden", "true");
+    btn.appendChild(icon);
     btn.appendChild(el("span", "name", r.title));
-    const right = el("span", "room-meta");
-    right.appendChild(el("span", "badge " + r.mode, r.mode));
     if (r.active) {
       const dot = el("span", "dot");
       dot.title = "실행 중";
       dot.setAttribute("aria-label", "실행 중");
-      right.appendChild(dot);
+      btn.appendChild(dot);
     }
-    btn.appendChild(right);
     btn.onclick = () => {
       closeDrawers();
       hooks.openRoom(r.id);
     };
-    rowBox.appendChild(btn);
-
-    const menuBtn = el("button", "icon-btn room-menu-btn", "⋯");
-    menuBtn.type = "button";
-    menuBtn.dataset.room = r.id;
-    menuBtn.setAttribute("aria-label", r.title + " 방 메뉴 (이름 바꾸기·삭제·내보내기)");
-    menuBtn.setAttribute("aria-haspopup", "menu");
-    menuBtn.setAttribute("aria-expanded", menuOpenFor === r.id ? "true" : "false");
-    menuBtn.title = "이름 바꾸기 · 삭제 · 내보내기";
-    menuBtn.onclick = (e) => {
-      e.stopPropagation();
-      if (menuOpenFor === r.id) { closeRoomMenu(); return; }
-      menuOpenFor = r.id;
-      renderRoomList();
-      const first = $('#room-list li[data-menu-open] .room-menu-item');
-      if (first) first.focus();
+    btn.oncontextmenu = (e) => {
+      e.preventDefault();
+      openRoomMenu(r.id);
     };
-    rowBox.appendChild(menuBtn);
-    li.appendChild(rowBox);
+    // Not every browser turns Shift+F10 or the menu key into a contextmenu event.
+    btn.onkeydown = (e) => {
+      if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+        e.preventDefault();
+        openRoomMenu(r.id);
+      }
+    };
+    li.appendChild(btn);
     if (menuOpenFor === r.id) {
       li.dataset.menuOpen = "true";
       li.appendChild(buildRoomMenu(r));
@@ -287,7 +301,7 @@ function buildRoomListItems(ul) {
   }
 }
 
-// Clicking anywhere outside closes the open ⋯ menu; the global Escape handler calls closeRoomMenu too.
+// Clicking anywhere outside closes the open room menu; the global Escape handler calls closeRoomMenu too.
 export function bindRoomList() {
   document.addEventListener("click", (e) => {
     if (!menuOpenFor) return;
