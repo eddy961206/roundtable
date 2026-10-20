@@ -85,12 +85,26 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 	var b strings.Builder
 	others := make([]string, 0)
 	otherRoles := make([]string, 0)
+	providerCounts := make(map[string]int)
+	providerOrder := make([]string, 0)
 	for _, p := range r.enabled() {
+		if prov := strings.ToLower(strings.TrimSpace(p.Provider)); prov != "" {
+			if providerCounts[prov] == 0 {
+				providerOrder = append(providerOrder, prov)
+			}
+			providerCounts[prov]++
+		}
 		if p.ID != me.ID {
 			others = append(others, "@"+p.ID+"("+p.Label+")")
 			if role := oneLineRole(p.Role); role != "" {
 				otherRoles = append(otherRoles, fmt.Sprintf("- @%s(%s): %s", p.ID, p.Label, role))
 			}
+		}
+	}
+	groupProviders := make([]string, 0)
+	for _, prov := range providerOrder {
+		if providerCounts[prov] >= 2 {
+			groupProviders = append(groupProviders, "@"+prov)
 		}
 	}
 	fmt.Fprintf(&b, "당신은 사용자와 여러 AI 코딩 에이전트가 함께 있는 단톡방 \"%s\"의 참가자 \"@%s\"(%s)입니다.\n", r.Title, me.ID, me.Label)
@@ -115,7 +129,9 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 	b.WriteString("- 아래 대화의 마지막 메시지에 이어 자연스럽게 답하세요. 출력 전체가 채팅 메시지 하나로 그대로 전송됩니다. \"[@" + me.ID + "]\" 같은 접두어나 서명을 붙이지 마세요.\n")
 	if len(others) > 0 {
 		fmt.Fprintf(&b, "- 다른 참가자를 호출하려면 @이름(%s, @all)을 쓰세요. 그러면 그 참가자가 이어서 답합니다. 호출 없이 언급만 할 때는 @ 없이 이름만 쓰세요. 호출은 꼭 필요할 때만 하세요.\n", strings.Join(others, ", "))
-		b.WriteString("- @claude, @codex, @agy는 해당 공급자의 모든 활성 참가자를 호출합니다. 한 명만 부르려면 위 목록의 고유 @ID를 쓰세요.\n")
+		if len(groupProviders) > 0 {
+			fmt.Fprintf(&b, "- %s는 해당 공급자의 모든 활성 참가자를 호출합니다. 한 명만 부르려면 위 목록의 고유 @ID를 쓰세요.\n", strings.Join(groupProviders, ", "))
+		}
 	}
 	b.WriteString("- 공백 없는 이름만 @이름으로 부를 수 있고, 확실하게는 @좌석ID를 쓰세요. 요청 대상도 같은 규칙입니다.\n")
 	b.WriteString("- 다른 참가자의 주장은 근거를 확인하고, 동의하지 않으면 이유를 들어 반박하세요. 확인하지 않은 것을 확인했다고 말하지 마세요. 의견과 사실을 구분하세요.\n")
@@ -150,7 +166,9 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 		if role := oneLineRole(me.Role); role != "" {
 			fmt.Fprintf(&b, "(당신의 역할: %s — 강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.)\n", role)
 		}
-		b.WriteString("(응답 끝 신호 블록: 요청 결과 [[REQUEST_DONE:요청ID]]/[[REQUEST_REJECT:요청ID]] 이유, 토론 [[DISCUSSION:...]], 파트 완료 WORK:DONE 중 이번 턴에 해당하는 신호만 응답 맨 끝에 빈 줄 없이 한 줄씩 모으세요.)\n")
+		if tc.Reason == "discussion" || tc.Reason == "part" || tc.Part != nil {
+			b.WriteString("(응답 끝 신호 블록: 요청 결과 [[REQUEST_DONE:요청ID]]/[[REQUEST_REJECT:요청ID]] 이유, 토론 [[DISCUSSION:...]], 파트 완료 WORK:DONE 중 이번 턴에 해당하는 신호만 응답 맨 끝에 빈 줄 없이 한 줄씩 모으세요.)\n")
+		}
 	} else {
 		b.WriteString(standingBrief(r, me, tc.Decisions, tc.Scratch))
 	}
@@ -264,9 +282,9 @@ func renderHistory(r *Room, history []*Message) string {
 	total := 0
 	for i := len(history) - 1; i >= 0; i-- {
 		m := history[i]
-		line := fmt.Sprintf("[%s] %s", speaker(m, r), strings.TrimSpace(m.Text))
+		line := fmt.Sprintf("[#%d %s] %s", m.Seq, speaker(m, r), strings.TrimSpace(m.Text))
 		if m.Status == "error" {
-			line = fmt.Sprintf("[%s] (응답 실패: %s)", speaker(m, r), m.Error)
+			line = fmt.Sprintf("[#%d %s] (응답 실패: %s)", m.Seq, speaker(m, r), m.Error)
 		}
 		total += len(line)
 		if total > maxHistoryChars {
