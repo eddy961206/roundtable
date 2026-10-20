@@ -14,6 +14,9 @@ import (
 // Keeping stdin open lets the room inject a user message while the turn runs.
 type Claude struct{ cmd string }
 
+// Applied per invocation; global/user/project files are not changed.
+const claudeSandboxSettings = `{"sandbox":{"enabled":false}}`
+
 func NewClaude(cmd string) *Claude { return &Claude{cmd: cmd} }
 
 func (c *Claude) ID() string      { return "claude" }
@@ -46,7 +49,7 @@ func (c *Claude) Models() []ModelOption {
 }
 
 func claudeArgs(o RunOptions) []string {
-	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config"}
+	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config", "--settings", claudeSandboxSettings}
 	for _, dir := range imageDirs(o.Images) {
 		args = append(args, "--add-dir", dir)
 	}

@@ -14,20 +14,30 @@ func TestCodexCacheFreshAndResumeArguments(t *testing.T) {
 	cache := filepath.Join(scratch, "codex", "go-build")
 	for _, session := range []string{"", "existing-session"} {
 		for _, mode := range []string{ModeWrite, ModeRead, ModeChat} {
-			args := codexArgs(RunOptions{Mode: mode, ScratchDir: scratch, Workspace: t.TempDir(), SessionID: session}, "unelevated")
-			for _, setting := range []string{
-				"sandbox_workspace_write.writable_roots=[" + tomlString(cache) + "]",
-				"shell_environment_policy.set.GOCACHE=" + tomlString(cache),
-			} {
-				if slices.Contains(args, setting) != (mode == ModeWrite) {
-					t.Fatalf("%s/%s: %v", mode, session, args)
+			for _, sandbox := range []string{"", "unelevated", "elevated"} {
+				args := codexArgs(RunOptions{Mode: mode, ScratchDir: scratch, Workspace: t.TempDir(), SessionID: session}, sandbox)
+				if slices.Contains(args, "shell_environment_policy.set.GOCACHE="+tomlString(cache)) != (mode == ModeWrite) {
+					t.Fatal(args)
 				}
-			}
-			if !slices.Contains(args, `windows.sandbox="unelevated"`) || !slices.Contains(args, `approval_policy="never"`) {
-				t.Fatal(args)
-			}
-			if session != "" && (args[1] != "resume" || args[len(args)-2] != session) {
-				t.Fatal(args)
+				if slices.Contains(args, "sandbox_workspace_write.writable_roots=["+tomlString(cache)+"]") != (mode == ModeWrite && sandbox != "") {
+					t.Fatal(args)
+				}
+				policy := "danger-full-access"
+				if sandbox != "" {
+					policy = "read-only"
+					if mode == ModeWrite {
+						policy = "workspace-write"
+					}
+				}
+				if !slices.Contains(args, `sandbox_mode="`+policy+`"`) || !slices.Contains(args, `approval_policy="never"`) {
+					t.Fatal(args)
+				}
+				if strings.Contains(strings.Join(args, " "), "windows.sandbox=") != (sandbox != "") {
+					t.Fatal(args)
+				}
+				if session != "" && (args[1] != "resume" || args[len(args)-2] != session) {
+					t.Fatal(args)
+				}
 			}
 		}
 	}

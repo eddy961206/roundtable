@@ -9,33 +9,46 @@ package giteamcp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
 	protocolVersion = "2024-11-05"
 	maxOutput       = 120 * 1024
+	toolTimeout     = 20 * time.Second
 )
 
 // Fetcher performs one authenticated GET and returns the raw body.
-type Fetcher func(path string) ([]byte, error)
+type Fetcher func(ctx context.Context, path string) ([]byte, error)
 
 // TeaFetcher runs `tea api --login <login> <path>` (GET is tea's default; no
 // method or data flag is ever passed).
 func TeaFetcher(tea, login string) Fetcher {
-	return func(path string) ([]byte, error) {
-		cmd := exec.Command(tea, "api", "--login", login, path)
+	return func(ctx context.Context, path string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, tea, "api", "--login", login, path)
 		hideWindow(cmd)
+		// Killing only the launcher leaves Python/native tea and inherited pipes
+		// alive. Bound both tree termination and pipe drainage.
+		cmd.Cancel = func() error { return stopTea(cmd) }
+		cmd.WaitDelay = time.Second
 		out, err := cmd.Output()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if err != nil {
 			if ee, ok := err.(*exec.ExitError); ok {
-				return nil, fmt.Errorf("tea api %s: %s", path, strings.TrimSpace(string(ee.Stderr)))
+				// Authentication helpers may put credentials in stderr. Expose the
+				// exit code, never their raw authentication output.
+				return nil, fmt.Errorf("tea api %s: exit %d (로그인·인증 launcher·접근 권한 확인; 인증 출력 숨김)", path, ee.ExitCode())
 			}
 			return nil, err
 		}
@@ -45,16 +58,17 @@ func TeaFetcher(tea, login string) Fetcher {
 
 // Server holds the allow-list and the fetcher.
 type Server struct {
-	repos map[string]bool
-	order []string
-	fetch Fetcher
+	repos   map[string]bool
+	order   []string
+	fetch   Fetcher
+	timeout time.Duration
 }
 
 var repoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 // New validates the allow-list ("Owner/Name" entries).
 func New(repos []string, fetch Fetcher) (*Server, error) {
-	s := &Server{repos: map[string]bool{}, fetch: fetch}
+	s := &Server{repos: map[string]bool{}, fetch: fetch, timeout: toolTimeout}
 	for _, r := range repos {
 		r = strings.TrimSpace(r)
 		if r == "" {
@@ -141,7 +155,14 @@ func (s *Server) handle(req rpcRequest) (any, *rpcError) {
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, &rpcError{-32602, "invalid params"}
 		}
-		text, err := s.call(p.Name, p.Arguments)
+		// One budget covers the entire tool, including all comment pages and
+		// the PR/files/reviews requests. It is not reset for each tea process.
+		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+		text, err := s.call(ctx, p.Name, p.Arguments)
+		cancel()
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("Gitea 조회 제한 %s 초과: tea 인증 launcher·임시 폴더 권한·네트워크 대기를 확인하세요. 조회를 중단했습니다", s.timeout)
+		}
 		if err != nil {
 			return map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}, nil
 		}
@@ -172,7 +193,7 @@ func (s *Server) tools() []map[string]any {
 	}
 }
 
-func (s *Server) call(name string, args map[string]json.RawMessage) (string, error) {
+func (s *Server) call(ctx context.Context, name string, args map[string]json.RawMessage) (string, error) {
 	str := func(k string) (string, error) {
 		raw, ok := args[k]
 		if !ok {
@@ -226,7 +247,7 @@ func (s *Server) call(name string, args map[string]json.RawMessage) (string, err
 		if err != nil {
 			return "", err
 		}
-		return s.listing(fmt.Sprintf("%s/issues?type=%s&state=%s&limit=50&page=%d", base, kind, state, page))
+		return s.listing(ctx, fmt.Sprintf("%s/issues?type=%s&state=%s&limit=50&page=%d", base, kind, state, page))
 	case "gitea_search":
 		q, err := str("query")
 		if err != nil {
@@ -235,25 +256,25 @@ func (s *Server) call(name string, args map[string]json.RawMessage) (string, err
 		if strings.TrimSpace(q) == "" || len(q) > 200 {
 			return "", fmt.Errorf("query 는 1~200자")
 		}
-		return s.listing(fmt.Sprintf("%s/issues?state=%s&limit=50&q=%s", base, state, url.QueryEscape(q)))
+		return s.listing(ctx, fmt.Sprintf("%s/issues?state=%s&limit=50&q=%s", base, state, url.QueryEscape(q)))
 	case "gitea_issue":
 		n, err := intArg("number", 0)
 		if err != nil || n == 0 {
 			return "", fmt.Errorf("number 는 1 이상의 정수여야 함")
 		}
-		return s.issue(base, n)
+		return s.issue(ctx, base, n)
 	case "gitea_pull":
 		n, err := intArg("number", 0)
 		if err != nil || n == 0 {
 			return "", fmt.Errorf("number 는 1 이상의 정수여야 함")
 		}
-		return s.pull(base, n)
+		return s.pull(ctx, base, n)
 	case "gitea_pull_diff":
 		n, err := intArg("number", 0)
 		if err != nil || n == 0 {
 			return "", fmt.Errorf("number 는 1 이상의 정수여야 함")
 		}
-		b, err := s.fetch(fmt.Sprintf("%s/pulls/%d.diff", base, n))
+		b, err := s.fetch(ctx, fmt.Sprintf("%s/pulls/%d.diff", base, n))
 		if err != nil {
 			return "", err
 		}
@@ -262,8 +283,8 @@ func (s *Server) call(name string, args map[string]json.RawMessage) (string, err
 	return "", fmt.Errorf("알 수 없는 도구: %s", name)
 }
 
-func (s *Server) getJSON(path string, v any) error {
-	b, err := s.fetch(path)
+func (s *Server) getJSON(ctx context.Context, path string, v any) error {
+	b, err := s.fetch(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -291,9 +312,9 @@ type issueRow struct {
 	} `json:"pull_request"`
 }
 
-func (s *Server) listing(path string) (string, error) {
+func (s *Server) listing(ctx context.Context, path string) (string, error) {
 	var rows []issueRow
-	if err := s.getJSON(path, &rows); err != nil {
+	if err := s.getJSON(ctx, path, &rows); err != nil {
 		return "", err
 	}
 	var b strings.Builder
@@ -317,16 +338,16 @@ type comment struct {
 	Created string `json:"created_at"`
 }
 
-func (s *Server) issue(base string, n int) (string, error) {
+func (s *Server) issue(ctx context.Context, base string, n int) (string, error) {
 	var it issueRow
-	if err := s.getJSON(fmt.Sprintf("%s/issues/%d", base, n), &it); err != nil {
+	if err := s.getJSON(ctx, fmt.Sprintf("%s/issues/%d", base, n), &it); err != nil {
 		return "", err
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "#%d %s\n상태 %s · 작성 %s · %s\n\n%s\n", it.Number, it.Title, it.State, it.User.Login, short(it.Created), it.Body)
 	for page := 1; ; page++ {
 		var cs []comment
-		if err := s.getJSON(fmt.Sprintf("%s/issues/%d/comments?limit=50&page=%d", base, n, page), &cs); err != nil {
+		if err := s.getJSON(ctx, fmt.Sprintf("%s/issues/%d/comments?limit=50&page=%d", base, n, page), &cs); err != nil {
 			return "", err
 		}
 		for _, c := range cs {
@@ -339,7 +360,7 @@ func (s *Server) issue(base string, n int) (string, error) {
 	return clip(b.String()), nil
 }
 
-func (s *Server) pull(base string, n int) (string, error) {
+func (s *Server) pull(ctx context.Context, base string, n int) (string, error) {
 	var pr struct {
 		Number int    `json:"number"`
 		Title  string `json:"title"`
@@ -356,7 +377,7 @@ func (s *Server) pull(base string, n int) (string, error) {
 		} `json:"base"`
 		MergeSha string `json:"merge_commit_sha"`
 	}
-	if err := s.getJSON(fmt.Sprintf("%s/pulls/%d", base, n), &pr); err != nil {
+	if err := s.getJSON(ctx, fmt.Sprintf("%s/pulls/%d", base, n), &pr); err != nil {
 		return "", err
 	}
 	var files []struct {
@@ -364,7 +385,7 @@ func (s *Server) pull(base string, n int) (string, error) {
 		Add  int    `json:"additions"`
 		Del  int    `json:"deletions"`
 	}
-	if err := s.getJSON(fmt.Sprintf("%s/pulls/%d/files?limit=100", base, n), &files); err != nil {
+	if err := s.getJSON(ctx, fmt.Sprintf("%s/pulls/%d/files?limit=100", base, n), &files); err != nil {
 		return "", err
 	}
 	var reviews []struct {
@@ -373,7 +394,7 @@ func (s *Server) pull(base string, n int) (string, error) {
 		Body  string `json:"body"`
 		At    string `json:"submitted_at"`
 	}
-	if err := s.getJSON(fmt.Sprintf("%s/pulls/%d/reviews", base, n), &reviews); err != nil {
+	if err := s.getJSON(ctx, fmt.Sprintf("%s/pulls/%d/reviews", base, n), &reviews); err != nil {
 		return "", err
 	}
 	var b strings.Builder

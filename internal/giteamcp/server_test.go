@@ -2,6 +2,7 @@ package giteamcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -9,7 +10,7 @@ import (
 
 type fakeGitea struct{ paths []string }
 
-func (f *fakeGitea) fetch(path string) ([]byte, error) {
+func (f *fakeGitea) fetch(_ context.Context, path string) ([]byte, error) {
 	f.paths = append(f.paths, path)
 	switch {
 	case strings.HasPrefix(path, "/repos/Acme/app/issues?"):

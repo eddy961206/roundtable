@@ -366,21 +366,21 @@ func TestArgsPerMode(t *testing.T) {
 	}
 	x := codexArgs(RunOptions{Mode: ModeWrite, Workspace: ws, Model: "gpt-6.1-sol", Effort: "high"}, "")
 	xs := strings.Join(x, " ")
-	for _, want := range []string{"exec --json", `model="gpt-6.1-sol"`, `model_reasoning_effort="high"`, `sandbox_mode="workspace-write"`, "--cd " + ws + " -"} {
+	for _, want := range []string{"exec --json", `model="gpt-6.1-sol"`, `model_reasoning_effort="high"`, `sandbox_mode="danger-full-access"`, "--cd " + ws + " -"} {
 		if !strings.Contains(xs, want) {
 			t.Errorf("codex write args missing %q: %s", want, xs)
 		}
 	}
 	if strings.Contains(xs, "bypass") {
-		t.Error("codex args must never bypass the sandbox")
+		t.Error("use the explicit sandbox policy, not a permission bypass flag")
 	}
 	xr := strings.Join(codexArgs(RunOptions{Mode: ModeRead, Workspace: ws, SessionID: "tid"}, ""), " ")
-	if !strings.HasPrefix(xr, "exec resume --json") || !strings.HasSuffix(xr, " tid -") || !strings.Contains(xr, `sandbox_mode="read-only"`) || strings.Contains(xr, "--cd") || strings.Contains(xr, "--color") {
+	if !strings.HasPrefix(xr, "exec resume --json") || !strings.HasSuffix(xr, " tid -") || !strings.Contains(xr, `sandbox_mode="danger-full-access"`) || strings.Contains(xr, "--cd") || strings.Contains(xr, "--color") {
 		t.Errorf("codex resume args wrong: %s", xr)
 	}
 	a := agyArgs(RunOptions{Mode: ModeChat, Model: "gemini-3.8-flash-high", Prompt: "hi", SessionID: "cid"})
 	as := strings.Join(a, " ")
-	for _, want := range []string{"--mode plan", "--model gemini-3.8-flash-high", "--conversation cid", "--sandbox", "--input-format stream-json"} {
+	for _, want := range []string{"--mode plan", "--model gemini-3.8-flash-high", "--conversation cid", "--input-format stream-json"} {
 		if !strings.Contains(as, want) {
 			t.Errorf("agy args missing %q: %s", want, as)
 		}

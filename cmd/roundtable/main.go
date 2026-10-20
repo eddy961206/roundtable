@@ -48,7 +48,7 @@ func main() {
 	data := flag.String("data", filepath.Join(home, ".roundtable"), "data directory")
 	claudeCmd := flag.String("claude", "claude", "Claude Code command")
 	codexCmd := flag.String("codex", "codex", "Codex command")
-	codexSandbox := flag.String("codex-windows-sandbox", "", "Windows sandbox for Codex runs: elevated | unelevated (empty = Codex config)")
+	codexSandbox := flag.String("codex-windows-sandbox", "", "opt Codex back into a Windows sandbox: elevated | unelevated (empty = no OS sandbox; explicit value restores read/write sandbox policies)")
 	agyCmd := flag.String("agy", "agy", "Antigravity command")
 	openCodeCmd := flag.String("opencode", "opencode", "OpenCode command")
 	open := flag.Bool("open", false, "open the browser after start")

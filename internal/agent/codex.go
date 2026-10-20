@@ -17,7 +17,7 @@ import (
 type Codex struct {
 	cmd            string
 	sessionsDir    string
-	windowsSandbox string // "" keeps the user's config.toml choice
+	windowsSandbox string // "" disables OS sandboxing; explicit value opts back in
 }
 
 func NewCodex(cmd string) *Codex {
@@ -29,10 +29,8 @@ func NewCodex(cmd string) *Codex {
 	return &Codex{cmd: cmd, sessionsDir: dir}
 }
 
-// SetWindowsSandbox pins [windows].sandbox for roundtable runs only. On
-// 2026-10-19 the elevated setup refresh failed on every shell command while
-// another process held a Codex runtime binary open; "unelevated" still kept
-// workspace-write runs from writing outside the workspace.
+// SetWindowsSandbox opts roundtable runs back into OS sandboxing. Empty keeps
+// the 2026-10-20 user decision: no OS sandbox, including interactive resumes.
 func (c *Codex) SetWindowsSandbox(mode string) { c.windowsSandbox = mode }
 
 func (c *Codex) ID() string      { return "codex" }
@@ -86,8 +84,7 @@ func codexArgs(o RunOptions, windowsSandbox string) []string {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", o.Effort))
 	}
 	if o.MCP != nil && o.Mode != ModeChat {
-		// MCP servers run outside Codex's command sandbox, so a read-only
-		// server can reach the network while shell commands stay offline.
+		// The fixed GET-only MCP also works when shell sandboxing is enabled.
 		key := "mcp_servers." + o.MCP.Name
 		quoted := make([]string, len(o.MCP.Args))
 		for i, a := range o.MCP.Args {
@@ -96,26 +93,47 @@ func codexArgs(o RunOptions, windowsSandbox string) []string {
 		// approval_policy="never" rejects MCP calls that need approval; the
 		// server is read-only by construction, so its tools are pre-approved.
 		args = append(args, "-c", key+".command="+tomlString(o.MCP.Command), "-c", key+".args=["+strings.Join(quoted, ",")+"]",
-			"-c", key+`.default_tools_approval_mode="approve"`)
+			"-c", key+`.default_tools_approval_mode="approve"`,
+			"-c", key+`.enabled=true`, "-c", key+`.required=true`,
+			"-c", key+`.startup_timeout_sec=10`, "-c", key+`.tool_timeout_sec=25`)
 	}
-	if windowsSandbox != "" {
-		args = append(args, "-c", fmt.Sprintf("windows.sandbox=%q", windowsSandbox))
-	}
-	switch o.Mode {
-	case ModeWrite:
-		args = append(args, "-c", `sandbox_mode="workspace-write"`, "-c", `approval_policy="never"`)
+	args = append(args, codexPermissionArgs(o.Mode, windowsSandbox)...)
+	if o.Mode == ModeWrite {
 		cache := tomlString(filepath.Join(o.ScratchDir, "codex", "go-build"))
 		// Config overrides also work with exec resume (which has no --add-dir).
 		// Explicit shell env injection survives Codex's inherited-env filters.
-		args = append(args, "-c", "sandbox_workspace_write.writable_roots=["+cache+"]",
-			"-c", "shell_environment_policy.set.GOCACHE="+cache)
-	default:
-		args = append(args, "-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`)
+		args = append(args, "-c", "shell_environment_policy.set.GOCACHE="+cache)
+		if windowsSandbox != "" {
+			args = append(args, "-c", "sandbox_workspace_write.writable_roots=["+cache+"]")
+		}
 	}
 	if resume {
 		return append(args, o.SessionID, "-")
 	}
 	return append(args, "--cd", workDir(o), "-")
+}
+
+// Keep headless and interactive permission policies identical. Codex has no
+// separate read-only tool allow-list, so default read is an instruction only.
+func codexPermissionArgs(mode, windowsSandbox string) []string {
+	policy := "danger-full-access"
+	args := []string{"-c", `approval_policy="never"`}
+	if windowsSandbox != "" {
+		args = append(args, "-c", fmt.Sprintf("windows.sandbox=%q", windowsSandbox))
+		policy = "read-only"
+		if mode == ModeWrite {
+			policy = "workspace-write"
+		}
+	}
+	return append(args, "-c", fmt.Sprintf("sandbox_mode=%q", policy))
+}
+
+func codexPrompt(o RunOptions) string {
+	if o.MCP == nil || o.MCP.Name != "gitea" || o.Mode == ModeChat || o.SessionID != "" {
+		return o.Prompt
+	}
+	return "Gitea 조회는 gitea_list·gitea_search·gitea_issue·gitea_pull·gitea_pull_diff 도구를 사용하세요. " +
+		"도구가 없거나 조회에 실패하면 사유를 보고하고 같은 실패를 반복하지 마세요.\n\n" + o.Prompt
 }
 
 func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, error) {
@@ -158,7 +176,7 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 			}
 		}
 	}()
-	stderr, runErr := runLines(ctx, cmd, o.Prompt, func(line string) { p.Line(line, emit) })
+	stderr, runErr := runLines(ctx, cmd, codexPrompt(o), func(line string) { p.Line(line, emit) })
 	close(stop)
 	<-watchDone
 	if id := p.threadID(); id != "" {

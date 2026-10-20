@@ -4,13 +4,13 @@ Roundtable은 Codex의 쓰기 모드 실행 전에 `<server scratch>/codex/go-bu
 
 - Codex 프로세스 환경변수 `GOCACHE`를 해당 절대 경로로 설정한다.
 - `shell_environment_policy.set.GOCACHE`도 전달해 Codex의 환경변수 필터와 관계없이 셸 명령에서 같은 경로를 사용한다.
-- `sandbox_workspace_write.writable_roots`에 해당 캐시 경로를 전달한다. 이 실행의 추가 쓰기 경로 목록은 이 캐시 경로로 지정한다.
-- `workspace-write`, `approval_policy="never"`, 선택한 Windows sandbox 설정은 유지한다. 전역 Codex 설정과 `go env -w`는 변경하지 않는다.
+- 기존 `-codex-windows-sandbox` 옵션으로 샌드박스를 명시했을 때만 `sandbox_workspace_write.writable_roots`에 해당 캐시 경로를 전달한다. 기본 실행에는 샌드박스 쓰기 경로 설정을 넣지 않는다.
+- 2026-10-20 사용자 결정으로 기본은 `danger-full-access`, `approval_policy="never"`다. 샌드박스를 명시하면 쓰기 모드는 `workspace-write`로 실행한다. 전역 Codex 설정과 `go env -w`는 변경하지 않는다.
 - 읽기 모드와 채팅 모드에는 캐시 설정을 넣지 않고 디렉터리도 만들지 않는다. 캐시 생성 실패는 실행 전 오류로 반환한다.
 
 `exec resume`에는 `--add-dir` 옵션이 없으므로 새 실행과 재개 실행 모두 설정 인자로 전달한다. 설정 의미는 [공식 Codex 설정 문서](https://learn.chatgpt.com/docs/config-file/config-reference)를 참고한다.
 
-## 실제 실행 확인
+## 이전 샌드박스 실행 확인
 
 2026-10-19 21:20~21:22 KST, Windows / Codex CLI 0.162.1 / Go 1.27.2에서 변경한 `agent.Codex.Run`으로 확인했다. 모델은 `gpt-6-astra`, 추론은 `low`, Windows sandbox는 `unelevated`다.
 

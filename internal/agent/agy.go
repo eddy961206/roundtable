@@ -109,7 +109,7 @@ func groupAgyModels(lines []string) ([]ModelOption, map[string][]string) {
 // command expansion is disabled"), and on 2026-10-17 a read-mode run with both
 // flags created a file. Without it, plan mode refused and wrote a plan instead.
 func agyArgs(o RunOptions) []string {
-	args := []string{"--sandbox", "--output-format", "stream-json", "--input-format", "stream-json"}
+	args := []string{"--output-format", "stream-json", "--input-format", "stream-json"}
 	for _, dir := range imageDirs(o.Images) {
 		args = append(args, "--add-dir", dir)
 	}

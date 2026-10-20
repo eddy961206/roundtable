@@ -20,7 +20,7 @@ Go 단일 바이너리 + 정적 HTML. 프레임워크·빌드 도구·외부 서
 | **적대적 리뷰** | 제출된 파트를 다른 공급사 좌석이 diff만 보고 `번호 · 심각도 · 파일:줄 · 재현 시나리오 · 확신도` 표로 지적한다. 작성자는 항목별 수용·반박, 리뷰어는 반박을 유지·철회, 수용 항목은 새 SHA에서 수정 확인한다. 표 형식이 틀리면 한 번 되묻고, 이견·라운드 상한에서는 사람이 라운드 추가 또는 사람 판정을 고른다. |
 | **이미지** | 입력창에 붙여넣기·끌어놓기·📎로 PNG·JPEG·WEBP를 붙이면 모든 참가자가 다음 발언 때 본다(Claude는 이미지 블록, Codex는 `--image`, agy는 경로). 에이전트는 작업 폴더의 이미지를 `[[ATTACH:경로]]` 한 줄로 방에 올린다. 직접 캡처는 write 방에서만 된다. |
 | **참가자 간 요청** | 에이전트가 `[[REQUEST:@좌석ID 또는 @이름]] 내용`으로 다른 참가자에게 일을 맡기고, 받은 쪽은 응답 끝에 `[[REQUEST_DONE:ID]]`·`[[REQUEST_REJECT:ID]] 이유`를 붙인다. 요청 카드와 오른쪽 "요청" 패널에서 상태를 추적하고 사람이 취소할 수 있다. 서버가 거절한 마커는 그 사유가 해당 에이전트의 다음 프롬프트로 돌아간다. 계약: [docs/이미지첨부_요청추적_계약.md](docs/이미지첨부_요청추적_계약.md) |
-| **권한 모드** | 방 단위 `chat`(프로젝트 폴더를 전달하지 않는 대화) / `read`(읽기 중심) / `write`(편집 허용). 실제 보호는 각 CLI의 도구·권한·샌드박스 설정에 따른다. |
+| **권한 모드** | 방 단위 `chat`(프로젝트 폴더를 전달하지 않는 대화) / `read`(읽기 중심) / `write`(편집 허용). OS 샌드박스는 기본으로 끈다. 실제 제한은 아래 공급사별 도구·모드 설정을 따른다. Codex의 기본 read는 쓰기를 기술적으로 차단하지 않는다. |
 
 ## 빠른 시작
 
@@ -35,7 +35,23 @@ go build -o roundtable.exe ./cmd/roundtable
 
 브라우저가 `http://127.0.0.1:8787` 로 열린다. "새 방"에서 작업 폴더와 권한 모드를 정하고 질문을 던진다.
 
-옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy` `-opencode`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`, `-codex-windows-sandbox`(`elevated` | `unelevated`, 비우면 Codex 설정 유지. Windows에서 다른 프로그램이 Codex 런타임 파일을 잡고 있어 elevated 샌드박스 준비가 실패할 때 `unelevated`를 쓴다).
+옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy` `-opencode`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`, `-codex-windows-sandbox`(`elevated` | `unelevated`).
+
+### 실행 권한
+
+2026-10-20 사용자 결정에 따라 roundtable이 실행하는 Codex·Antigravity·Claude는 기본으로 OS 샌드박스를 사용하지 않는다. 새 턴, 세션 재개, `CLI에서 열기`에 같은 정책을 적용한다. CLI 전역 설정 파일은 변경하지 않는다.
+
+| 공급사 | read | write | chat |
+|---|---|---|---|
+| Codex | `danger-full-access` + `approval_policy="never"`. 파일을 쓰지 말라는 지시만 전달하며, 실제 쓰기와 네트워크 접근을 막지 못한다. | 같은 정책으로 셸·편집 허용 | scratch에서 실행하고 프로젝트 경로를 전달하지 않지만, 도구·파일 쓰기를 기술적으로 차단하지 못한다. |
+| Claude Code | `--tools Read,Grep,Glob,Agent,Task,WebSearch,WebFetch` 유지. 직접 셸·편집 도구는 제공하지 않는다. | `acceptEdits` + `Bash,PowerShell` 허용 유지 | `--tools ""`로 내장 도구 제외 |
+| Antigravity | `--mode plan` 유지. 편집·셸 실행 허용 여부는 CLI가 판단한다. | `--mode accept-edits` 유지 | scratch에서 `--mode plan` |
+
+Claude에는 실행별 `--settings '{"sandbox":{"enabled":false}}'`를 전달하고, Antigravity에는 `--sandbox`를 전달하지 않는다. OpenCode는 기존 도구 권한 정책을 유지하며 OS 샌드박스를 추가하지 않는다. CLI의 관리자 정책이나 외부 실행 환경이 별도로 강제하는 제한을 roundtable이 해제하지는 못한다.
+
+Codex 샌드박스를 다시 켜려면 기존 옵션을 **명시**한다. `-codex-windows-sandbox elevated` 또는 `unelevated`는 Windows 실행 방식을 선택하면서 read·chat을 `read-only`, write를 `workspace-write`로 되돌린다. 비우면 `windows.sandbox`를 덮어쓰지 않고 `sandbox_mode="danger-full-access"`로 실행한다. 따라서 종전 실행 명령에 이 옵션이 남아 있으면 계속 샌드박스를 사용한다. 이 옵션은 `CLI에서 열기`에도 적용된다. 설정 의미는 [Codex 공식 문서](https://learn.chatgpt.com/docs/sandboxing)와 [Claude 공식 문서](https://code.claude.com/docs/en/sandboxing)를 참고한다.
+
+Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜야 할 운영 요구가 생기면 공급사별 명시 옵션과 원본 세션 열기의 일관성을 함께 설계해야 한다. 이번 변경에는 새 옵션을 추가하지 않았다.
 
 ### 에이전트에서 Roundtable 사용하기
 
@@ -103,7 +119,7 @@ Roundtable은 각 공급사의 일반 세션 저장 기능을 사용한다. 대�
 
 ### Gitea 이슈·PR 읽기 (선택)
 
-read·write 모드의 에이전트가 Gitea 이슈·PR을 실시간으로 조회하게 한다. 각 CLI의 샌드박스는 셸의 네트워크를 막으므로, roundtable이 **읽기 전용 MCP 서버**(`roundtable gitea-mcp`)를 대신 붙인다. 이 서버는 허용한 저장소에 대해 고정된 GET 조회만 하며, 내부적으로 사용자의 `tea` 로그인을 쓴다. 도구가 URL·HTTP 메서드·본문을 받지 않으므로 댓글·병합·다른 저장소 접근은 구조적으로 불가능하다.
+read·write 모드의 에이전트가 Gitea 이슈·PR을 실시간으로 조회하게 한다. roundtable은 **읽기 전용 MCP 서버**(`roundtable gitea-mcp`)를 붙인다. 이 서버는 허용한 저장소에 대해 고정된 GET 조회만 하며, 내부적으로 사용자의 `tea` 로그인을 쓴다. 도구가 URL·HTTP 메서드·본문을 받지 않으므로 이 MCP를 통한 댓글·병합·다른 저장소 접근은 구조적으로 불가능하다. 셸 사용이 허용된 좌석의 직접 `tea` 실행에는 이 MCP의 허용 저장소·GET 제한·시간 제한이 적용되지 않는다.
 
 ```bash
 ./roundtable.exe -gitea-repos Owner/A,Owner/B -gitea-login <tea 로그인> -tea <tea 경로>
@@ -111,8 +127,10 @@ read·write 모드의 에이전트가 Gitea 이슈·PR을 실시간으로 조회
 
 - 도구: `gitea_list`(이슈·PR 목록), `gitea_search`(키워드), `gitea_issue`(본문·전체 댓글), `gitea_pull`(상태·변경 파일·리뷰), `gitea_pull_diff`(diff, 최대 120KB).
 - Claude Code: 실행마다 `--mcp-config` 로 붙이고 `--allowedTools mcp__gitea` 로 이 서버 도구만 허용한다. `--strict-mcp-config` 때문에 사용자의 다른 MCP 서버는 붙지 않는다.
-- Codex: 실행마다 `-c mcp_servers.gitea.*` 로 붙이고 `default_tools_approval_mode="approve"` 로 이 서버 도구만 승인한다(그렇지 않으면 `approval_policy="never"` 에서 거절된다).
+- Codex: 실행마다 `-c mcp_servers.gitea.*` 로 붙이고 `default_tools_approval_mode="approve"` 로 이 서버 도구만 승인한다(그렇지 않으면 `approval_policy="never"` 에서 거절된다). `enabled=true`, `required=true`로 연결을 필수화하고, 시작 제한 10초·클라이언트 도구 제한 25초를 지정한다. Gitea 도구 이름과 실패 보고 안내는 세션 첫 턴에 두 문장으로 전달한다. 재개 턴에는 반복하지 않는다.
 - Antigravity: 실행마다 붙이는 옵션이 없어 한 번 전역 등록한다. `agy mcp add roundtable-gitea <roundtable.exe 경로> gitea-mcp --tea <tea 경로> --login <로그인> --repos Owner/A,Owner/B` / 해제는 `agy mcp remove roundtable-gitea`.
+
+Gitea MCP는 도구 한 번의 전체 조회를 20초로 제한한다. 댓글 페이지와 PR·파일·리뷰 조회가 이 시간을 공유한다. 제한을 넘으면 launcher와 자식 프로세스를 종료하고 오류를 반환한다. 인증 도구의 stderr 원문은 노출하지 않고 종료 코드를 알린다. Windows 인증 launcher의 폴더 권한 문제와 재현·검증 근거는 [Codex Gitea 조회 진단](docs/codex-gitea.md)에 정리했다.
 - `chat` 모드에는 붙이지 않는다.
 
 ### Gemini 한도 보이게 하기 (선택)
@@ -129,13 +147,9 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 
 ## 권한 모드
 
-| 모드 | Claude Code | Codex | Antigravity |
-|---|---|---|---|
-| `chat` | `--tools ""` | `sandbox_mode=read-only`, 스크래치 폴더 | `--mode plan --sandbox` |
-| `read` (기본) | `--tools Read,Grep,Glob,Agent,Task,WebSearch,WebFetch --add-dir <ws>` | `sandbox_mode=read-only --cd <ws>` | `--mode plan --sandbox --add-dir <ws>` |
-| `write` | `--permission-mode acceptEdits --add-dir <ws> --allowedTools Bash,PowerShell` (셸은 **샌드박스 없이** 실행됨) | `sandbox_mode=workspace-write` | `--mode accept-edits --sandbox --disable-slash-commands --add-dir <ws>` |
+현재 공급사별 기본값과 제한은 [실행 권한](#실행-권한) 표를 따른다. read는 파일을 쓰지 말라는 작업 지시이며 공급사의 도구·모드 제한을 함께 사용한다. Codex의 기본 read에는 쓰기 차단 수단이 없다. Claude의 도구 목록과 `--add-dir`, Antigravity의 plan 모드도 OS 수준의 파일 격리를 뜻하지 않는다.
 
-2026-10-17의 9가지 호출에서는 read·chat의 요청 대상 파일 생성이 거절되고 write의 생성이 허용됐다. 이 관측은 모든 도구 호출·읽기 범위·서브에이전트 동작에 대한 보장은 아니다. 특히 Codex·Antigravity의 chat은 읽기 또는 계획 도구가 남아 있을 수 있다. Claude의 도구 목록과 `--add-dir`도 운영체제 수준의 파일 격리를 의미하지 않는다. Claude write 모드는 빌드·테스트를 돌릴 수 있게 셸 도구(Windows에서는 PowerShell)를 미리 허용한다. Codex·Antigravity와 달리 운영체제 샌드박스가 없으므로, 작업 폴더 밖 파일도 바꿀 수 있다는 점을 알고 써야 한다. Antigravity는 `--disable-slash-commands`와 `--mode plan`을 같이 주면 plan이 무시되는 것을 확인했기 때문에, 그 플래그는 write 모드에만 붙인다.
+2026-10-17의 9가지 호출에서 read·chat의 파일 생성 거절을 관측한 것은 샌드박스를 기본 사용하던 이전 구성의 기록이다. 현재 Codex read의 쓰기 차단 근거로 사용할 수 없다. Antigravity는 `--disable-slash-commands`와 `--mode plan`을 같이 주면 plan이 무시되는 것을 확인했기 때문에, 그 플래그는 write 모드에만 붙인다.
 
 서버는 인증 없는 로컬 도구다. loopback 클라이언트와 로컬 Host만 허용하고, 다른 웹사이트의 Origin 또는 교차 사이트 요청을 거절한다. `-addr`를 외부 주소로 열더라도 원격 클라이언트는 허용하지 않는다.
 
@@ -160,7 +174,7 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 - Codex는 사용자 플러그인을 끄고 실행한다. 플러그인 스킬 목록(수만 자)을 재개 턴마다 다시 보내는 것을 실측했고, Roundtable은 플러그인 도구를 쓰지 않는다. 사용자 메모리·전역 AGENTS.md·개인 스킬은 그대로 읽는다.
 - 답변별 토큰·비용은 그 턴의 값이다. agy와 Codex는 대화 전체 누적 토큰을 보고하므로 agy는 단계별 사용량을 더하고, Codex는 rollout의 턴 시작 전 누적값을 빼서 계산한다. Claude의 비용은 세션 누적값이라 `session_cost_usd`로 보관하고 직전 값과의 차이를 턴 비용으로 쓴다. 문맥 크기는 캐시를 포함한 마지막 호출의 입력이다. 이 수정 전 빌드로 쌓인 기록은 `tools/fix_cumulative_usage.py`로 한 번 보정한다(서버를 멈추고 실행, 먼저 미리보기).
 - Windows에서 npm으로 설치한 Codex는 `codex.cmd` 뒤의 실제 `codex.exe`를 찾아 실행한다(별도 설치본에 code-mode host가 빠진 경우가 있었다).
-- Codex의 Windows 샌드박스가 간헐적으로 `setup refresh had errors` 로 명령 실행에 실패하는 턴이 있다. CLI 쪽 문제이며 다시 시키면 대개 통과한다.
+- Codex Windows 샌드박스를 명시적으로 켠 실행에서는 `setup refresh had errors`가 발생할 수 있다. 샌드박스 설정과 다른 프로세스의 Codex 런타임 파일 잠금을 확인한다.
 
 ## 개발
 

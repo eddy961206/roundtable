@@ -45,7 +45,7 @@ func NativeSessionCommand(prov Provider, o RunOptions) (NativeSession, error) {
 	plan := NativeSession{Provider: prov.ID(), SessionID: o.SessionID, Directory: dir}
 	switch prov.ID() {
 	case "claude":
-		plan.Args = []string{"--resume", o.SessionID, "--strict-mcp-config"}
+		plan.Args = []string{"--resume", o.SessionID, "--strict-mcp-config", "--settings", claudeSandboxSettings}
 		if o.Model != "" {
 			plan.Args = append(plan.Args, "--model", o.Model)
 		}
@@ -56,26 +56,26 @@ func NativeSessionCommand(prov Provider, o RunOptions) (NativeSession, error) {
 		case ModeRead:
 			plan.Args = append(plan.Args, "--tools", "Read,Grep,Glob,Agent,Task,WebSearch,WebFetch", "--add-dir", dir)
 		case ModeWrite:
-			plan.Args = append(plan.Args, "--permission-mode", "acceptEdits", "--add-dir", dir)
+			plan.Args = append(plan.Args, "--permission-mode", "acceptEdits", "--add-dir", dir, "--allowedTools", "Bash,PowerShell")
 		default:
 			plan.Args = append(plan.Args, "--tools", "")
 		}
 	case "codex":
-		plan.Args = []string{"resume", "--include-non-interactive", "--cd", dir, "-c", `approval_policy="never"`}
+		c, ok := prov.(*Codex)
+		if !ok {
+			return NativeSession{}, fmt.Errorf("Codex 샌드박스 설정을 읽을 수 없음")
+		}
+		plan.Args = []string{"resume", "--include-non-interactive", "--cd", dir}
+		plan.Args = append(plan.Args, codexPermissionArgs(o.Mode, c.windowsSandbox)...)
 		if o.Model != "" {
 			plan.Args = append(plan.Args, "-c", fmt.Sprintf("model=%q", o.Model))
 		}
 		if o.Effort != "" {
 			plan.Args = append(plan.Args, "-c", fmt.Sprintf("model_reasoning_effort=%q", o.Effort))
 		}
-		if o.Mode == ModeWrite {
-			plan.Args = append(plan.Args, "--sandbox", "workspace-write")
-		} else {
-			plan.Args = append(plan.Args, "--sandbox", "read-only")
-		}
 		plan.Args = append(plan.Args, o.SessionID)
 	case "agy":
-		plan.Args = []string{"--conversation", o.SessionID, "--sandbox"}
+		plan.Args = []string{"--conversation", o.SessionID}
 		if o.Model != "" {
 			plan.Args = append(plan.Args, "--model", o.Model)
 		}
