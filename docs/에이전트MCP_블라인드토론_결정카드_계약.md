@@ -18,7 +18,7 @@
   - `rt_requests` {room} → 요청 목록과 상태. `rt_cancel_request` {room, request}.
   - `rt_decisions` {room} → 결정 카드 목록(C).
   - `rt_update_decision` {room, id, status?, text?, evidence?, dissent?, unverified?} → C의 `PATCH`를 감싼 쓰기 도구. status는 `active`(확정)·`superseded`·`dropped`(거절). 바꿀 항목이 하나 이상 필요하다.
-- MCP `initialize` instructions에 두 규칙: `timed_out`이면 재전송하지 말고 `rt_read`로 읽는다. 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정은 사람에게 확인받는다.
+- MCP `initialize` instructions에 두 규칙: `timed_out`이면 재전송하지 말고 `rt_read`로 읽는다(`after_seq`는 보낸 seq와, 아직 `streaming`인 결과 메시지의 seq−1 중 작은 값. `live:true`면 기존 답의 seq가 보낸 seq보다 작다). 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정은 사람에게 확인받는다.
 - 쓰기 도구는 기본 켜짐. `--read-only`면 조회 도구만 노출. 서버가 loopback 전용인 기존 보안 경계는 그대로다.
 - README에 Claude Code·Codex·agy에서 이 MCP를 등록하는 예시 한 줄씩.
 
