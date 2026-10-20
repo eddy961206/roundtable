@@ -152,31 +152,160 @@ func TestReplyToPersistsAcrossParallelAndChainedTurns(t *testing.T) {
 	}
 }
 
-func TestSessionPersistenceFailureCancelsInvocation(t *testing.T) {
+func TestSessionMetadataRenameFailureKeepsInvocationRunning(t *testing.T) {
 	h, r, ps := controlledHub(t, "codex")
 	postQueueMessage(t, h, r.ID, "start", "codex")
 	call := nextCall(t, ps[0])
-	path := filepath.Join(h.store.roomDir(r.ID), "room.json.tmp")
+	// Force SaveRoom's rename, not the already successful message append, to fail.
+	path := filepath.Join(h.store.roomDir(r.ID), "room.json")
+	if err := os.Rename(path, path+".saved"); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	call.emit(agent.Event{Kind: agent.KindSession, Text: "new-session"})
-	waitIdle(t, h, r.ID)
-	if call.ctx.Err() == nil {
-		t.Fatal("invocation continued after session save failure")
+	call.emit(agent.Event{Kind: agent.KindSession, Text: "codex-session"})
+	if call.ctx.Err() != nil {
+		t.Fatal("metadata failure cancelled an invocation with a durable session message")
 	}
-	_, saved, err := h.store.LoadRooms()
+	s, err := h.Snapshot(r.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var reply *Message
+	warned := false
+	for _, m := range s.Messages {
+		if m.Kind == "agent" && (m.Status != "streaming" || m.Error != "") {
+			t.Fatalf("metadata failure became a turn error: %+v", m)
+		}
+		warned = warned || (m.Kind == "system" && m.Status == "error" && strings.Contains(m.Text, "방 저장 실패"))
+	}
+	if !warned {
+		t.Fatal("metadata failure was not visible")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".saved", path); err != nil {
+		t.Fatal(err)
+	}
+	rooms, saved, err := h.store.LoadRooms()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionSaved := false
 	for _, m := range saved[r.ID] {
+		sessionSaved = sessionSaved || (m.Kind == "agent" && m.SessionID == "codex-session")
+	}
+	if !sessionSaved || rooms[0].Participants[0].SessionID != "" {
+		t.Fatal("failure fixture did not separate message and room persistence")
+	}
+	finishCall(call, "answer survived metadata failure")
+	waitIdle(t, h, r.ID)
+	restarted, err := NewHub(h.store, h.reg, h.scratch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := restarted.Snapshot(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.Room.Participants[0].SessionID != "codex-session" || replay.Room.Participants[0].Turns != 1 {
+		t.Fatalf("completion did not save updated room metadata: %+v", replay.Room.Participants[0])
+	}
+	var reply *Message
+	for _, m := range replay.Messages {
 		if m.Kind == "agent" {
 			reply = m
 		}
 	}
-	if reply == nil || reply.Status != "error" || !strings.Contains(reply.Error, "방 저장 실패") {
-		t.Fatalf("missing durable persistence failure: %+v", reply)
+	if reply == nil || reply.Status != "done" || reply.Error != "" || reply.Text != "answer survived metadata failure" {
+		t.Fatalf("answer was discarded: %+v", reply)
+	}
+}
+
+func TestSessionMessagePersistenceFailureStillCancelsInvocation(t *testing.T) {
+	h, r, ps := controlledHub(t, "codex")
+	postQueueMessage(t, h, r.ID, "start", "codex")
+	call := nextCall(t, ps[0])
+	path := filepath.Join(h.store.roomDir(r.ID), "messages.jsonl")
+	if err := os.Rename(path, path+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	call.emit(agent.Event{Kind: agent.KindSession, Text: "codex-session"})
+	waitIdle(t, h, r.ID)
+	if call.ctx.Err() == nil {
+		t.Fatal("session message persistence failure did not cancel the invocation")
+	}
+	s, err := h.Snapshot(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reply *Message
+	for _, m := range s.Messages {
+		if m.Kind == "agent" {
+			reply = m
+		}
+	}
+	if reply == nil || reply.Status != "error" {
+		t.Fatalf("missing turn failure: %+v", reply)
+	}
+	warned := false
+	for _, m := range s.Messages {
+		warned = warned || (m.Kind == "system" && strings.Contains(m.Text, "세션 메시지 저장 실패"))
+	}
+	if !warned {
+		t.Fatal("session message failure was not reported")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".saved", path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStopSucceedsWhenItsNoticeCannotBeSaved(t *testing.T) {
+	h, r, ps := controlledHub(t, "claude", "codex")
+	if err := h.StartDiscussion(r.ID, 2, nil); err != nil {
+		t.Fatal(err)
+	}
+	a, b := nextCall(t, ps[0]), nextCall(t, ps[1])
+	postQueueMessage(t, h, r.ID, "queued input", "codex")
+	path := filepath.Join(h.store.roomDir(r.ID), "messages.jsonl")
+	if err := os.Rename(path, path+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Stop(r.ID); err != nil {
+		t.Fatalf("completed cancellation returned a notice error: %v", err)
+	}
+	if a.ctx.Err() == nil || b.ctx.Err() == nil {
+		t.Fatal("stop did not cancel both running invocations")
+	}
+	s := queueSnapshot(t, h, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 0 && s.Discussion == nil })
+	warned := false
+	for _, m := range s.Messages {
+		warned = warned || (m.Kind == "system" && m.Status == "error" && strings.Contains(m.Text, "시스템 메시지 저장 실패") && strings.Contains(m.Text, "메모리에만"))
+	}
+	if !warned {
+		t.Fatal("failed stop notice was not reported visibly")
+	}
+	if len(ps[0].callsCh) != 0 || len(ps[1].callsCh) != 0 {
+		t.Fatal("stop started pending work")
+	}
+	if err := h.Stop("missing-room"); err == nil {
+		t.Fatal("stop accepted a nonexistent room")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".saved", path); err != nil {
+		t.Fatal(err)
 	}
 }
 

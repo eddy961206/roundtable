@@ -1037,7 +1037,8 @@ func (h *Hub) Stop(id string) error {
 			h.reviewTurnLost(rs, t, "사용자가 중지해 리뷰 턴이 취소됨")
 		}
 	}
-	return h.stopLocked(rs, "사용자가 중지함")
+	h.stopLocked(rs, "사용자가 중지함")
+	return nil // cancellation is complete; notice failures are reported separately
 }
 
 func (h *Hub) stopLocked(rs *roomState, why string) error {
@@ -1418,11 +1419,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 					cancel()
 					return
 				}
-				if err := h.saveRoom(rs); err != nil {
-					tracePersistenceError = err
-					cancel()
-					return
-				}
+				// The session message is durable. Report metadata failures without
+				// discarding the answer; completion saves the room again.
+				h.saveRoom(rs)
 				rs.broadcast("message", msg)
 			}
 		case agent.KindTextDelta:
