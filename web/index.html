@@ -42,7 +42,7 @@
       </details>
       <details id="provider-details">
         <summary>CLI 설치 상태 · 버전</summary>
-        <p class="small-note muted">실행 프로그램을 찾았는지와 버전 명령의 결과만 보여줘. 로그인·구독 여부는 별도로 확인해야 해.</p>
+        <p class="small-note muted">실행 프로그램을 찾았는지와 버전 명령의 결과만 보여줍니다. 로그인·구독 여부는 별도로 확인해야 합니다.</p>
         <div id="limits"></div>
         <div class="versions-foot">
           <button type="button" id="btn-refresh-versions" class="ghost" title="각 CLI의 버전 명령을 다시 실행합니다">다시 확인</button>
@@ -84,10 +84,6 @@
             <p>상단 <strong>토론 시작</strong>을 누르면 N라운드 동안 발언하며 <code>CONTINUE</code> · <code>AGREE</code> · <code>PASS</code> · <code>CONCLUDE</code> 신호를 남깁니다. <strong>블라인드 1R</strong>을 켜면 1라운드는 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개해 순서대로 갈린 쟁점을 다룹니다. 전원 동의/패스하거나 결론이 나면 자동 종료됩니다. <code>AGREE</code>는 의견 일치일 뿐 검증이 아닙니다.</p>
           </div>
           <div class="onboard-card" role="listitem">
-            <h3>10. 결정 카드</h3>
-            <p>정해진 결정은 오른쪽 <strong>결정</strong> 목록에 근거·남은 반대·미확인 항목과 함께 남습니다. 에이전트는 <code>[[DECISION: 결정 | 근거: … | 반대: … | 미확인: …]]</code> 한 줄로 기록하고, 사람은 직접 추가·수정·폐기합니다. 유효한 결정 문장은 다음 턴부터 모든 참가자의 안내문에 들어갑니다.</p>
-          </div>
-          <div class="onboard-card" role="listitem">
             <h3>4. 방 단위 권한 모드</h3>
             <p><span class="badge read">read</span> 작업 폴더 읽기·검색·서브에이전트 탐색(기본)<br>
             <span class="badge chat">chat</span> 대화 중심 · 프로젝트 폴더를 전달하지 않음<br>
@@ -112,6 +108,10 @@
           <div class="onboard-card" role="listitem">
             <h3>9. 역할 카드</h3>
             <p>참가자마다 <strong>역할</strong>(예: 큰 그림·UX, 적대적 검증)을 정하면 모든 안내문에 들어갑니다. 역할은 "이 관점을 먼저 깊게 본다"는 우선순위이지 다른 문제를 말하지 말라는 뜻이 아닙니다. 프리셋과 모델 추천은 서버의 역할 파일에서 옵니다.</p>
+          </div>
+          <div class="onboard-card" role="listitem">
+            <h3>10. 결정 카드</h3>
+            <p>결정은 오른쪽 <strong>결정</strong> 목록에 근거·남은 반대·미확인 항목과 함께 남습니다. 에이전트가 <code>[[DECISION: 결정 | 근거: … | 반대: … | 미확인: …]]</code> 한 줄로 적은 카드는 <strong>제안</strong>으로 기록되고, 사람이 <strong>확정</strong>하거나 거절합니다. 사람이 직접 추가한 결정은 바로 유효합니다. 유효한 결정 문장만 다음 턴부터 모든 참가자의 안내문에 들어갑니다.</p>
           </div>
         </div>
 
@@ -174,6 +174,7 @@
             </details>
           </div>
         </div>
+        <p id="blind-hint" class="blind-hint muted" hidden></p>
         <div id="work-head-bar" class="work-head-bar" hidden></div>
       </header>
       <div id="usage-dock" class="usage-dock" hidden></div>
@@ -289,6 +290,7 @@
     <label>확인하지 못한 것 <input name="unverified" placeholder="없음"></label>
     <label id="decision-status-row">상태
       <select name="status">
+        <option value="proposed">제안 (proposed) — 확정 전</option>
         <option value="active">유효 (active)</option>
         <option value="superseded">대체됨 (superseded)</option>
         <option value="dropped">폐기됨 (dropped)</option>

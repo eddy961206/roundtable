@@ -1768,8 +1768,13 @@ dialog menu {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 42vh;
+  /* The board scrolls inside itself so the conversation keeps most of the screen;
+     narrow screens, whose header is already three rows tall, get a lower cap. */
+  max-height: 30vh;
   overflow-y: auto;
+}
+@media (max-width: 760px) {
+  .work-board { max-height: 26vh; }
 }
 .part-card {
   background: var(--panel);
@@ -2652,6 +2657,79 @@ dialog.dlg-lightbox[open] {
   font-size: 12px;
   color: var(--muted);
   cursor: pointer;
+}
+/* Cost hint for the blind toggle: its own line right under the actions row, aligned
+   to the toggle side so it does not squeeze the room title. */
+#room-head .blind-hint {
+  margin: -2px 0 0;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: right;
+}
+@media (max-width: 1100px) {
+  #room-head .blind-hint { text-align: left; }
+}
+
+/* ---- #seq, reply links and parallel-answer groups in the message meta (K1·K7) ---- */
+.seq-chip,
+.reply-chip {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  min-height: 20px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+}
+.reply-chip { color: var(--accent); }
+.seq-chip:hover:not(:disabled),
+.reply-chip:hover:not(:disabled),
+.seq-chip:focus-visible,
+.reply-chip:focus-visible {
+  background: var(--panel2);
+  border-color: var(--border);
+  color: var(--text);
+}
+.msg.system .seq-chip { margin-left: 2px; }
+.reply-group {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+/* ---- proposed decision cards (K2): waiting for the person, not yet in the brief ---- */
+#decisions li.dec-item.status-proposed {
+  border-left-color: var(--warn);
+  border-style: dashed;
+  border-left-style: solid;
+  background: color-mix(in srgb, var(--warn) 7%, var(--panel2));
+}
+.dec-status-badge.status-proposed {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: var(--warn-bg);
+}
+.msg-decision.status-proposed {
+  border-left-color: var(--warn);
+  border-style: dashed;
+  border-left-style: solid;
+}
+.msg-decision-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.msg-decision-actions button,
+.dec-item-actions .dec-confirm,
+.dec-item-actions .dec-reject {
+  padding: 1px 8px;
+  min-height: 22px;
+  font-size: 11px;
 }
 .disc-blind {
   margin-left: 8px;

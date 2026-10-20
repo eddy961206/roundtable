@@ -5,7 +5,7 @@ import { activeParticipants, modelLabel, openSeq, participant, participantLabel,
 import { closeDrawers } from "./layout.js";
 import { renderProviderStatus, usageGauge } from "./usage.js";
 import { setTarget, updateHint } from "./composer.js";
-import { renderRoomHead, scheduleRoomList } from "./rooms.js";
+import { renderBlindHint, renderRoomHead, scheduleRoomList } from "./rooms.js";
 
 export function catalogMessage(info) {
   if (info.catalog_status === "loading") return "모델 목록을 불러오는 중입니다. 잠시 뒤 목록을 다시 불러오세요.";
@@ -286,6 +286,7 @@ export function renderParticipants() {
     }
     updateParticipantCardInPlace(card, p, info);
   }
+  renderBlindHint();
 }
 
 const roleFields = new WeakMap(); // card element -> its role editor
@@ -567,7 +568,7 @@ function updateParticipantCardInPlace(card, p, info) {
   if (ms) {
     const models = [...(info.models || [])];
     if (p.model && !models.some((m) => m.id === p.model)) {
-      models.push({ id: p.model, label: "직접 지정 모델" });
+      models.push({ id: p.model, label: p.model + " (직접 지정)" });
     }
     const filter = card.querySelector(".model-filter");
     card.querySelector(".model-filter-label").hidden = models.length < 30;
