@@ -56,7 +56,7 @@ func TestSystemSaveFailureIsReportedWithoutPublishingSuccess(t *testing.T) {
 	if err := h.StartDiscussion(r.ID, 1, nil); err == nil {
 		t.Fatal("discussion started without a durable start message")
 	}
-	if rs.disc != nil || len(rs.queue) != 0 || len(rs.msgs) != 0 || r.Seq != seq+1 {
+	if rs.disc != nil || len(rs.queue) != 0 || len(rs.msgs) != 1 || r.Seq != seq+2 {
 		t.Fatal("failed system save changed discussion/history")
 	}
 	h.workNote(rs, "background note failure")
@@ -66,15 +66,18 @@ func TestSystemSaveFailureIsReportedWithoutPublishingSuccess(t *testing.T) {
 	found := false
 	for len(ch) > 0 {
 		var event struct {
-			Type string `json:"type"`
+			Type string  `json:"type"`
+			Data Message `json:"data"`
 		}
 		if err := json.Unmarshal(<-ch, &event); err != nil {
 			t.Fatal(err)
 		}
 		if event.Type == "message" {
-			t.Fatal("failed write broadcast a successful message")
+			if event.Data.Kind != "system" || event.Data.Status != "error" || !strings.Contains(event.Data.Text, "메모리에만") {
+				t.Fatalf("failed write must visibly identify an unsaved error: %+v", event.Data)
+			}
+			found = true
 		}
-		found = found || event.Type == "error"
 	}
 	if !found {
 		t.Fatal("missing persistence error event")
@@ -92,18 +95,96 @@ func TestExportIncludesSeatIDAndLabel(t *testing.T) {
 	}
 }
 
-func TestRoomSaveFailurePreventsStartingNewTurn(t *testing.T) {
-	p := &fakeProvider{id: "codex"}
-	h, r := newTestHub(t, p)
-	if err := os.Mkdir(filepath.Join(h.store.roomDir(r.ID), "room.json.tmp"), 0o700); err != nil {
-		t.Fatal(err)
+func TestRoomSaveFailureStillRoutesAcceptedMessage(t *testing.T) {
+	for _, target := range []string{"codex", ""} {
+		t.Run("target="+target, func(t *testing.T) {
+			h, r, ps := controlledHub(t, "codex")
+			if err := os.Mkdir(filepath.Join(h.store.roomDir(r.ID), "room.json.tmp"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			m, err := h.PostUser(r.ID, "accepted despite metadata failure", target)
+			if err != nil || m == nil {
+				t.Fatalf("accepted input returned an error: %+v %v", m, err)
+			}
+			call := nextCall(t, ps[0])
+			if !strings.Contains(call.opts.Prompt, m.Text) {
+				t.Fatal(call.opts.Prompt)
+			}
+			finishCall(call, "received")
+			waitIdle(t, h, r.ID)
+			_, saved, err := h.store.LoadRooms()
+			if err != nil {
+				t.Fatal(err)
+			}
+			users, replies, warnings := 0, 0, 0
+			for _, got := range saved[r.ID] {
+				if got.Kind == "user" {
+					users++
+				}
+				if got.Kind == "agent" && got.ReplyTo == m.ID && got.Status == "done" {
+					replies++
+				}
+				if got.Kind == "system" && got.Status == "error" && strings.Contains(got.Text, "방 저장 실패") {
+					warnings++
+				}
+			}
+			if users != 1 || replies != 1 || warnings == 0 {
+				t.Fatalf("users=%d replies=%d warnings=%d", users, replies, warnings)
+			}
+		})
 	}
-	if _, err := h.PostUser(r.ID, "do not start after save failure", "codex"); err == nil || !strings.Contains(err.Error(), "방 저장 실패") {
-		t.Fatalf("save error hidden: %v", err)
-	}
-	s, err := h.Snapshot(r.ID)
-	if err != nil || len(s.Queue) != 0 || p.calls() != 0 {
-		t.Fatalf("turn ran after room persistence failed: %+v %v", s, err)
+}
+
+func TestResetSessionsCommitsStateIndependentlyOfNotice(t *testing.T) {
+	for _, failedFile := range []string{"messages.jsonl", "room.json.tmp"} {
+		t.Run(failedFile, func(t *testing.T) {
+			h, r := newTestHub(t, &fakeProvider{id: "codex"})
+			rs, p := h.rooms[r.ID], r.Participants[0]
+			p.SessionID, p.LastSeen, p.ContextTokens, p.Unseen = "old-session", 7, 123, []int64{3}
+			if err := h.store.SaveRoom(r); err != nil {
+				t.Fatal(err)
+			}
+			events, unsub, err := h.Subscribe(r.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer unsub()
+			if err := os.Mkdir(filepath.Join(h.store.roomDir(r.ID), failedFile), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			err = h.ResetSessions(r.ID)
+			roomEvents := 0
+			for len(events) > 0 {
+				var event struct {
+					Type string `json:"type"`
+				}
+				if e := json.Unmarshal(<-events, &event); e != nil {
+					t.Fatal(e)
+				}
+				if event.Type == "room" {
+					roomEvents++
+				}
+			}
+			// Remove only the failure fixture so the persisted state can be replayed.
+			if e := os.Remove(filepath.Join(h.store.roomDir(r.ID), failedFile)); e != nil {
+				t.Fatal(e)
+			}
+			restarted, e := NewHub(h.store, h.reg, h.scratch, nil)
+			if e != nil {
+				t.Fatal(e)
+			}
+			saved := restarted.rooms[r.ID].room.Participants[0]
+			if failedFile == "messages.jsonl" {
+				if err != nil || rs.resetGen != 1 || roomEvents != 1 || p.SessionID != "" || saved.SessionID != "" || p.LastSeen != 0 || saved.LastSeen != 0 || saved.ContextTokens != 0 || len(saved.Unseen) != 0 {
+					t.Fatalf("reset was not committed: memory=%+v saved=%+v gen=%d events=%d err=%v", p, saved, rs.resetGen, roomEvents, err)
+				}
+			} else if err == nil || rs.resetGen != 0 || roomEvents != 0 || p.SessionID != "old-session" || saved.SessionID != p.SessionID || p.LastSeen != 7 || len(p.Unseen) != 1 || p.ContextTokens != 123 {
+				t.Fatalf("failed reset changed state: memory=%+v saved=%+v gen=%d events=%d err=%v", p, saved, rs.resetGen, roomEvents, err)
+			}
+			if r.Participants[0] != p {
+				t.Fatal("reset replaced a participant pointer held by a running turn")
+			}
+		})
 	}
 }
 

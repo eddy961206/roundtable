@@ -180,6 +180,75 @@ func TestSessionPersistenceFailureCancelsInvocation(t *testing.T) {
 	}
 }
 
+func TestLiveInputAcceptanceAndPersistenceFailures(t *testing.T) {
+	for _, failedFile := range []string{"room.json.tmp", "messages.jsonl"} {
+		t.Run(failedFile, func(t *testing.T) {
+			h, r, ps := controlledHub(t, "codex")
+			ps[0].steer = true
+			postQueueMessage(t, h, r.ID, "start", "codex")
+			call := nextCall(t, ps[0])
+			path := filepath.Join(h.store.roomDir(r.ID), failedFile)
+			if failedFile == "messages.jsonl" {
+				if err := os.Rename(path, path+".saved"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			m, err := h.PostUser(r.ID, "live correction", "codex")
+			if failedFile == "room.json.tmp" {
+				if err != nil || m == nil || !m.Live {
+					t.Fatalf("accepted live input returned failure: %+v %v", m, err)
+				}
+				select {
+				case text := <-call.opts.Steer:
+					if text != "live correction" {
+						t.Fatal(text)
+					}
+				default:
+					t.Fatal("accepted correction was not delivered")
+				}
+				_, saved, e := h.store.LoadRooms()
+				if e != nil {
+					t.Fatal(e)
+				}
+				found := false
+				for _, stored := range saved[r.ID] {
+					if stored.ID == m.ID {
+						found = stored.Live
+					}
+				}
+				if !found {
+					t.Fatal("delivered steer was not persisted as live")
+				}
+			} else {
+				if err == nil || m != nil {
+					t.Fatalf("unsaved input was accepted: %+v %v", m, err)
+				}
+			}
+			select {
+			case extra := <-call.opts.Steer:
+				t.Fatalf("unsaved or duplicate steer delivered: %q", extra)
+			default:
+			}
+			if e := os.Remove(path); e != nil {
+				t.Fatal(e)
+			}
+			if failedFile == "messages.jsonl" {
+				if e := os.Rename(path+".saved", path); e != nil {
+					t.Fatal(e)
+				}
+			}
+			call.result <- controlledResult{text: "finished", steered: 1}
+			waitIdle(t, h, r.ID)
+			if len(ps[0].callsCh) != 0 {
+				t.Fatal("accepted input was replayed as another turn")
+			}
+		})
+	}
+}
+
 func TestTargetRunsWhileOtherParticipantIsBusy(t *testing.T) {
 	hub, r, ps := controlledHub(t, "claude", "codex")
 	postQueueMessage(t, hub, r.ID, "start together", "")

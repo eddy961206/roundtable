@@ -82,7 +82,7 @@ type discussion struct {
 	Expected int
 	Done     int
 	Signals  map[string]string
-	Failed   []string // seats excluded in any round of this discussion
+	Failed   []string // seats excluded in the current round
 	Blind    bool     // round 1 runs concurrently from the start cap (blind first)
 }
 
@@ -602,16 +602,27 @@ func (h *Hub) ResetSessions(id string) error {
 	if !ok {
 		return fmt.Errorf("방 없음: %s", id)
 	}
-	for _, p := range rs.room.Participants {
-		p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
-		p.Unseen = nil
+	next := *rs.room
+	next.Participants = make([]*Participant, len(rs.room.Participants))
+	next.UpdatedAt = nowMs()
+	for i, p := range rs.room.Participants {
+		copy := *p
+		copy.SessionID, copy.LastSeen, copy.ContextTokens = "", 0, 0
+		copy.Unseen = nil
+		next.Participants[i] = &copy
 	}
+	if err := h.store.SaveRoom(&next); err != nil {
+		return h.reportPersistenceError(rs, "세션 초기화", err)
+	}
+	// Running turns retain participant pointers; apply only after the save commits.
+	for i, p := range rs.room.Participants {
+		*p = *next.Participants[i]
+	}
+	rs.room.UpdatedAt = next.UpdatedAt
 	rs.resetGen++
-	if _, err := h.addSystem(rs, "세션을 초기화했어. 다음 턴부터 각 에이전트는 대화 전체를 새로 읽어."); err != nil {
-		return err
-	}
 	rs.broadcast("room", rs.room)
-	return h.store.SaveRoom(rs.room)
+	h.addSystem(rs, "세션을 초기화했어. 다음 턴부터 각 에이전트는 대화 전체를 새로 읽어.")
+	return nil // the reset is committed even if its explanatory note cannot be saved
 }
 
 func (h *Hub) DeleteRoom(id string) error {
@@ -788,7 +799,8 @@ func (rs *roomState) nextMessage(kind, author, text string) *Message {
 }
 
 // reportPersistenceError also covers background transitions with no API caller.
-// Never write another system message here: the message store itself may be broken.
+// Use the existing message event so both live clients and later snapshots show
+// the failure. Attempt to persist it once, without recursively reporting errors.
 func (h *Hub) reportPersistenceError(rs *roomState, operation string, err error) error {
 	if err == nil {
 		return nil
@@ -797,7 +809,15 @@ func (h *Hub) reportPersistenceError(rs *roomState, operation string, err error)
 	if h.Log != nil {
 		h.Log.Printf("room %s: %v", rs.room.ID, err)
 	}
-	rs.broadcast("error", map[string]string{"error": err.Error()})
+	m := rs.nextMessage("system", "system", "서버 저장 오류: "+err.Error())
+	m.Status, m.Error = "error", err.Error()
+	if noteErr := h.store.AppendMessage(rs.room.ID, m); noteErr != nil {
+		m.Text += "\n이 오류 알림도 저장하지 못했어. 현재 서버 메모리에만 남아 있고 재시작하면 사라져."
+		if h.Log != nil {
+			h.Log.Printf("room %s: 오류 알림 저장 실패: %v", rs.room.ID, noteErr)
+		}
+	}
+	rs.broadcast("message", m)
 	return err
 }
 
@@ -856,39 +876,33 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 	m.Target = target
 	mentioned := append([]string{}, ParseParticipantMentions(text, rs.room.Participants)...)
 	m.Mentions = &mentioned
+	var liveRun *running
+	if target != "" && len(attachments) == 0 {
+		if run := rs.runningFor(target); run != nil && run.steer != nil && len(run.steer) < cap(run.steer) {
+			// h.mu serializes all senders; the provider can only free capacity.
+			liveRun = run
+			m.Live, m.Part = true, run.turn.Part
+		}
+	}
 	if err := h.store.AppendMessage(id, m); err != nil {
 		rs.msgs = rs.msgs[:len(rs.msgs)-1]
-		return nil, err
+		return nil, h.reportPersistenceError(rs, "사용자 메시지", err)
 	}
+	// The message append is the acceptance boundary. Subsequent metadata or
+	// explanatory-note failures must not tell the caller to resend accepted input.
+	if liveRun != nil {
+		liveRun.steer <- text
+		liveRun.live = append(liveRun.live, m)
+	}
+	rs.broadcast("message", m)
+	h.saveRoom(rs)
 	if target != "" {
-		if run := rs.runningFor(target); run != nil && run.steer != nil && len(attachments) == 0 {
-			select {
-			case run.steer <- text:
-				m.Live = true
-				m.Part = run.turn.Part
-				run.live = append(run.live, m)
-			default:
-			}
-		}
-		rs.broadcast("message", m)
-		if m.Live {
-			if err := h.store.AppendMessage(id, m); err != nil {
-				return nil, h.reportPersistenceError(rs, "조정 메시지", err)
-			}
-		}
-		if err := h.saveRoom(rs); err != nil {
-			return nil, err
-		}
 		if !m.Live {
 			rs.enqueueFront(&Turn{ID: newID(), Agent: target, Reason: "mention", Group: m.ID, Cap: m.Seq, Created: nowMs(), Status: "queued"})
 			h.pump(rs)
 		}
 		mc := *m
 		return &mc, nil
-	}
-	rs.broadcast("message", m)
-	if err := h.saveRoom(rs); err != nil {
-		return nil, err
 	}
 	ids := h.enabledIDs(rs)
 	var targets []string
@@ -900,9 +914,7 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 	reason := "mention"
 	switch {
 	case len(mentioned) > 0 && len(targets) == 0:
-		if _, err := h.addSystem(rs, fmt.Sprintf("@%s 는 비활성 또는 삭제 상태라 아무도 답하지 않아. 다른 활성 참가자를 불러.", strings.Join(mentioned, ", @"))); err != nil {
-			return nil, err
-		}
+		h.addSystem(rs, fmt.Sprintf("@%s 는 비활성 또는 삭제 상태라 아무도 답하지 않아. 다른 활성 참가자를 불러.", strings.Join(mentioned, ", @")))
 		mc := *m
 		return &mc, nil
 	case len(mentioned) == 0:
@@ -989,6 +1001,7 @@ func (h *Hub) StartDiscussion(id string, rounds int, blindFirst *bool) error {
 func (rs *roomState) enqueueRound(ids []string) {
 	rs.disc.Expected, rs.disc.Done = len(ids), 0
 	rs.disc.Signals = map[string]string{}
+	rs.disc.Failed = nil
 	blind := rs.disc.Blind && rs.disc.Round == 1
 	group := newID()
 	for _, id := range ids {
@@ -1506,13 +1519,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	default:
 		msg.Status = "done"
 	}
-	if t.Reason == "discussion" && msg.Status == "done" {
-		if signal == "" {
-			signal = "CONTINUE"
-			if err := h.markerError(rs, pr, "discussion", "DISCUSSION", "토론 신호가 없어 CONTINUE로 처리함"); err != nil {
-				msg.Status, msg.Error = "error", fmt.Sprintf("토론 공지 저장 실패: %v", err)
-			}
-		}
+	missingDiscussionSignal := t.Reason == "discussion" && signal == ""
+	if missingDiscussionSignal {
+		signal = "CONTINUE"
 	}
 	if msg.Status == "done" && t.Reason != "review" {
 		if pr.part != nil {
@@ -1584,6 +1593,11 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		h.reportPersistenceError(rs, "메시지", err)
 	}
 	rs.broadcast("message", msg)
+	if missingDiscussionSignal && msg.Status == "done" {
+		// No completion handler after this point can invalidate the recorded vote.
+		// A failed notice save reports its own storage error, not a failed answer.
+		h.addSeatNotice(rs, pr, "discussion", fmt.Sprintf("@%s 토론 신호가 없어 CONTINUE로 처리함", p.ID))
+	}
 	if h.Log != nil {
 		h.Log.Printf("turn %s %s/%s status=%s %dms err=%v", rs.room.ID, p.ID, p.Model, msg.Status, msg.Duration, err)
 	}
