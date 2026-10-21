@@ -9,7 +9,7 @@ import { closeDiffDrawer, refreshPartErrorMessages, renderWork } from "./work.js
 import { renderRoomHead, renderRoomList } from "./rooms.js";
 import { renderDiscussion, renderParticipants, renderQueue } from "./participants.js";
 import { mergeSnapshotDecisions, renderDecisions, upsertDecision } from "./decisions.js";
-import { boundedTraceEvent, cacheTrace, expandTrace, liveFeed, seedLive, updateTraceCount } from "./trace.js";
+import { appendTraceEvent, boundedTraceEvent, expandTrace, liveFeed, seedLive, updateTraceCount } from "./trace.js";
 import { cancelPendingScrollRestore, pruneMessageCaches, renderMessage, renderTimeline, scheduleRender, scheduleTraceRender, updateJumpBottomBtn, updateTimelineBanners } from "./timeline.js";
 
 let panelTimer = null;
@@ -203,11 +203,7 @@ function handle(type, data) {
         pending.set(data.index, boundedTraceEvent(data.event));
         if (pending.size > TRACE_EVENT_LIMIT) pending.delete(pending.keys().next().value);
       }
-      if (state.traces.has(data.msg_id)) {
-        const list = state.traces.get(data.msg_id);
-        const metadata = state.traceMeta.get(data.msg_id);
-        if (data.index > metadata.total) cacheTrace(data.msg_id, [...list, data.event], data.index);
-      }
+      appendTraceEvent(data.msg_id, data.event, data.index);
       if (m && m.status === "streaming") liveFeed(m.id, data.event);
       if (m) {
         // Fix #4: Only auto-expand if the user has not manually collapsed this message's trace

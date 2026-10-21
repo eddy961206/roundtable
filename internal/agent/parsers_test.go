@@ -391,9 +391,32 @@ func TestArgsPerMode(t *testing.T) {
 }
 
 func TestFileURLToPath(t *testing.T) {
-	got := fileURLToPath("file:///C:/Users/x/.gemini/t/transcript.jsonl")
-	if !strings.HasSuffix(got, "transcript.jsonl") || strings.HasPrefix(got, "/C:") {
-		t.Fatalf("got %q", got)
+	// A drive URL becomes a native Windows path only on Windows. On Unix,
+	// /C:/... is a valid absolute path and its leading slash must be preserved.
+	driveWant := "/C:/Users/x/.gemini/t/transcript.jsonl"
+	spaceWant := "/C:/Users/test user/한글/transcript.jsonl"
+	if runtime.GOOS == "windows" {
+		driveWant = `C:\Users\x\.gemini\t\transcript.jsonl`
+		spaceWant = `C:\Users\test user\한글\transcript.jsonl`
+	}
+	cases := []struct{ input, want string }{
+		{"", ""},
+		{"file:///C:/Users/x/.gemini/t/transcript.jsonl", driveWant},
+		{"file:///C:/Users/test%20user/%ED%95%9C%EA%B8%80/transcript.jsonl", spaceWant},
+		{`C:\Users\x\transcript.jsonl`, `C:\Users\x\transcript.jsonl`},
+		{"relative/transcript.jsonl", "relative/transcript.jsonl"},
+		{"https://example.test/transcript.jsonl", "https://example.test/transcript.jsonl"},
+		{"file:///bad%ZZpath", "file:///bad%ZZpath"},
+	}
+	if runtime.GOOS != "windows" {
+		cases = append(cases, struct{ input, want string }{"file:///tmp/test%20user/transcript.jsonl", "/tmp/test user/transcript.jsonl"})
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			if got := fileURLToPath(tc.input); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

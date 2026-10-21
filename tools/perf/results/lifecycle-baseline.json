@@ -1,0 +1,34 @@
+{
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "python": "3.12.14",
+  "paid_model_calls": 0,
+  "binary_sha256": "ca4c24d8ffc616350f05e8c3ef33bccceb7fa816dcbe3df9f70027f09308cd86",
+  "checks": [
+    {
+      "name": "session_resume_and_rt_post_wait_read",
+      "status": "passed",
+      "completed_turns": 2,
+      "same_session": true,
+      "input_tokens": 200,
+      "output_tokens": 10
+    },
+    {
+      "name": "individual_stop_and_independent_completion",
+      "status": "passed",
+      "cancelled": 1,
+      "completed": 1,
+      "sse_trace_indices_contiguous": true,
+      "cancelled_partial_body_retained": true
+    },
+    {
+      "name": "graceful_restart_preserves_durable_state_and_resume",
+      "status": "passed",
+      "rooms": 2,
+      "agent_messages": 4,
+      "trace_events": 115,
+      "state_sha256_before_equals_after": "a192e002de17579e669dfe431a8a17b39869614d5031183ea2ac017a5b5efbd7",
+      "post_restart_session_resumed": true
+    }
+  ],
+  "status": "passed"
+}

@@ -696,6 +696,25 @@ func (h *Hub) SubscribeRooms() (<-chan []byte, func(), error) {
 
 var roomsEvent = []byte(`{"type":"rooms"}`)
 
+// Field order matches the old map envelopes so SSE bytes stay stable. Typed
+// envelopes avoid rebuilding and sorting maps for every streamed event.
+type roomEvent struct {
+	Data any    `json:"data"`
+	Type string `json:"type"`
+}
+
+type textDeltaEvent struct {
+	Block bool   `json:"block,omitempty"`
+	ID    string `json:"id"`
+	Text  string `json:"text"`
+}
+
+type traceEvent struct {
+	Event agent.Event `json:"event"`
+	Index int         `json:"index"`
+	MsgID string      `json:"msg_id"`
+}
+
 func signalRooms(subs map[chan []byte]struct{}) {
 	for ch := range subs {
 		select {
@@ -736,11 +755,12 @@ func (rs *roomState) broadcast(typ string, payload any) {
 			return
 		}
 		rs.participantEvents[p.ID] = string(encoded)
+		payload = json.RawMessage(encoded)
 	}
 	if len(rs.subs) == 0 {
 		return
 	}
-	b, err := json.Marshal(map[string]any{"type": typ, "data": payload})
+	b, err := json.Marshal(roomEvent{Data: payload, Type: typ})
 	if err != nil {
 		return
 	}
@@ -1409,6 +1429,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			msg.Timing.FirstOutputMs = observed
 			firstOutput = true
 		}
+		previousStatusText, previousSession := p.StatusText, p.SessionID
 		switch e.Kind {
 		case agent.KindSession:
 			if e.Text != "" {
@@ -1428,14 +1449,14 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			textBuf.WriteString(e.Text)
 			msg.Text = textBuf.String()
 			p.StatusText = "답변 중"
-			rs.broadcast("delta", map[string]any{"id": msg.ID, "text": e.Text})
+			rs.broadcast("delta", textDeltaEvent{ID: msg.ID, Text: e.Text})
 		case agent.KindText:
 			if textBuf.Len() > 0 {
 				textBuf.WriteString("\n\n")
 			}
 			textBuf.WriteString(e.Text)
 			msg.Text = textBuf.String()
-			rs.broadcast("delta", map[string]any{"id": msg.ID, "text": e.Text, "block": true})
+			rs.broadcast("delta", textDeltaEvent{ID: msg.ID, Text: e.Text, Block: true})
 		case agent.KindToolCall:
 			p.StatusText = "도구: " + e.Name
 		case agent.KindSubagentStart:
@@ -1456,8 +1477,14 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			}
 			compacted = applyUsage(p, prov, e.Meta) || compacted
 		}
-		rs.broadcast("trace", map[string]any{"msg_id": msg.ID, "index": msg.Trace, "event": e})
-		rs.broadcast("participant", p)
+		rs.broadcast("trace", traceEvent{MsgID: msg.ID, Index: msg.Trace, Event: e})
+		// This switch changes only status text, session ID and usage. Other
+		// participant mutations publish through their own setters. Preserve
+		// every real transition while avoiding full participant JSON encoding
+		// on each token/tool-result event merely to rediscover equal state.
+		if p.StatusText != previousStatusText || p.SessionID != previousSession || e.Kind == agent.KindUsage {
+			rs.broadcast("participant", p)
+		}
 	}
 
 	var res agent.Result

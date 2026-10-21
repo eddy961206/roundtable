@@ -1,0 +1,29 @@
+File: before-room.test
+Build ID: 6cc4d5910bad4cd187555ddab06c4b1f49864b45
+Type: cpu
+Time: 2026-10-21 10:14:09 +07
+Duration: 2.35s, Total samples = 3.50s (148.86%)
+Showing nodes accounting for 2.07s, 59.14% of 3.50s total
+Dropped 147 nodes (cum <= 0.02s)
+Showing top 20 nodes out of 255
+      flat  flat%   sum%        cum   cum%
+     0.55s 15.71% 15.71%      0.55s 15.71%  internal/runtime/syscall/linux.Syscall6
+     0.32s  9.14% 24.86%      0.32s  9.14%  runtime.futex
+     0.23s  6.57% 31.43%      0.25s  7.14%  encoding/json/internal/jsonwire.AppendQuote
+     0.12s  3.43% 34.86%      0.12s  3.43%  runtime.memmove
+     0.10s  2.86% 37.71%      0.63s 18.00%  encoding/json/v2.makeStructArshaler.func2
+     0.10s  2.86% 40.57%      0.10s  2.86%  runtime.procyieldAsm
+     0.09s  2.57% 43.14%      0.10s  2.86%  runtime.tryDeferToSpanScan
+     0.07s  2.00% 45.14%      0.07s  2.00%  reflect.Value.Field
+     0.06s  1.71% 46.86%      0.06s  1.71%  runtime.nanotime
+     0.06s  1.71% 48.57%      0.06s  1.71%  runtime.typePointers.next
+     0.05s  1.43% 50.00%      0.05s  1.43%  runtime.madvise
+     0.05s  1.43% 51.43%      0.07s  2.00%  runtime.mallocgcSmallScanNoHeaderSC2
+     0.05s  1.43% 52.86%      0.05s  1.43%  runtime.memclrNoHeapPointers
+     0.04s  1.14% 54.00%      0.11s  3.14%  regexp.(*Regexp).tryBacktrack
+     0.03s  0.86% 54.86%      0.53s 15.14%  encoding/json/v2.makeMapArshaler.func2
+     0.03s  0.86% 55.71%      0.28s  8.00%  encoding/json/v2.makeStringArshaler.func1
+     0.03s  0.86% 56.57%      0.03s  0.86%  regexp.(*bitState).push (inline)
+     0.03s  0.86% 57.43%      0.04s  1.14%  runtime.lock2
+     0.03s  0.86% 58.29%      0.03s  0.86%  runtime.nextFreeFast
+     0.03s  0.86% 59.14%      0.06s  1.71%  runtime.scanblock

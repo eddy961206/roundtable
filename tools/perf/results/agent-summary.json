@@ -1,0 +1,750 @@
+{
+  "BenchmarkAgyTranscriptIdle/subagents_1": {
+    "ns/op": {
+      "before": {
+        "median": 49183.0,
+        "min": 45301.0,
+        "max": 51779.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 2943.0,
+        "min": 2815.0,
+        "max": 3015.0,
+        "samples": 5
+      },
+      "change_percent": -94.01622511843524
+    },
+    "B/op": {
+      "before": {
+        "median": 262328.0,
+        "min": 262328.0,
+        "max": 262329.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 194.0,
+        "min": 193.0,
+        "max": 196.0,
+        "samples": 5
+      },
+      "change_percent": -99.92604678112896
+    },
+    "allocs/op": {
+      "before": {
+        "median": 4.0,
+        "min": 4.0,
+        "max": 4.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 3.0,
+        "min": 3.0,
+        "max": 3.0,
+        "samples": 5
+      },
+      "change_percent": -25.0
+    }
+  },
+  "BenchmarkAgyTranscriptIdle/subagents_4": {
+    "ns/op": {
+      "before": {
+        "median": 189472.0,
+        "min": 180034.0,
+        "max": 204590.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 11520.0,
+        "min": 11426.0,
+        "max": 11689.0,
+        "samples": 5
+      },
+      "change_percent": -93.91994595507515
+    },
+    "B/op": {
+      "before": {
+        "median": 1049315.0,
+        "min": 1049314.0,
+        "max": 1049316.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 774.0,
+        "min": 748.0,
+        "max": 800.0,
+        "samples": 5
+      },
+      "change_percent": -99.92623759309645
+    },
+    "allocs/op": {
+      "before": {
+        "median": 16.0,
+        "min": 16.0,
+        "max": 16.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 12.0,
+        "min": 12.0,
+        "max": 12.0,
+        "samples": 5
+      },
+      "change_percent": -25.0
+    }
+  },
+  "BenchmarkAgyTranscriptIdle/subagents_16": {
+    "ns/op": {
+      "before": {
+        "median": 772381.0,
+        "min": 726061.0,
+        "max": 812487.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 46606.0,
+        "min": 45787.0,
+        "max": 48051.0,
+        "samples": 5
+      },
+      "change_percent": -93.96593132145922
+    },
+    "B/op": {
+      "before": {
+        "median": 4197263.0,
+        "min": 4197260.0,
+        "max": 4197264.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 3091.0,
+        "min": 3046.0,
+        "max": 3299.0,
+        "samples": 5
+      },
+      "change_percent": -99.92635677106723
+    },
+    "allocs/op": {
+      "before": {
+        "median": 64.0,
+        "min": 64.0,
+        "max": 64.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 48.0,
+        "min": 48.0,
+        "max": 48.0,
+        "samples": 5
+      },
+      "change_percent": -25.0
+    }
+  },
+  "BenchmarkAgyTranscriptIdle/subagents_32": {
+    "ns/op": {
+      "before": {
+        "median": 1485628.0,
+        "min": 1413623.0,
+        "max": 1568297.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 92545.0,
+        "min": 90186.0,
+        "max": 97364.0,
+        "samples": 5
+      },
+      "change_percent": -93.77064783377804
+    },
+    "B/op": {
+      "before": {
+        "median": 8394524.0,
+        "min": 8394521.0,
+        "max": 8394536.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 6288.0,
+        "min": 6076.0,
+        "max": 6462.0,
+        "samples": 5
+      },
+      "change_percent": -99.92509402558144
+    },
+    "allocs/op": {
+      "before": {
+        "median": 128.0,
+        "min": 128.0,
+        "max": 128.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 96.0,
+        "min": 96.0,
+        "max": 96.0,
+        "samples": 5
+      },
+      "change_percent": -25.0
+    }
+  },
+  "BenchmarkCodexRolloutIdle/subagents_1": {
+    "ns/op": {
+      "before": {
+        "median": 49092.0,
+        "min": 42542.0,
+        "max": 51147.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 2950.0,
+        "min": 2849.0,
+        "max": 3077.0,
+        "samples": 5
+      },
+      "change_percent": -93.99087427686791
+    },
+    "B/op": {
+      "before": {
+        "median": 262328.0,
+        "min": 262328.0,
+        "max": 262329.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 192.0,
+        "min": 187.0,
+        "max": 198.0,
+        "samples": 5
+      },
+      "change_percent": -99.92680918544723
+    },
+    "allocs/op": {
+      "before": {
+        "median": 4.0,
+        "min": 4.0,
+        "max": 4.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 3.0,
+        "min": 3.0,
+        "max": 3.0,
+        "samples": 5
+      },
+      "change_percent": -25.0
+    }
+  },
+  "BenchmarkCodexRolloutIdle/subagents_4": {
+    "ns/op": {
+      "before": {
+        "median": 198470.0,
+        "min": 191787.0,
+        "max": 205515.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 11641.0,
+        "min": 11048.0,
+        "max": 11786.0,
+        "samples": 5
+      },
+      "change_percent": -94.13462991887943
+    },
+    "B/op": {
+      "before": {
+        "median": 1049315.0,
+        "min": 1049314.0,
+        "max": 1049315.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 762.0,
+        "min": 736.0,
+        "max": 775.0,
+        "samples": 5
+      },
+      "change_percent": -99.92738119630425
+    },
+    "allocs/op": {
+      "before": {
+        "median": 16.0,
+        "min": 16.0,
+        "max": 16.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 12.0,
+        "min": 12.0,
+        "max": 12.0,
+        "samples": 5
+      },
+      "change_percent": -25.0
+    }
+  },
+  "BenchmarkCodexRolloutIdle/subagents_16": {
+    "ns/op": {
+      "before": {
+        "median": 734543.0,
+        "min": 682622.0,
+        "max": 797613.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 44543.0,
+        "min": 42977.0,
+        "max": 46974.0,
+        "samples": 5
+      },
+      "change_percent": -93.93595745926379
+    },
+    "B/op": {
+      "before": {
+        "median": 4197260.0,
+        "min": 4197256.0,
+        "max": 4197261.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 3087.0,
+        "min": 2996.0,
+        "max": 3159.0,
+        "samples": 5
+      },
+      "change_percent": -99.92645201869792
+    },
+    "allocs/op": {
+      "before": {
+        "median": 64.0,
+        "min": 64.0,
+        "max": 64.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 48.0,
+        "min": 48.0,
+        "max": 48.0,
+        "samples": 5
+      },
+      "change_percent": -25.0
+    }
+  },
+  "BenchmarkCodexRolloutIdle/subagents_32": {
+    "ns/op": {
+      "before": {
+        "median": 1592746.0,
+        "min": 1494485.0,
+        "max": 1667849.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 92594.0,
+        "min": 90294.0,
+        "max": 93843.0,
+        "samples": 5
+      },
+      "change_percent": -94.18651812655628
+    },
+    "B/op": {
+      "before": {
+        "median": 8394515.0,
+        "min": 8394511.0,
+        "max": 8394539.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 6176.0,
+        "min": 5888.0,
+        "max": 6452.0,
+        "samples": 5
+      },
+      "change_percent": -99.92642814980974
+    },
+    "allocs/op": {
+      "before": {
+        "median": 128.0,
+        "min": 128.0,
+        "max": 128.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 96.0,
+        "min": 96.0,
+        "max": 96.0,
+        "samples": 5
+      },
+      "change_percent": -25.0
+    }
+  },
+  "BenchmarkTranscriptActive/agy/bytes_4096": {
+    "ns/op": {
+      "before": {
+        "median": 60254.0,
+        "min": 58176.0,
+        "max": 65575.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 12558.0,
+        "min": 12227.0,
+        "max": 13068.0,
+        "samples": 5
+      },
+      "change_percent": -79.15823015899359
+    },
+    "MB/s": {
+      "before": {
+        "median": 68.66,
+        "min": 63.09,
+        "max": 71.11,
+        "samples": 5
+      },
+      "after": {
+        "median": 329.43,
+        "min": 316.57,
+        "max": 338.35,
+        "samples": 5
+      },
+      "change_percent": 379.79900961258375
+    },
+    "B/op": {
+      "before": {
+        "median": 277030.0,
+        "min": 277015.0,
+        "max": 277042.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 14960.0,
+        "min": 14891.0,
+        "max": 15100.0,
+        "samples": 5
+      },
+      "change_percent": -94.59986283074035
+    },
+    "allocs/op": {
+      "before": {
+        "median": 17.0,
+        "min": 17.0,
+        "max": 17.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 16.0,
+        "min": 16.0,
+        "max": 16.0,
+        "samples": 5
+      },
+      "change_percent": -5.882352941176472
+    }
+  },
+  "BenchmarkTranscriptActive/codex/bytes_4096": {
+    "ns/op": {
+      "before": {
+        "median": 62964.0,
+        "min": 57759.0,
+        "max": 66026.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 14197.0,
+        "min": 13793.0,
+        "max": 14572.0,
+        "samples": 5
+      },
+      "change_percent": -77.4521949050251
+    },
+    "MB/s": {
+      "before": {
+        "median": 66.93,
+        "min": 63.82,
+        "max": 72.96,
+        "samples": 5
+      },
+      "after": {
+        "median": 296.83,
+        "min": 289.19,
+        "max": 305.51,
+        "samples": 5
+      },
+      "change_percent": 343.4932018526818
+    },
+    "B/op": {
+      "before": {
+        "median": 277949.0,
+        "min": 277933.0,
+        "max": 277958.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 15872.0,
+        "min": 15807.0,
+        "max": 15903.0,
+        "samples": 5
+      },
+      "change_percent": -94.28959989062741
+    },
+    "allocs/op": {
+      "before": {
+        "median": 36.0,
+        "min": 36.0,
+        "max": 37.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 35.0,
+        "min": 35.0,
+        "max": 35.0,
+        "samples": 5
+      },
+      "change_percent": -2.777777777777779
+    }
+  },
+  "BenchmarkTranscriptActive/agy/bytes_65536": {
+    "ns/op": {
+      "before": {
+        "median": 153429.0,
+        "min": 150178.0,
+        "max": 159052.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 120503.0,
+        "min": 116303.0,
+        "max": 122098.0,
+        "samples": 5
+      },
+      "change_percent": -21.460089031408668
+    },
+    "MB/s": {
+      "before": {
+        "median": 427.41,
+        "min": 412.3,
+        "max": 436.66,
+        "samples": 5
+      },
+      "after": {
+        "median": 544.19,
+        "min": 537.08,
+        "max": 563.85,
+        "samples": 5
+      },
+      "change_percent": 27.32271121405676
+    },
+    "B/op": {
+      "before": {
+        "median": 476395.0,
+        "min": 476366.0,
+        "max": 476486.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 215134.0,
+        "min": 214791.0,
+        "max": 215480.0,
+        "samples": 5
+      },
+      "change_percent": -54.841255680685144
+    },
+    "allocs/op": {
+      "before": {
+        "median": 17.0,
+        "min": 17.0,
+        "max": 18.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 16.0,
+        "min": 16.0,
+        "max": 16.0,
+        "samples": 5
+      },
+      "change_percent": -5.882352941176472
+    }
+  },
+  "BenchmarkTranscriptActive/codex/bytes_65536": {
+    "ns/op": {
+      "before": {
+        "median": 156924.0,
+        "min": 153674.0,
+        "max": 168298.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 126209.0,
+        "min": 116251.0,
+        "max": 146664.0,
+        "samples": 5
+      },
+      "change_percent": -19.573169177436213
+    },
+    "MB/s": {
+      "before": {
+        "median": 418.38,
+        "min": 390.11,
+        "max": 427.23,
+        "samples": 5
+      },
+      "after": {
+        "median": 520.2,
+        "min": 447.65,
+        "max": 564.76,
+        "samples": 5
+      },
+      "change_percent": 24.33672737702568
+    },
+    "B/op": {
+      "before": {
+        "median": 477325.0,
+        "min": 477250.0,
+        "max": 477384.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 216478.0,
+        "min": 215567.0,
+        "max": 216926.0,
+        "samples": 5
+      },
+      "change_percent": -54.647671921646676
+    },
+    "allocs/op": {
+      "before": {
+        "median": 37.0,
+        "min": 37.0,
+        "max": 37.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 35.0,
+        "min": 35.0,
+        "max": 35.0,
+        "samples": 5
+      },
+      "change_percent": -5.405405405405405
+    }
+  },
+  "BenchmarkTranscriptActive/agy/bytes_524288": {
+    "ns/op": {
+      "before": {
+        "median": 1243579.0,
+        "min": 1094274.0,
+        "max": 1379078.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 1233698.0,
+        "min": 1142987.0,
+        "max": 1463420.0,
+        "samples": 5
+      },
+      "change_percent": -0.7945615035313436
+    },
+    "MB/s": {
+      "before": {
+        "median": 421.63,
+        "min": 380.2,
+        "max": 479.16,
+        "samples": 5
+      },
+      "after": {
+        "median": 425.01,
+        "min": 358.29,
+        "max": 458.74,
+        "samples": 5
+      },
+      "change_percent": 0.8016507364276615
+    },
+    "B/op": {
+      "before": {
+        "median": 2378461.0,
+        "min": 2378422.0,
+        "max": 2378993.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 2120301.0,
+        "min": 2119063.0,
+        "max": 2126627.0,
+        "samples": 5
+      },
+      "change_percent": -10.854077489603576
+    },
+    "allocs/op": {
+      "before": {
+        "median": 23.0,
+        "min": 23.0,
+        "max": 24.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 23.0,
+        "min": 23.0,
+        "max": 24.0,
+        "samples": 5
+      },
+      "change_percent": 0.0
+    }
+  },
+  "BenchmarkTranscriptActive/codex/bytes_524288": {
+    "ns/op": {
+      "before": {
+        "median": 1291917.0,
+        "min": 1238044.0,
+        "max": 1312275.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 1150538.0,
+        "min": 1111877.0,
+        "max": 1205256.0,
+        "samples": 5
+      },
+      "change_percent": -10.943350075894964
+    },
+    "MB/s": {
+      "before": {
+        "median": 405.91,
+        "min": 399.62,
+        "max": 423.58,
+        "samples": 5
+      },
+      "after": {
+        "median": 455.79,
+        "min": 435.1,
+        "max": 471.64,
+        "samples": 5
+      },
+      "change_percent": 12.28843832376636
+    },
+    "B/op": {
+      "before": {
+        "median": 2453296.0,
+        "min": 2453080.0,
+        "max": 2453502.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 2194519.0,
+        "min": 2191707.0,
+        "max": 2198838.0,
+        "samples": 5
+      },
+      "change_percent": -10.548136058592195
+    },
+    "allocs/op": {
+      "before": {
+        "median": 47.0,
+        "min": 46.0,
+        "max": 47.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 45.0,
+        "min": 44.0,
+        "max": 46.0,
+        "samples": 5
+      },
+      "change_percent": -4.255319148936165
+    }
+  }
+}

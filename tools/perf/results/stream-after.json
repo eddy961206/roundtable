@@ -1,0 +1,399 @@
+{
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "python": "3.12.14",
+  "gomaxprocs": 4,
+  "subscribers": 4,
+  "tokens_per_participant": 128,
+  "delay_us": 0,
+  "paid_model_calls": 0,
+  "cases": [
+    {
+      "participants": 1,
+      "idle_before": {
+        "cpu_ms": 20.0,
+        "rss_kib": 13484,
+        "fds": 7
+      },
+      "idle_after": {
+        "cpu_ms": 80.0,
+        "rss_kib": 15768,
+        "fds": 7
+      },
+      "summary": {
+        "wall_ms": {
+          "median": 25.386525999238074,
+          "min": 24.41838300001109,
+          "max": 27.974852000625106
+        },
+        "completion_p50_ms": {
+          "median": 11.967340999945009,
+          "min": 9.162574000583845,
+          "max": 15.785560999574955
+        },
+        "completion_p95_ms": {
+          "median": 11.967340999945009,
+          "min": 9.162574000583845,
+          "max": 15.785560999574955
+        },
+        "server_cpu_ms": {
+          "median": 10.0,
+          "min": 0.0,
+          "max": 20.0
+        },
+        "server_peak_rss_kib": {
+          "median": 15720,
+          "min": 14296,
+          "max": 15980
+        },
+        "sse_events_per_subscriber": {
+          "median": 277,
+          "min": 277,
+          "max": 277
+        }
+      },
+      "samples": [
+        {
+          "wall_ms": 27.14290899984917,
+          "completion_p50_ms": 15.785560999574955,
+          "completion_p95_ms": 15.785560999574955,
+          "server_cpu_ms": 0.0,
+          "server_peak_rss_kib": 14296,
+          "sse_events_per_subscriber": 277,
+          "verified_replies": 1,
+          "verified_deltas_per_subscriber": 128
+        },
+        {
+          "wall_ms": 27.974852000625106,
+          "completion_p50_ms": 11.967340999945009,
+          "completion_p95_ms": 11.967340999945009,
+          "server_cpu_ms": 20.0,
+          "server_peak_rss_kib": 15248,
+          "sse_events_per_subscriber": 277,
+          "verified_replies": 1,
+          "verified_deltas_per_subscriber": 128
+        },
+        {
+          "wall_ms": 25.386525999238074,
+          "completion_p50_ms": 11.37821299926145,
+          "completion_p95_ms": 11.37821299926145,
+          "server_cpu_ms": 10.0,
+          "server_peak_rss_kib": 15720,
+          "sse_events_per_subscriber": 277,
+          "verified_replies": 1,
+          "verified_deltas_per_subscriber": 128
+        },
+        {
+          "wall_ms": 24.41838300001109,
+          "completion_p50_ms": 12.855455999670085,
+          "completion_p95_ms": 12.855455999670085,
+          "server_cpu_ms": 0.0,
+          "server_peak_rss_kib": 15924,
+          "sse_events_per_subscriber": 277,
+          "verified_replies": 1,
+          "verified_deltas_per_subscriber": 128
+        },
+        {
+          "wall_ms": 24.79847399990831,
+          "completion_p50_ms": 9.162574000583845,
+          "completion_p95_ms": 9.162574000583845,
+          "server_cpu_ms": 10.0,
+          "server_peak_rss_kib": 15980,
+          "sse_events_per_subscriber": 277,
+          "verified_replies": 1,
+          "verified_deltas_per_subscriber": 128
+        }
+      ]
+    },
+    {
+      "participants": 4,
+      "idle_before": {
+        "cpu_ms": 120.0,
+        "rss_kib": 16148,
+        "fds": 7
+      },
+      "idle_after": {
+        "cpu_ms": 320.0,
+        "rss_kib": 16160,
+        "fds": 7
+      },
+      "summary": {
+        "wall_ms": {
+          "median": 55.61256399960257,
+          "min": 48.63753399968118,
+          "max": 58.59059900012653
+        },
+        "completion_p50_ms": {
+          "median": 43.6256455000148,
+          "min": 35.7900249996419,
+          "max": 47.34958200015171
+        },
+        "completion_p95_ms": {
+          "median": 44.55402599978697,
+          "min": 37.387681999462075,
+          "max": 48.438498999530566
+        },
+        "server_cpu_ms": {
+          "median": 30.0,
+          "min": 30.0,
+          "max": 40.0
+        },
+        "server_peak_rss_kib": {
+          "median": 16452,
+          "min": 16256,
+          "max": 16616
+        },
+        "sse_events_per_subscriber": {
+          "median": 1108,
+          "min": 1108,
+          "max": 1108
+        }
+      },
+      "samples": [
+        {
+          "wall_ms": 55.61256399960257,
+          "completion_p50_ms": 44.289247499818885,
+          "completion_p95_ms": 44.79849800009106,
+          "server_cpu_ms": 30.0,
+          "server_peak_rss_kib": 16616,
+          "sse_events_per_subscriber": 1108,
+          "verified_replies": 4,
+          "verified_deltas_per_subscriber": 512
+        },
+        {
+          "wall_ms": 52.476228999694285,
+          "completion_p50_ms": 35.7900249996419,
+          "completion_p95_ms": 37.387681999462075,
+          "server_cpu_ms": 30.0,
+          "server_peak_rss_kib": 16444,
+          "sse_events_per_subscriber": 1108,
+          "verified_replies": 4,
+          "verified_deltas_per_subscriber": 512
+        },
+        {
+          "wall_ms": 58.59059900012653,
+          "completion_p50_ms": 47.34958200015171,
+          "completion_p95_ms": 48.438498999530566,
+          "server_cpu_ms": 30.0,
+          "server_peak_rss_kib": 16452,
+          "sse_events_per_subscriber": 1108,
+          "verified_replies": 4,
+          "verified_deltas_per_subscriber": 512
+        },
+        {
+          "wall_ms": 48.63753399968118,
+          "completion_p50_ms": 43.6256455000148,
+          "completion_p95_ms": 44.55402599978697,
+          "server_cpu_ms": 30.0,
+          "server_peak_rss_kib": 16256,
+          "sse_events_per_subscriber": 1108,
+          "verified_replies": 4,
+          "verified_deltas_per_subscriber": 512
+        },
+        {
+          "wall_ms": 57.34330500035867,
+          "completion_p50_ms": 37.36090150005111,
+          "completion_p95_ms": 38.984773000265704,
+          "server_cpu_ms": 40.0,
+          "server_peak_rss_kib": 16508,
+          "sse_events_per_subscriber": 1108,
+          "verified_replies": 4,
+          "verified_deltas_per_subscriber": 512
+        }
+      ]
+    },
+    {
+      "participants": 16,
+      "idle_before": {
+        "cpu_ms": 500.0,
+        "rss_kib": 16832,
+        "fds": 7
+      },
+      "idle_after": {
+        "cpu_ms": 1420.0,
+        "rss_kib": 16860,
+        "fds": 7
+      },
+      "summary": {
+        "wall_ms": {
+          "median": 194.54371400024684,
+          "min": 184.1057030005686,
+          "max": 205.1381199999014
+        },
+        "completion_p50_ms": {
+          "median": 158.9111290004439,
+          "min": 156.3787370000682,
+          "max": 180.51305700009834
+        },
+        "completion_p95_ms": {
+          "median": 177.83490600049845,
+          "min": 172.29661100009253,
+          "max": 186.69524999950227
+        },
+        "server_cpu_ms": {
+          "median": 140.0,
+          "min": 130.0,
+          "max": 140.0
+        },
+        "server_peak_rss_kib": {
+          "median": 18188,
+          "min": 18040,
+          "max": 18640
+        },
+        "sse_events_per_subscriber": {
+          "median": 4432,
+          "min": 4432,
+          "max": 4432
+        }
+      },
+      "samples": [
+        {
+          "wall_ms": 197.87621300019964,
+          "completion_p50_ms": 176.88435199988817,
+          "completion_p95_ms": 186.69524999950227,
+          "server_cpu_ms": 140.0,
+          "server_peak_rss_kib": 18304,
+          "sse_events_per_subscriber": 4432,
+          "verified_replies": 16,
+          "verified_deltas_per_subscriber": 2048
+        },
+        {
+          "wall_ms": 194.54371400024684,
+          "completion_p50_ms": 158.9111290004439,
+          "completion_p95_ms": 173.83988100027636,
+          "server_cpu_ms": 130.0,
+          "server_peak_rss_kib": 18640,
+          "sse_events_per_subscriber": 4432,
+          "verified_replies": 16,
+          "verified_deltas_per_subscriber": 2048
+        },
+        {
+          "wall_ms": 205.1381199999014,
+          "completion_p50_ms": 156.3787370000682,
+          "completion_p95_ms": 172.29661100009253,
+          "server_cpu_ms": 130.0,
+          "server_peak_rss_kib": 18072,
+          "sse_events_per_subscriber": 4432,
+          "verified_replies": 16,
+          "verified_deltas_per_subscriber": 2048
+        },
+        {
+          "wall_ms": 185.35631299982924,
+          "completion_p50_ms": 180.51305700009834,
+          "completion_p95_ms": 182.49178699988988,
+          "server_cpu_ms": 140.0,
+          "server_peak_rss_kib": 18188,
+          "sse_events_per_subscriber": 4432,
+          "verified_replies": 16,
+          "verified_deltas_per_subscriber": 2048
+        },
+        {
+          "wall_ms": 184.1057030005686,
+          "completion_p50_ms": 157.938411500254,
+          "completion_p95_ms": 177.83490600049845,
+          "server_cpu_ms": 140.0,
+          "server_peak_rss_kib": 18040,
+          "sse_events_per_subscriber": 4432,
+          "verified_replies": 16,
+          "verified_deltas_per_subscriber": 2048
+        }
+      ]
+    },
+    {
+      "participants": 32,
+      "idle_before": {
+        "cpu_ms": 1840.0,
+        "rss_kib": 17524,
+        "fds": 7
+      },
+      "idle_after": {
+        "cpu_ms": 4020.0,
+        "rss_kib": 17336,
+        "fds": 7
+      },
+      "summary": {
+        "wall_ms": {
+          "median": 390.1470920000065,
+          "min": 367.20471900025586,
+          "max": 397.6170320001984
+        },
+        "completion_p50_ms": {
+          "median": 358.2778079999116,
+          "min": 333.28975549966344,
+          "max": 377.4675315003151
+        },
+        "completion_p95_ms": {
+          "median": 372.7738239995233,
+          "min": 358.28707799919357,
+          "max": 384.2180080000617
+        },
+        "server_cpu_ms": {
+          "median": 280.0,
+          "min": 270.0,
+          "max": 340.0
+        },
+        "server_peak_rss_kib": {
+          "median": 23676,
+          "min": 22752,
+          "max": 27816
+        },
+        "sse_events_per_subscriber": {
+          "median": 8864,
+          "min": 8864,
+          "max": 8864
+        }
+      },
+      "samples": [
+        {
+          "wall_ms": 367.20471900025586,
+          "completion_p50_ms": 348.991771999863,
+          "completion_p95_ms": 362.7694659999179,
+          "server_cpu_ms": 270.0,
+          "server_peak_rss_kib": 22880,
+          "sse_events_per_subscriber": 8864,
+          "verified_replies": 32,
+          "verified_deltas_per_subscriber": 4096
+        },
+        {
+          "wall_ms": 368.66384799941443,
+          "completion_p50_ms": 333.28975549966344,
+          "completion_p95_ms": 358.28707799919357,
+          "server_cpu_ms": 270.0,
+          "server_peak_rss_kib": 27816,
+          "sse_events_per_subscriber": 8864,
+          "verified_replies": 32,
+          "verified_deltas_per_subscriber": 4096
+        },
+        {
+          "wall_ms": 390.1470920000065,
+          "completion_p50_ms": 358.2778079999116,
+          "completion_p95_ms": 372.7738239995233,
+          "server_cpu_ms": 280.0,
+          "server_peak_rss_kib": 23960,
+          "sse_events_per_subscriber": 8864,
+          "verified_replies": 32,
+          "verified_deltas_per_subscriber": 4096
+        },
+        {
+          "wall_ms": 394.98245200047677,
+          "completion_p50_ms": 377.4675315003151,
+          "completion_p95_ms": 384.2180080000617,
+          "server_cpu_ms": 340.0,
+          "server_peak_rss_kib": 22752,
+          "sse_events_per_subscriber": 8864,
+          "verified_replies": 32,
+          "verified_deltas_per_subscriber": 4096
+        },
+        {
+          "wall_ms": 397.6170320001984,
+          "completion_p50_ms": 368.52206799994747,
+          "completion_p95_ms": 379.50148100026126,
+          "server_cpu_ms": 340.0,
+          "server_peak_rss_kib": 23676,
+          "sse_events_per_subscriber": 8864,
+          "verified_replies": 32,
+          "verified_deltas_per_subscriber": 4096
+        }
+      ]
+    }
+  ]
+}

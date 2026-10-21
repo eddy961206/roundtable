@@ -1,0 +1,66 @@
+goos: linux
+goarch: amd64
+pkg: roundtable/internal/room
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkJSONLScan/payload=64-4  	     336	    730066 ns/op	 757.41 MB/s	   65596 B/op	       2 allocs/op
+BenchmarkJSONLScan/payload=64-4  	     332	    791331 ns/op	 698.77 MB/s	   65598 B/op	       2 allocs/op
+BenchmarkJSONLScan/payload=64-4  	     300	    770450 ns/op	 717.71 MB/s	   65598 B/op	       2 allocs/op
+BenchmarkJSONLScan/payload=64-4  	     282	    776143 ns/op	 712.45 MB/s	   65598 B/op	       2 allocs/op
+BenchmarkJSONLScan/payload=64-4  	     325	    714911 ns/op	 773.47 MB/s	   65596 B/op	       2 allocs/op
+BenchmarkJSONLScan/payload=4096-4         	      25	  10061420 ns/op	1696.38 MB/s	   65618 B/op	       2 allocs/op
+BenchmarkJSONLScan/payload=4096-4         	      26	   9180153 ns/op	1859.23 MB/s	   65616 B/op	       2 allocs/op
+BenchmarkJSONLScan/payload=4096-4         	      25	   9022248 ns/op	1891.77 MB/s	   65618 B/op	       2 allocs/op
+BenchmarkJSONLScan/payload=4096-4         	      24	   9314853 ns/op	1832.35 MB/s	   65619 B/op	       2 allocs/op
+BenchmarkJSONLScan/payload=4096-4         	      24	   9404948 ns/op	1814.79 MB/s	   65619 B/op	       2 allocs/op
+BenchmarkTraceTail-4                      	      13	  17474332 ns/op	 521.95 MB/s	  792440 B/op	    8613 allocs/op
+BenchmarkTraceTail-4                      	      13	  17066328 ns/op	 534.43 MB/s	  792440 B/op	    8613 allocs/op
+BenchmarkTraceTail-4                      	      12	  18188299 ns/op	 501.46 MB/s	  792920 B/op	    8614 allocs/op
+BenchmarkTraceTail-4                      	      13	  17044078 ns/op	 535.13 MB/s	  792440 B/op	    8613 allocs/op
+BenchmarkTraceTail-4                      	      13	  17267326 ns/op	 528.21 MB/s	  792440 B/op	    8613 allocs/op
+BenchmarkReadTrace-4                      	      12	  17970442 ns/op	 507.54 MB/s	 3460960 B/op	   12312 allocs/op
+BenchmarkReadTrace-4                      	      13	  18286789 ns/op	 498.76 MB/s	 3460925 B/op	   12312 allocs/op
+BenchmarkReadTrace-4                      	      14	  18342553 ns/op	 497.24 MB/s	 3461214 B/op	   12313 allocs/op
+BenchmarkReadTrace-4                      	      14	  18060289 ns/op	 505.02 MB/s	 3461596 B/op	   12314 allocs/op
+BenchmarkReadTrace-4                      	      14	  17497935 ns/op	 521.25 MB/s	 3461257 B/op	   12313 allocs/op
+BenchmarkBroadcastFanout/subscribers=1-4  	  329276	       681.3 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=1-4  	  366936	       654.5 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=1-4  	  326466	       707.3 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=1-4  	  369458	       655.1 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=1-4  	  372573	       673.1 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=4-4  	  323839	       796.2 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=4-4  	  307294	       775.4 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=4-4  	  287736	       770.7 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=4-4  	  325658	       843.3 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=4-4  	  299344	       808.3 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=16-4 	  176896	      1279 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=16-4 	  163821	      1423 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=16-4 	  177735	      1303 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=16-4 	  203792	      1247 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=16-4 	  205026	      1226 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=32-4 	  129794	      1777 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=32-4 	  129336	      1800 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=32-4 	  144872	      1809 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=32-4 	  127672	      1779 ns/op	     152 B/op	       4 allocs/op
+BenchmarkBroadcastFanout/subscribers=32-4 	  120558	      1793 ns/op	     152 B/op	       4 allocs/op
+BenchmarkConcurrentStreaming/participants=1-4         	     152	   1357971 ns/op	  276650 B/op	    2643 allocs/op
+BenchmarkConcurrentStreaming/participants=1-4         	     164	   1324572 ns/op	  275964 B/op	    2643 allocs/op
+BenchmarkConcurrentStreaming/participants=1-4         	     172	   1417945 ns/op	  276751 B/op	    2643 allocs/op
+BenchmarkConcurrentStreaming/participants=1-4         	     172	   1365938 ns/op	  276508 B/op	    2643 allocs/op
+BenchmarkConcurrentStreaming/participants=1-4         	     176	   1368411 ns/op	  277447 B/op	    2643 allocs/op
+BenchmarkConcurrentStreaming/participants=4-4         	      45	   5840369 ns/op	 1222503 B/op	   10649 allocs/op
+BenchmarkConcurrentStreaming/participants=4-4         	      34	   6406620 ns/op	 1223270 B/op	   10648 allocs/op
+BenchmarkConcurrentStreaming/participants=4-4         	      39	   5875925 ns/op	 1226976 B/op	   10649 allocs/op
+BenchmarkConcurrentStreaming/participants=4-4         	      37	   5936643 ns/op	 1219242 B/op	   10648 allocs/op
+BenchmarkConcurrentStreaming/participants=4-4         	      44	   5949835 ns/op	 1219834 B/op	   10648 allocs/op
+BenchmarkConcurrentStreaming/participants=16-4        	      12	  23050472 ns/op	 6497130 B/op	   42786 allocs/op
+BenchmarkConcurrentStreaming/participants=16-4        	      10	  25653053 ns/op	 6532459 B/op	   42786 allocs/op
+BenchmarkConcurrentStreaming/participants=16-4        	       9	  24593563 ns/op	 6529670 B/op	   42801 allocs/op
+BenchmarkConcurrentStreaming/participants=16-4        	       9	  24466921 ns/op	 6520867 B/op	   42789 allocs/op
+BenchmarkConcurrentStreaming/participants=16-4        	      10	  24158474 ns/op	 6520269 B/op	   42791 allocs/op
+BenchmarkConcurrentStreaming/participants=32-4        	       4	  52115534 ns/op	16447872 B/op	   85703 allocs/op
+BenchmarkConcurrentStreaming/participants=32-4        	       4	  54073265 ns/op	16527480 B/op	   85773 allocs/op
+BenchmarkConcurrentStreaming/participants=32-4        	       4	  50139260 ns/op	16566064 B/op	   85761 allocs/op
+BenchmarkConcurrentStreaming/participants=32-4        	       4	  56629436 ns/op	16531382 B/op	   85754 allocs/op
+BenchmarkConcurrentStreaming/participants=32-4        	       4	  56161690 ns/op	16463450 B/op	   85727 allocs/op
+PASS
+ok  	roundtable/internal/room	19.541s

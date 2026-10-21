@@ -1,0 +1,626 @@
+{
+  "BenchmarkJSONLScan/payload=64": {
+    "ns/op": {
+      "before": {
+        "median": 1092111.0,
+        "min": 978098.0,
+        "max": 1517422.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 770450.0,
+        "min": 714911.0,
+        "max": 791331.0,
+        "samples": 5
+      },
+      "change_percent": -29.453141667834124
+    },
+    "MB/s": {
+      "before": {
+        "median": 506.32,
+        "min": 364.41,
+        "max": 565.34,
+        "samples": 5
+      },
+      "after": {
+        "median": 717.71,
+        "min": 698.77,
+        "max": 773.47,
+        "samples": 5
+      },
+      "change_percent": 41.750276504977094
+    },
+    "B/op": {
+      "before": {
+        "median": 655558.0,
+        "min": 655556.0,
+        "max": 655596.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 65598.0,
+        "min": 65596.0,
+        "max": 65598.0,
+        "samples": 5
+      },
+      "change_percent": -89.99356273586776
+    },
+    "allocs/op": {
+      "before": {
+        "median": 4098.0,
+        "min": 4098.0,
+        "max": 4098.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 2.0,
+        "min": 2.0,
+        "max": 2.0,
+        "samples": 5
+      },
+      "change_percent": -99.95119570522206
+    }
+  },
+  "BenchmarkJSONLScan/payload=4096": {
+    "ns/op": {
+      "before": {
+        "median": 16410608.0,
+        "min": 15182483.0,
+        "max": 19132222.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 9314853.0,
+        "min": 9022248.0,
+        "max": 10061420.0,
+        "samples": 5
+      },
+      "change_percent": -43.23883063930355
+    },
+    "MB/s": {
+      "before": {
+        "median": 1040.06,
+        "min": 892.11,
+        "max": 1124.19,
+        "samples": 5
+      },
+      "after": {
+        "median": 1832.35,
+        "min": 1696.38,
+        "max": 1891.77,
+        "samples": 5
+      },
+      "change_percent": 76.17733592292753
+    },
+    "B/op": {
+      "before": {
+        "median": 19989376.0,
+        "min": 19989334.0,
+        "max": 19989485.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 65618.0,
+        "min": 65616.0,
+        "max": 65619.0,
+        "samples": 5
+      },
+      "change_percent": -99.6717356259645
+    },
+    "allocs/op": {
+      "before": {
+        "median": 4101.0,
+        "min": 4101.0,
+        "max": 4102.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 2.0,
+        "min": 2.0,
+        "max": 2.0,
+        "samples": 5
+      },
+      "change_percent": -99.9512314069739
+    }
+  },
+  "BenchmarkTraceTail": {
+    "ns/op": {
+      "before": {
+        "median": 27350184.0,
+        "min": 26661177.0,
+        "max": 30896844.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 17267326.0,
+        "min": 17044078.0,
+        "max": 18188299.0,
+        "samples": 5
+      },
+      "change_percent": -36.86577757575598
+    },
+    "MB/s": {
+      "before": {
+        "median": 333.48,
+        "min": 295.2,
+        "max": 342.1,
+        "samples": 5
+      },
+      "after": {
+        "median": 528.21,
+        "min": 501.46,
+        "max": 535.13,
+        "samples": 5
+      },
+      "change_percent": 58.39330694494422
+    },
+    "B/op": {
+      "before": {
+        "median": 793400.0,
+        "min": 793400.0,
+        "max": 793586.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 792440.0,
+        "min": 792440.0,
+        "max": 792920.0,
+        "samples": 5
+      },
+      "change_percent": -0.1209982354424044
+    },
+    "allocs/op": {
+      "before": {
+        "median": 8620.0,
+        "min": 8620.0,
+        "max": 8621.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 8613.0,
+        "min": 8613.0,
+        "max": 8614.0,
+        "samples": 5
+      },
+      "change_percent": -0.08120649651972567
+    }
+  },
+  "BenchmarkReadTrace": {
+    "ns/op": {
+      "before": {
+        "median": 22394727.0,
+        "min": 21854629.0,
+        "max": 23722409.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 18060289.0,
+        "min": 17497935.0,
+        "max": 18342553.0,
+        "samples": 5
+      },
+      "change_percent": -19.35472577986773
+    },
+    "MB/s": {
+      "before": {
+        "median": 407.27,
+        "min": 384.48,
+        "max": 417.34,
+        "samples": 5
+      },
+      "after": {
+        "median": 505.02,
+        "min": 497.24,
+        "max": 521.25,
+        "samples": 5
+      },
+      "change_percent": 24.00127679426425
+    },
+    "B/op": {
+      "before": {
+        "median": 12912349.0,
+        "min": 12908927.0,
+        "max": 12913770.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 3461214.0,
+        "min": 3460925.0,
+        "max": 3461596.0,
+        "samples": 5
+      },
+      "change_percent": -73.19454423048819
+    },
+    "allocs/op": {
+      "before": {
+        "median": 20537.0,
+        "min": 20530.0,
+        "max": 20541.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 12313.0,
+        "min": 12312.0,
+        "max": 12314.0,
+        "samples": 5
+      },
+      "change_percent": -40.04479719530604
+    }
+  },
+  "BenchmarkBroadcastFanout/subscribers=1": {
+    "ns/op": {
+      "before": {
+        "median": 1329.0,
+        "min": 1295.0,
+        "max": 1385.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 673.1,
+        "min": 654.5,
+        "max": 707.3,
+        "samples": 5
+      },
+      "change_percent": -49.35289691497366
+    },
+    "B/op": {
+      "before": {
+        "median": 528.0,
+        "min": 528.0,
+        "max": 528.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 152.0,
+        "min": 152.0,
+        "max": 152.0,
+        "samples": 5
+      },
+      "change_percent": -71.21212121212122
+    },
+    "allocs/op": {
+      "before": {
+        "median": 11.0,
+        "min": 11.0,
+        "max": 11.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 4.0,
+        "min": 4.0,
+        "max": 4.0,
+        "samples": 5
+      },
+      "change_percent": -63.63636363636363
+    }
+  },
+  "BenchmarkBroadcastFanout/subscribers=4": {
+    "ns/op": {
+      "before": {
+        "median": 1439.0,
+        "min": 1346.0,
+        "max": 1458.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 796.2,
+        "min": 770.7,
+        "max": 843.3,
+        "samples": 5
+      },
+      "change_percent": -44.669909659485754
+    },
+    "B/op": {
+      "before": {
+        "median": 528.0,
+        "min": 528.0,
+        "max": 528.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 152.0,
+        "min": 152.0,
+        "max": 152.0,
+        "samples": 5
+      },
+      "change_percent": -71.21212121212122
+    },
+    "allocs/op": {
+      "before": {
+        "median": 11.0,
+        "min": 11.0,
+        "max": 11.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 4.0,
+        "min": 4.0,
+        "max": 4.0,
+        "samples": 5
+      },
+      "change_percent": -63.63636363636363
+    }
+  },
+  "BenchmarkBroadcastFanout/subscribers=16": {
+    "ns/op": {
+      "before": {
+        "median": 1909.0,
+        "min": 1852.0,
+        "max": 1978.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 1279.0,
+        "min": 1226.0,
+        "max": 1423.0,
+        "samples": 5
+      },
+      "change_percent": -33.001571503404925
+    },
+    "B/op": {
+      "before": {
+        "median": 528.0,
+        "min": 528.0,
+        "max": 528.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 152.0,
+        "min": 152.0,
+        "max": 152.0,
+        "samples": 5
+      },
+      "change_percent": -71.21212121212122
+    },
+    "allocs/op": {
+      "before": {
+        "median": 11.0,
+        "min": 11.0,
+        "max": 11.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 4.0,
+        "min": 4.0,
+        "max": 4.0,
+        "samples": 5
+      },
+      "change_percent": -63.63636363636363
+    }
+  },
+  "BenchmarkBroadcastFanout/subscribers=32": {
+    "ns/op": {
+      "before": {
+        "median": 2606.0,
+        "min": 2570.0,
+        "max": 2721.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 1793.0,
+        "min": 1777.0,
+        "max": 1809.0,
+        "samples": 5
+      },
+      "change_percent": -31.197237145049883
+    },
+    "B/op": {
+      "before": {
+        "median": 528.0,
+        "min": 528.0,
+        "max": 528.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 152.0,
+        "min": 152.0,
+        "max": 152.0,
+        "samples": 5
+      },
+      "change_percent": -71.21212121212122
+    },
+    "allocs/op": {
+      "before": {
+        "median": 11.0,
+        "min": 11.0,
+        "max": 11.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 4.0,
+        "min": 4.0,
+        "max": 4.0,
+        "samples": 5
+      },
+      "change_percent": -63.63636363636363
+    }
+  },
+  "BenchmarkConcurrentStreaming/participants=1": {
+    "ns/op": {
+      "before": {
+        "median": 1784315.0,
+        "min": 1715516.0,
+        "max": 2144092.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 1365938.0,
+        "min": 1324572.0,
+        "max": 1417945.0,
+        "samples": 5
+      },
+      "change_percent": -23.447485449598304
+    },
+    "B/op": {
+      "before": {
+        "median": 536542.0,
+        "min": 535689.0,
+        "max": 537450.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 276650.0,
+        "min": 275964.0,
+        "max": 277447.0,
+        "samples": 5
+      },
+      "change_percent": -48.43833287981183
+    },
+    "allocs/op": {
+      "before": {
+        "median": 5359.0,
+        "min": 5358.0,
+        "max": 5359.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 2643.0,
+        "min": 2643.0,
+        "max": 2643.0,
+        "samples": 5
+      },
+      "change_percent": -50.68109721963052
+    }
+  },
+  "BenchmarkConcurrentStreaming/participants=4": {
+    "ns/op": {
+      "before": {
+        "median": 9678478.0,
+        "min": 9175916.0,
+        "max": 9927741.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 5936643.0,
+        "min": 5840369.0,
+        "max": 6406620.0,
+        "samples": 5
+      },
+      "change_percent": -38.66139903402167
+    },
+    "B/op": {
+      "before": {
+        "median": 2274235.0,
+        "min": 2270274.0,
+        "max": 2283409.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 1222503.0,
+        "min": 1219242.0,
+        "max": 1226976.0,
+        "samples": 5
+      },
+      "change_percent": -46.24552871624964
+    },
+    "allocs/op": {
+      "before": {
+        "median": 21556.0,
+        "min": 21551.0,
+        "max": 21558.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 10648.0,
+        "min": 10648.0,
+        "max": 10649.0,
+        "samples": 5
+      },
+      "change_percent": -50.60308034885879
+    }
+  },
+  "BenchmarkConcurrentStreaming/participants=16": {
+    "ns/op": {
+      "before": {
+        "median": 35762581.0,
+        "min": 33397882.0,
+        "max": 37368058.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 24466921.0,
+        "min": 23050472.0,
+        "max": 25653053.0,
+        "samples": 5
+      },
+      "change_percent": -31.585136430729086
+    },
+    "B/op": {
+      "before": {
+        "median": 10724014.0,
+        "min": 10693496.0,
+        "max": 10744308.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 6520867.0,
+        "min": 6497130.0,
+        "max": 6532459.0,
+        "samples": 5
+      },
+      "change_percent": -39.19378508830742
+    },
+    "allocs/op": {
+      "before": {
+        "median": 86505.0,
+        "min": 86485.0,
+        "max": 86523.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 42789.0,
+        "min": 42786.0,
+        "max": 42801.0,
+        "samples": 5
+      },
+      "change_percent": -50.53580717877579
+    }
+  },
+  "BenchmarkConcurrentStreaming/participants=32": {
+    "ns/op": {
+      "before": {
+        "median": 72773613.0,
+        "min": 71720296.0,
+        "max": 75091870.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 54073265.0,
+        "min": 50139260.0,
+        "max": 56629436.0,
+        "samples": 5
+      },
+      "change_percent": -25.696605169239017
+    },
+    "B/op": {
+      "before": {
+        "median": 24923112.0,
+        "min": 24760933.0,
+        "max": 25041277.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 16527480.0,
+        "min": 16447872.0,
+        "max": 16566064.0,
+        "samples": 5
+      },
+      "change_percent": -33.686130367668376
+    },
+    "allocs/op": {
+      "before": {
+        "median": 173225.0,
+        "min": 173208.0,
+        "max": 173303.0,
+        "samples": 5
+      },
+      "after": {
+        "median": 85754.0,
+        "min": 85703.0,
+        "max": 85773.0,
+        "samples": 5
+      },
+      "change_percent": -50.49559821041998
+    }
+  }
+}

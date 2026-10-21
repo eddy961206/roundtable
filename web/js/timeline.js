@@ -346,13 +346,32 @@ function renderRoomEmptyGuide(tl) {
 
 export function scheduleRender(id) {
   if (state.renderTimers.has(id) || document.hidden) return;
-  state.renderTimers.set(
-    id,
-    setTimeout(() => {
-      state.renderTimers.delete(id);
-      renderMessage(id, false);
-    }, STREAM_THROTTLE_MS)
-  );
+  // A burst from several participants shares one DOM-write phase. Previously
+  // each message read scrollHeight after changing the DOM, forcing a separate
+  // layout for every participant before the browser could paint the frame.
+  let timer = state.renderTimers.values().next().value;
+  if (timer === undefined) {
+    timer = setTimeout(() => {
+      const ids = [...state.renderTimers.keys()];
+      state.renderTimers.clear();
+      if (document.hidden) return;
+      for (const messageId of ids) renderMessage(messageId, false, true);
+      const tl = $("#timeline");
+      if (!tl) return;
+      updateTimelineBanners(tl);
+      if (!state.browsingHistory && state.stickToBottom) {
+        pendingRestoreScrollTop = null;
+        suppressScrollStick = false;
+        tl.scrollTop = tl.scrollHeight;
+        recordTimelineScrollMetrics(tl);
+        state.unreadBelow = 0;
+      }
+      updateJumpBottomBtn();
+    }, STREAM_THROTTLE_MS);
+  }
+  // openRoom already cancels/clears this map on resync and room changes. Keeping
+  // the shared timeout here also makes those existing cancellation paths apply.
+  state.renderTimers.set(id, timer);
 }
 
 export function scheduleTraceRender(id) {

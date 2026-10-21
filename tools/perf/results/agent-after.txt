@@ -1,0 +1,76 @@
+goos: linux
+goarch: amd64
+pkg: roundtable/internal/agent
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkAgyTranscriptIdle/subagents_1-4         	   86523	      2943 ns/op	     193 B/op	       3 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_1-4         	   87297	      2943 ns/op	     196 B/op	       3 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_1-4         	   74269	      2918 ns/op	     194 B/op	       3 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_1-4         	   82737	      2815 ns/op	     196 B/op	       3 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_1-4         	   86608	      3015 ns/op	     193 B/op	       3 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_4-4         	   19250	     11426 ns/op	     777 B/op	      12 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_4-4         	   20230	     11520 ns/op	     800 B/op	      12 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_4-4         	   20740	     11543 ns/op	     774 B/op	      12 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_4-4         	   21975	     11442 ns/op	     748 B/op	      12 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_4-4         	   20474	     11689 ns/op	     761 B/op	      12 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_16-4        	    5128	     48051 ns/op	    3046 B/op	      48 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_16-4        	    5547	     47785 ns/op	    3086 B/op	      48 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_16-4        	    4616	     46606 ns/op	    3171 B/op	      48 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_16-4        	    5168	     45787 ns/op	    3299 B/op	      48 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_16-4        	    5367	     46272 ns/op	    3091 B/op	      48 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_32-4        	    2626	     94599 ns/op	    6288 B/op	      96 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_32-4        	    2563	     90186 ns/op	    6298 B/op	      96 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_32-4        	    2745	     97364 ns/op	    6462 B/op	      96 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_32-4        	    2802	     92545 ns/op	    6076 B/op	      96 allocs/op
+BenchmarkAgyTranscriptIdle/subagents_32-4        	    2366	     91435 ns/op	    6110 B/op	      96 allocs/op
+BenchmarkCodexRolloutIdle/subagents_1-4          	   82926	      2888 ns/op	     190 B/op	       3 allocs/op
+BenchmarkCodexRolloutIdle/subagents_1-4          	   77187	      2849 ns/op	     187 B/op	       3 allocs/op
+BenchmarkCodexRolloutIdle/subagents_1-4          	   78302	      2950 ns/op	     194 B/op	       3 allocs/op
+BenchmarkCodexRolloutIdle/subagents_1-4          	   88501	      3077 ns/op	     192 B/op	       3 allocs/op
+BenchmarkCodexRolloutIdle/subagents_1-4          	   87676	      3011 ns/op	     198 B/op	       3 allocs/op
+BenchmarkCodexRolloutIdle/subagents_4-4          	   19968	     11048 ns/op	     736 B/op	      12 allocs/op
+BenchmarkCodexRolloutIdle/subagents_4-4          	   19858	     11786 ns/op	     762 B/op	      12 allocs/op
+BenchmarkCodexRolloutIdle/subagents_4-4          	   19215	     11656 ns/op	     763 B/op	      12 allocs/op
+BenchmarkCodexRolloutIdle/subagents_4-4          	   20220	     11641 ns/op	     775 B/op	      12 allocs/op
+BenchmarkCodexRolloutIdle/subagents_4-4          	   19933	     11330 ns/op	     762 B/op	      12 allocs/op
+BenchmarkCodexRolloutIdle/subagents_16-4         	    4838	     46974 ns/op	    3107 B/op	      48 allocs/op
+BenchmarkCodexRolloutIdle/subagents_16-4         	    5486	     44543 ns/op	    3087 B/op	      48 allocs/op
+BenchmarkCodexRolloutIdle/subagents_16-4         	    4885	     46188 ns/op	    3159 B/op	      48 allocs/op
+BenchmarkCodexRolloutIdle/subagents_16-4         	    5076	     42977 ns/op	    2996 B/op	      48 allocs/op
+BenchmarkCodexRolloutIdle/subagents_16-4         	    5545	     43322 ns/op	    3039 B/op	      48 allocs/op
+BenchmarkCodexRolloutIdle/subagents_32-4         	    2792	     92777 ns/op	    6452 B/op	      96 allocs/op
+BenchmarkCodexRolloutIdle/subagents_32-4         	    2734	     92594 ns/op	    6176 B/op	      96 allocs/op
+BenchmarkCodexRolloutIdle/subagents_32-4         	    2781	     93843 ns/op	    5888 B/op	      96 allocs/op
+BenchmarkCodexRolloutIdle/subagents_32-4         	    2749	     90471 ns/op	    6175 B/op	      96 allocs/op
+BenchmarkCodexRolloutIdle/subagents_32-4         	    2701	     90294 ns/op	    6277 B/op	      96 allocs/op
+BenchmarkTranscriptActive/agy/bytes_4096-4       	   19368	     12227 ns/op	 338.35 MB/s	   14891 B/op	      16 allocs/op
+BenchmarkTranscriptActive/agy/bytes_4096-4       	   20012	     12416 ns/op	 333.20 MB/s	   14960 B/op	      16 allocs/op
+BenchmarkTranscriptActive/agy/bytes_4096-4       	   19286	     12733 ns/op	 324.91 MB/s	   15044 B/op	      16 allocs/op
+BenchmarkTranscriptActive/agy/bytes_4096-4       	   19546	     13068 ns/op	 316.57 MB/s	   14929 B/op	      16 allocs/op
+BenchmarkTranscriptActive/agy/bytes_4096-4       	   19216	     12558 ns/op	 329.43 MB/s	   15100 B/op	      16 allocs/op
+BenchmarkTranscriptActive/codex/bytes_4096-4     	   17109	     14197 ns/op	 296.83 MB/s	   15903 B/op	      35 allocs/op
+BenchmarkTranscriptActive/codex/bytes_4096-4     	   16728	     13793 ns/op	 305.51 MB/s	   15816 B/op	      35 allocs/op
+BenchmarkTranscriptActive/codex/bytes_4096-4     	   16549	     14572 ns/op	 289.19 MB/s	   15807 B/op	      35 allocs/op
+BenchmarkTranscriptActive/codex/bytes_4096-4     	   16378	     13838 ns/op	 304.52 MB/s	   15872 B/op	      35 allocs/op
+BenchmarkTranscriptActive/codex/bytes_4096-4     	   16740	     14517 ns/op	 290.28 MB/s	   15896 B/op	      35 allocs/op
+BenchmarkTranscriptActive/agy/bytes_65536-4      	    2097	    119021 ns/op	 550.97 MB/s	  214791 B/op	      16 allocs/op
+BenchmarkTranscriptActive/agy/bytes_65536-4      	    2018	    120503 ns/op	 544.19 MB/s	  215480 B/op	      16 allocs/op
+BenchmarkTranscriptActive/agy/bytes_65536-4      	    1966	    116303 ns/op	 563.85 MB/s	  215120 B/op	      16 allocs/op
+BenchmarkTranscriptActive/agy/bytes_65536-4      	    1962	    120618 ns/op	 543.68 MB/s	  215134 B/op	      16 allocs/op
+BenchmarkTranscriptActive/agy/bytes_65536-4      	    1968	    122098 ns/op	 537.08 MB/s	  215262 B/op	      16 allocs/op
+BenchmarkTranscriptActive/codex/bytes_65536-4    	    2032	    126209 ns/op	 520.20 MB/s	  215605 B/op	      35 allocs/op
+BenchmarkTranscriptActive/codex/bytes_65536-4    	    1935	    122624 ns/op	 535.41 MB/s	  216478 B/op	      35 allocs/op
+BenchmarkTranscriptActive/codex/bytes_65536-4    	    1748	    116251 ns/op	 564.76 MB/s	  215567 B/op	      35 allocs/op
+BenchmarkTranscriptActive/codex/bytes_65536-4    	    2064	    146664 ns/op	 447.65 MB/s	  216926 B/op	      35 allocs/op
+BenchmarkTranscriptActive/codex/bytes_65536-4    	    1480	    135948 ns/op	 482.93 MB/s	  216665 B/op	      35 allocs/op
+BenchmarkTranscriptActive/agy/bytes_524288-4     	     218	   1463420 ns/op	 358.29 MB/s	 2125357 B/op	      24 allocs/op
+BenchmarkTranscriptActive/agy/bytes_524288-4     	     147	   1376258 ns/op	 380.98 MB/s	 2119945 B/op	      23 allocs/op
+BenchmarkTranscriptActive/agy/bytes_524288-4     	     183	   1146043 ns/op	 457.51 MB/s	 2119063 B/op	      23 allocs/op
+BenchmarkTranscriptActive/agy/bytes_524288-4     	     195	   1142987 ns/op	 458.74 MB/s	 2120301 B/op	      23 allocs/op
+BenchmarkTranscriptActive/agy/bytes_524288-4     	     187	   1233698 ns/op	 425.01 MB/s	 2126627 B/op	      24 allocs/op
+BenchmarkTranscriptActive/codex/bytes_524288-4   	     217	   1116296 ns/op	 469.77 MB/s	 2191707 B/op	      44 allocs/op
+BenchmarkTranscriptActive/codex/bytes_524288-4   	     223	   1111877 ns/op	 471.64 MB/s	 2192931 B/op	      44 allocs/op
+BenchmarkTranscriptActive/codex/bytes_524288-4   	     210	   1205256 ns/op	 435.10 MB/s	 2198503 B/op	      46 allocs/op
+BenchmarkTranscriptActive/codex/bytes_524288-4   	     196	   1165374 ns/op	 449.99 MB/s	 2198838 B/op	      45 allocs/op
+BenchmarkTranscriptActive/codex/bytes_524288-4   	     205	   1150538 ns/op	 455.79 MB/s	 2194519 B/op	      45 allocs/op
+PASS
+ok  	roundtable/internal/agent	21.589s

@@ -166,6 +166,21 @@ export function cacheTrace(id, events, total) {
   }
 }
 
+// SSE delivers one new event at a time. Re-copying and bounding the whole
+// accumulated trace here made long, open work histories quadratic. Keep the
+// existing tail/full-history contents and cache recency; bound only the new item.
+export function appendTraceEvent(id, event, total) {
+  const events = state.traces.get(id);
+  const metadata = state.traceMeta.get(id);
+  if (!events || !metadata || !(total > metadata.total)) return;
+  const item = boundedTraceEvent(event);
+  events.push(item);
+  metadata.total = total;
+  metadata.shortened = metadata.shortened || !!item._displayTruncated;
+  state.traces.delete(id);
+  state.traces.set(id, events);
+}
+
 // Opening a trace loads the last TRACE_EVENT_LIMIT events; full=true replaces
 // that window with the whole trace when the user asks for the earlier part.
 export async function ensureAndRenderTrace(id, full = false) {

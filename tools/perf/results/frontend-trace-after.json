@@ -1,0 +1,73 @@
+{
+  "workload": "Production connect().onmessage trace ingestion, hidden DOM; includes JSON.parse, excludes network/DOM rendering and fixture creation. Initial 200 + all 2000 newly received events retained. Eight cached traces matches the existing cache limit.",
+  "environment": {
+    "node": "v24.19.0",
+    "os": "linux",
+    "arch": "x64",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "gc_between_samples": true
+  },
+  "samples": 7,
+  "results": [
+    {
+      "cached_traces": 1,
+      "initial_events_per_trace": 200,
+      "appended_events_per_trace": 2000,
+      "incoming_sse_events": 2000,
+      "elapsed_ms": {
+        "median": 3.7096559999999954,
+        "min": 3.544688000000008,
+        "max": 4.50025500000001,
+        "samples": [
+          4.50025500000001,
+          3.544688000000008,
+          3.6820239999999984,
+          3.679701999999992,
+          3.7096559999999954,
+          3.798368999999994,
+          3.9099569999999915
+        ]
+      }
+    },
+    {
+      "cached_traces": 4,
+      "initial_events_per_trace": 200,
+      "appended_events_per_trace": 2000,
+      "incoming_sse_events": 8000,
+      "elapsed_ms": {
+        "median": 15.446387999999985,
+        "min": 15.042912000000001,
+        "max": 19.68755300000001,
+        "samples": [
+          19.68755300000001,
+          15.446387999999985,
+          16.389224999999982,
+          15.393867999999998,
+          15.579437999999982,
+          15.268710999999996,
+          15.042912000000001
+        ]
+      }
+    },
+    {
+      "cached_traces": 8,
+      "initial_events_per_trace": 200,
+      "appended_events_per_trace": 2000,
+      "incoming_sse_events": 16000,
+      "elapsed_ms": {
+        "median": 28.448442,
+        "min": 27.898796999999945,
+        "max": 32.746512999999936,
+        "samples": [
+          31.364203999999972,
+          29.390768999999977,
+          32.746512999999936,
+          27.898796999999945,
+          28.10525599999994,
+          28.154900999999995,
+          28.448442
+        ]
+      }
+    }
+  ]
+}

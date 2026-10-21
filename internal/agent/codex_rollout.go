@@ -163,7 +163,8 @@ func (w *rolloutWatcher) tail(rf *rolloutFile, emit func(Event)) {
 	if _, err := f.Seek(rf.offset, 0); err != nil {
 		return
 	}
-	r := bufio.NewReaderSize(f, 256*1024)
+	r := takeTranscriptReader(f)
+	defer putTranscriptReader(r)
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {

@@ -1,0 +1,44 @@
+{
+  "url": "http://127.0.0.1:58401/",
+  "browser": "153.0.8010.0",
+  "fixture_provider_verified": true,
+  "checks": {
+    "room_created_in_ui": 4,
+    "composer_during_stream": true,
+    "trace_keyboard_during_stream": true,
+    "persisted_history_paging": {
+      "stored": 1000,
+      "initial_dom": 100,
+      "older_dom_cap": 200,
+      "latest_dom": 100
+    },
+    "room_switch_during_stream": true,
+    "four_streams_complete_exact_content": true,
+    "reload_sse_resync": true,
+    "visibility_event_recovery": "synthetic document.hidden/visibilitychange; real SSE continues, rendering resumes without loss",
+    "individual_stop_other_seats_complete": true,
+    "themes_and_mobile": {
+      "desktop": [
+        1440,
+        1000
+      ],
+      "mobile": [
+        390,
+        844
+      ],
+      "themes": [
+        "dark",
+        "light"
+      ],
+      "horizontal_overflow": false
+    }
+  },
+  "page_errors": [],
+  "console_errors": [],
+  "screenshots": [
+    "desktop-streaming.png",
+    "desktop-dark-trace.png",
+    "desktop-light-trace.png",
+    "mobile-light.png"
+  ]
+}

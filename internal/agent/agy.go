@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -308,7 +307,7 @@ func (p *agyParser) readTranscripts(emit func(Event), final bool) {
 			continue
 		}
 		if _, err := f.Seek(sub.offset, 0); err == nil {
-			r := bufio.NewReaderSize(f, 256*1024)
+			r := takeTranscriptReader(f)
 			for {
 				line, err := r.ReadString('\n')
 				if err != nil {
@@ -325,6 +324,7 @@ func (p *agyParser) readTranscripts(emit func(Event), final bool) {
 					emit(x)
 				}
 			}
+			putTranscriptReader(r)
 		}
 		f.Close()
 		if final {

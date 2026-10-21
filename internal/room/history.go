@@ -54,6 +54,10 @@ func (h *Hub) snapshotLocked(rs *roomState, before int64, limit int) *Snapshot {
 	messages := make([]*Message, end-start)
 	for i, m := range rs.msgs[start:end] {
 		copy := *m
+		if m.Timing != nil {
+			timing := *m.Timing
+			copy.Timing = &timing
+		}
 		copy.Usage = maps.Clone(m.Usage)
 		copy.Attachments = slices.Clone(m.Attachments)
 		copy.Requests = slices.Clone(m.Requests)

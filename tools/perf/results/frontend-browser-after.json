@@ -1,0 +1,247 @@
+{
+  "workload": "Production timeline scheduler and renderMessage, 200 mounted messages/2000 history count, 1/4/16/32 concurrent streaming bodies, 125ms production throttle. Each sample starts with identical content; two warmup ticks excluded. HTTP/API/CLI excluded. DOM event/content assertions included.",
+  "environment": {
+    "browser": "153.0.8010.0",
+    "viewport": {
+      "width": 1440,
+      "height": 1000
+    },
+    "os": "linux",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "headless": true
+  },
+  "samples": 5,
+  "results": [
+    {
+      "participants": 1,
+      "ticks": 8,
+      "samples": [
+        {
+          "layout_count": 8,
+          "layout_ms": 51.38699999999996,
+          "style_recalc_count": 25,
+          "script_ms": 10.651000000000002,
+          "task_ms": 153.66999999999996,
+          "message_nodes": 200,
+          "dom_nodes": 7543
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 53.80499999999999,
+          "style_recalc_count": 26,
+          "script_ms": 10.311999999999998,
+          "task_ms": 154.35299999999995,
+          "message_nodes": 200,
+          "dom_nodes": 7543
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 53.790000000000006,
+          "style_recalc_count": 25,
+          "script_ms": 12.622000000000002,
+          "task_ms": 186.53699999999995,
+          "message_nodes": 200,
+          "dom_nodes": 7543
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 60.31199999999992,
+          "style_recalc_count": 28,
+          "script_ms": 12.277999999999997,
+          "task_ms": 187.03499999999985,
+          "message_nodes": 200,
+          "dom_nodes": 7543
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 57.037999999999926,
+          "style_recalc_count": 24,
+          "script_ms": 11.421000000000001,
+          "task_ms": 163.5930000000001,
+          "message_nodes": 200,
+          "dom_nodes": 7543
+        }
+      ]
+    },
+    {
+      "participants": 4,
+      "ticks": 8,
+      "samples": [
+        {
+          "layout_count": 8,
+          "layout_ms": 88.74300000000002,
+          "style_recalc_count": 27,
+          "script_ms": 21.42899999999999,
+          "task_ms": 215.36200000000028,
+          "message_nodes": 200,
+          "dom_nodes": 7603
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 80.50799999999958,
+          "style_recalc_count": 27,
+          "script_ms": 23.072999999999997,
+          "task_ms": 245.9290000000003,
+          "message_nodes": 200,
+          "dom_nodes": 7603
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 75.63900000000024,
+          "style_recalc_count": 25,
+          "script_ms": 18.006999999999994,
+          "task_ms": 180.51100000000008,
+          "message_nodes": 200,
+          "dom_nodes": 7603
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 71.81400000000026,
+          "style_recalc_count": 25,
+          "script_ms": 17.58800000000002,
+          "task_ms": 200.53300000000007,
+          "message_nodes": 200,
+          "dom_nodes": 7603
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 77.69000000000004,
+          "style_recalc_count": 29,
+          "script_ms": 19.456,
+          "task_ms": 195.97200000000026,
+          "message_nodes": 200,
+          "dom_nodes": 7603
+        }
+      ]
+    },
+    {
+      "participants": 16,
+      "ticks": 8,
+      "samples": [
+        {
+          "layout_count": 8,
+          "layout_ms": 214.38500000000005,
+          "style_recalc_count": 31,
+          "script_ms": 54.423,
+          "task_ms": 401.2260000000003,
+          "message_nodes": 200,
+          "dom_nodes": 7843
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 194.5920000000001,
+          "style_recalc_count": 30,
+          "script_ms": 49.683999999999976,
+          "task_ms": 402.2779999999999,
+          "message_nodes": 200,
+          "dom_nodes": 7843
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 226.19699999999997,
+          "style_recalc_count": 34,
+          "script_ms": 53.142000000000024,
+          "task_ms": 453.875,
+          "message_nodes": 200,
+          "dom_nodes": 7843
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 209.49699999999982,
+          "style_recalc_count": 31,
+          "script_ms": 49.73500000000003,
+          "task_ms": 396.8399999999992,
+          "message_nodes": 200,
+          "dom_nodes": 7843
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 233.95299999999963,
+          "style_recalc_count": 28,
+          "script_ms": 53.900000000000006,
+          "task_ms": 451.98599999999976,
+          "message_nodes": 200,
+          "dom_nodes": 7843
+        }
+      ]
+    },
+    {
+      "participants": 32,
+      "ticks": 8,
+      "samples": [
+        {
+          "layout_count": 8,
+          "layout_ms": 415.5479999999994,
+          "style_recalc_count": 31,
+          "script_ms": 88.65899999999999,
+          "task_ms": 678.5920000000001,
+          "message_nodes": 200,
+          "dom_nodes": 8163
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 372.24399999999935,
+          "style_recalc_count": 32,
+          "script_ms": 96.46900000000002,
+          "task_ms": 681.3400000000005,
+          "message_nodes": 200,
+          "dom_nodes": 8163
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 394.304,
+          "style_recalc_count": 31,
+          "script_ms": 131.76399999999998,
+          "task_ms": 699.5229999999992,
+          "message_nodes": 200,
+          "dom_nodes": 8163
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 426.5100000000004,
+          "style_recalc_count": 31,
+          "script_ms": 101.11300000000001,
+          "task_ms": 735.1560000000017,
+          "message_nodes": 200,
+          "dom_nodes": 8163
+        },
+        {
+          "layout_count": 8,
+          "layout_ms": 407.84799999999956,
+          "style_recalc_count": 32,
+          "script_ms": 92.71200000000002,
+          "task_ms": 698.0740000000001,
+          "message_nodes": 200,
+          "dom_nodes": 8163
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "nested_trace_keyboard_focus": true,
+    "composer_selection": true,
+    "scroll_position": true,
+    "cancellation_final_text": true,
+    "resync_timer_cancellation": true,
+    "responsive_themes": [
+      {
+        "width": 1440,
+        "theme": "dark"
+      },
+      {
+        "width": 1440,
+        "theme": "light"
+      },
+      {
+        "width": 390,
+        "theme": "dark"
+      },
+      {
+        "width": 390,
+        "theme": "light"
+      }
+    ],
+    "scheduled_off_window_dom_cap": true
+  },
+  "page_errors": []
+}

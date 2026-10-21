@@ -1,0 +1,39 @@
+{
+  "baseline_commit": "8c9eda11c10ad16f6d4dbcb196bc1a01319cf5f7",
+  "improved_code_commit": "f45c9b1ee899fdfcecdb77c2d85bb4080854494e",
+  "go": "go version go1.27.3 linux/amd64",
+  "node": "v24.19.0",
+  "python": "3.12.14",
+  "os": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "cpu": "AMD EPYC 9V74 80-Core Processor",
+  "logical_cpus_available": 9,
+  "gomaxprocs": 4,
+  "paid_ai_calls": 0,
+  "notes": [
+    "Shared cloud host; final suite runs one workload at a time. Other host activity is not controlled.",
+    "Timing results are medians with full min/max ranges; allocation and layout counts are separate deterministic measures.",
+    "Go and browser benchmarks exclude paid model latency. Browser fixtures keep production HTML/CSS/marked/rendering but replace API/CLI activity."
+  ],
+  "chromium": "153.0.8010.0",
+  "playwright": "1.64.1",
+  "chromium_package": "@sparticuz/chromium 153.0.0",
+  "go_benchmark_samples": 5,
+  "go_benchtime": "200ms",
+  "go_warmup": "100ms, count=1",
+  "resource_samples": 3,
+  "resource_iterations": 1000,
+  "node_trace_samples": 7,
+  "browser_samples": 5,
+  "browser_warmup_ticks": 2,
+  "browser_measured_ticks": 8,
+  "http_samples": 5,
+  "http_warmup_runs_per_participant_count": 1,
+  "http_subscribers": 4,
+  "http_server_cpu_resolution_ms": 10,
+  "http_rss_sampling_interval_ms": 10,
+  "binary_sha256": {
+    "baseline": "ca4c24d8ffc616350f05e8c3ef33bccceb7fa816dcbe3df9f70027f09308cd86",
+    "improved": "d34ddc059b8789bb71f03260f119264d52fa3080d4025f3f8dccda53da37d405",
+    "fakecli": "95ac27e0f522efb79aa4eba1dfab713a21b0b0d9211500d3d500da5510c6011f"
+  }
+}
