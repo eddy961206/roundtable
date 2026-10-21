@@ -304,10 +304,21 @@ func scanJSONLines(path string, consume func([]byte) error) error {
 	return readJSONLines(f, path, consume)
 }
 
+// consume must finish using the line before returning: ordinary records are
+// views of the reader buffer. Only records spanning buffers need a copy.
 func readJSONLines(source io.Reader, path string, consume func([]byte) error) error {
 	reader := bufio.NewReaderSize(source, 64*1024)
-	for lineNumber := 1; ; lineNumber++ {
-		line, err := reader.ReadBytes('\n')
+	var fragments []byte
+	for lineNumber := 1; ; {
+		line, err := reader.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			fragments = append(fragments, line...)
+			continue
+		}
+		if len(fragments) > 0 {
+			fragments = append(fragments, line...)
+			line = fragments
+		}
 		if len(line) > 0 {
 			if decodeErr := consume(line); decodeErr != nil {
 				return fmt.Errorf("%s:%d: %w", path, lineNumber, decodeErr)
@@ -319,6 +330,8 @@ func readJSONLines(source io.Reader, path string, consume func([]byte) error) er
 		if err != nil {
 			return fmt.Errorf("%s:%d: %w", path, lineNumber, err)
 		}
+		fragments = fragments[:0]
+		lineNumber++
 	}
 }
 

@@ -1,6 +1,7 @@
 package room
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -98,8 +99,10 @@ func (s *Store) ReadTraceTail(roomID, messageID string, limit int) (TraceTail, e
 }
 
 // Read blocks from EOF without loading the file or imposing a line-size limit.
-// A line is accumulated in reverse, then restored before decoding. A final
-// newline is a delimiter; blank or malformed records still report an error.
+// Records contained in a block are borrowed directly; only a record spanning
+// blocks is accumulated in reverse and restored before decoding. consume must
+// finish using each borrowed slice before returning. A final newline is a
+// delimiter; blank or malformed records still report an error.
 func readJSONLinesReverse(source io.ReaderAt, size int64, consume func([]byte) error) error {
 	block := make([]byte, 64*1024)
 	var line []byte
@@ -110,25 +113,38 @@ func readJSONLinesReverse(source io.ReaderAt, size int64, consume func([]byte) e
 		if _, err := source.ReadAt(chunk, start); err != nil {
 			return err
 		}
-		for i := len(chunk) - 1; i >= 0; i-- {
-			if chunk[i] != '\n' {
-				line = append(line, chunk[i])
-				continue
+		remaining := len(chunk)
+		if end == size && chunk[remaining-1] == '\n' {
+			remaining--
+		}
+		for {
+			i := bytes.LastIndexByte(chunk[:remaining], '\n')
+			part := chunk[i+1 : remaining]
+			complete := i >= 0 || start == 0
+			if len(line) > 0 || !complete {
+				previous := len(line)
+				line = append(line, part...)
+				slices.Reverse(line[previous:])
+				if complete {
+					slices.Reverse(line)
+					part = line
+				}
 			}
-			if start+int64(i) == size-1 {
-				continue
+			if complete {
+				if err := consume(part); err != nil {
+					if i < 0 {
+						return err
+					}
+					return fmt.Errorf("record after byte %d: %w", start+int64(i), err)
+				}
+				line = line[:0]
 			}
-			slices.Reverse(line)
-			if err := consume(line); err != nil {
-				return fmt.Errorf("record after byte %d: %w", start+int64(i), err)
+			if i < 0 {
+				break
 			}
-			line = line[:0]
+			remaining = i
 		}
 		end = start
-	}
-	if size > 0 {
-		slices.Reverse(line)
-		return consume(line)
 	}
 	return nil
 }
