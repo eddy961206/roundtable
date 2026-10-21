@@ -1,0 +1,28 @@
+File: after-room.test
+Build ID: 1ab99fa5ed1330885cdcd0fb10094b1db5b8ba84
+Type: alloc_space
+Time: 2026-10-21 10:14:15 +07
+Showing nodes accounting for 517.11MB, 97.84% of 528.56MB total
+Dropped 74 nodes (cum <= 2.64MB)
+Showing top 20 nodes out of 63
+      flat  flat%   sum%        cum   cum%
+   96.34MB 18.23% 18.23%    96.34MB 18.23%  bytes.Clone (inline)
+   89.98MB 17.02% 35.25%    89.98MB 17.02%  slices.Grow[go.shape.[]uint8,go.shape.uint8] (inline)
+   71.51MB 13.53% 48.78%    71.51MB 13.53%  reflect.unsafe_New
+   44.18MB  8.36% 57.14%    85.75MB 16.22%  encoding/json/jsontext.AppendFormat[go.shape.[]uint8]
+   30.70MB  5.81% 62.95%    37.82MB  7.15%  roundtable/internal/room.BenchmarkConcurrentStreaming.func1
+   28.51MB  5.39% 68.34%    28.51MB  5.39%  internal/bytealg.MakeNoZero
+   24.50MB  4.64% 72.98%   228.04MB 43.14%  roundtable/internal/room.(*Hub).runTurn.func1
+   21.30MB  4.03% 77.01%    41.56MB  7.86%  encoding/json/jsontext.(*encoderState).reformatValue
+   19.50MB  3.69% 80.70%   103.51MB 19.58%  roundtable/internal/room.(*Store).AppendTrace
+      18MB  3.41% 84.10%       18MB  3.41%  syscall.ByteSliceFromString
+      13MB  2.46% 86.56%   114.05MB 21.58%  roundtable/internal/room.(*roomState).broadcast
+   11.61MB  2.20% 88.76%   150.62MB 28.50%  encoding/json/v2.makeStructArshaler.func2
+   10.92MB  2.07% 90.83%    41.56MB  7.86%  encoding/json/jsontext.(*encoderState).reformatObject
+   10.50MB  1.99% 92.81%    10.50MB  1.99%  os.newFile
+    8.31MB  1.57% 94.38%     8.31MB  1.57%  encoding/json/jsontext.(*encoderState).AppendIndent (inline)
+    7.72MB  1.46% 95.85%     7.72MB  1.46%  regexp.(*bitState).reset
+    4.51MB  0.85% 96.70%     4.51MB  0.85%  strings.(*Builder).WriteString (inline)
+    3.51MB  0.66% 97.36%     9.17MB  1.73%  regexp.(*Regexp).replaceAll
+    1.50MB  0.28% 97.65%    10.51MB  1.99%  roundtable/internal/room.(*roomState).refreshParticipantStates
+       1MB  0.19% 97.84%    10.17MB  1.92%  regexp.(*Regexp).ReplaceAllStringFunc

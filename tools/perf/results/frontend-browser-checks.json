@@ -1,0 +1,42 @@
+{
+  "workload": "Production timeline scheduler and renderMessage, 200 mounted messages/2000 history count, 1/4/16/32 concurrent streaming bodies, 125ms production throttle. Each sample starts with identical content; two warmup ticks excluded. HTTP/API/CLI excluded. DOM event/content assertions included.",
+  "environment": {
+    "browser": "153.0.8010.0",
+    "viewport": {
+      "width": 1440,
+      "height": 1000
+    },
+    "os": "linux",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "headless": true
+  },
+  "samples": 5,
+  "results": [],
+  "checks": {
+    "nested_trace_keyboard_focus": true,
+    "composer_selection": true,
+    "scroll_position": true,
+    "cancellation_final_text": true,
+    "resync_timer_cancellation": true,
+    "responsive_themes": [
+      {
+        "width": 1440,
+        "theme": "dark"
+      },
+      {
+        "width": 1440,
+        "theme": "light"
+      },
+      {
+        "width": 390,
+        "theme": "dark"
+      },
+      {
+        "width": 390,
+        "theme": "light"
+      }
+    ],
+    "scheduled_off_window_dom_cap": true
+  },
+  "page_errors": []
+}

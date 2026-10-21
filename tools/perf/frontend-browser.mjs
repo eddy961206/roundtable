@@ -193,6 +193,18 @@ try {
     }
   }
   const checks = { nested_trace_keyboard_focus: true, composer_selection: true, scroll_position: true, cancellation_final_text: true, resync_timer_cancellation: true, responsive_themes: themes };
+  await page.evaluate(() => {
+    const { state, timeline } = window.perfFixture;
+    state.messages.set("outside", { id: "outside", kind: "agent", author: "p0", status: "streaming", text: "outside the visible page" });
+    state.order.unshift("outside");
+    state.winStart = 1; state.winEnd = 201;
+    timeline.scheduleRender("outside");
+    timeline.scheduleRender("stream0");
+  });
+  await page.waitForFunction(() => window.perfFixture.state.renderTimers.size === 0);
+  assert.equal(await page.locator("#timeline .msg").count(), 200);
+  assert.equal(await page.locator("#m-outside").count(), 0);
+  checks.scheduled_off_window_dom_cap = true;
   assert.deepEqual(errors, []);
   const result = {
     workload: "Production timeline scheduler and renderMessage, 200 mounted messages/2000 history count, 1/4/16/32 concurrent streaming bodies, 125ms production throttle. Each sample starts with identical content; two warmup ticks excluded. HTTP/API/CLI excluded. DOM event/content assertions included.",

@@ -1,0 +1,9 @@
+goos: linux
+goarch: amd64
+pkg: roundtable/internal/agent
+cpu: AMD EPYC 9V74 80-Core Processor
+BenchmarkTranscriptResourceSoak-4   	    1000	    182100 ns/op	         4.000 GCs	         0 fd-delta	         0 goroutine-delta	    700464 live-heap-B	   11982 B/op	     192 allocs/op
+BenchmarkTranscriptResourceSoak-4   	    1000	    189430 ns/op	         5.000 GCs	         0 fd-delta	         0 goroutine-delta	    441408 live-heap-B	   12827 B/op	     192 allocs/op
+BenchmarkTranscriptResourceSoak-4   	    1000	    172357 ns/op	         4.000 GCs	         0 fd-delta	         0 goroutine-delta	    441408 live-heap-B	   12302 B/op	     192 allocs/op
+PASS
+ok  	roundtable/internal/agent	0.564s

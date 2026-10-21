@@ -1,0 +1,109 @@
+{
+  "BenchmarkTranscriptResourceSoak": {
+    "ns/op": {
+      "before": {
+        "median": 2892382.0,
+        "min": 2099929.0,
+        "max": 2936519.0,
+        "samples": 3
+      },
+      "after": {
+        "median": 182100.0,
+        "min": 172357.0,
+        "max": 189430.0,
+        "samples": 3
+      },
+      "change_percent": -93.70415111143687
+    },
+    "GCs": {
+      "before": {
+        "median": 5200.0,
+        "min": 5082.0,
+        "max": 5211.0,
+        "samples": 3
+      },
+      "after": {
+        "median": 4.0,
+        "min": 4.0,
+        "max": 5.0,
+        "samples": 3
+      },
+      "change_percent": -99.92307692307692
+    },
+    "fd-delta": {
+      "before": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "samples": 3
+      },
+      "after": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "samples": 3
+      },
+      "change_percent": null
+    },
+    "goroutine-delta": {
+      "before": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "samples": 3
+      },
+      "after": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "samples": 3
+      },
+      "change_percent": null
+    },
+    "live-heap-B": {
+      "before": {
+        "median": 198680.0,
+        "min": 196584.0,
+        "max": 202408.0,
+        "samples": 3
+      },
+      "after": {
+        "median": 441408.0,
+        "min": 441408.0,
+        "max": 700464.0,
+        "samples": 3
+      },
+      "change_percent": 122.17032413931949
+    },
+    "B/op": {
+      "before": {
+        "median": 16789047.0,
+        "min": 16789044.0,
+        "max": 16789063.0,
+        "samples": 3
+      },
+      "after": {
+        "median": 12302.0,
+        "min": 11982.0,
+        "max": 12827.0,
+        "samples": 3
+      },
+      "change_percent": -99.9267260375172
+    },
+    "allocs/op": {
+      "before": {
+        "median": 256.0,
+        "min": 256.0,
+        "max": 256.0,
+        "samples": 3
+      },
+      "after": {
+        "median": 192.0,
+        "min": 192.0,
+        "max": 192.0,
+        "samples": 3
+      },
+      "change_percent": -25.0
+    }
+  }
+}

@@ -1,0 +1,83 @@
+baseline go test ./...
+ok  	roundtable	(cached)
+ok  	roundtable/cmd/roundtable	0.025s
+--- FAIL: TestFileURLToPath (0.00s)
+    parsers_test.go:396: got "/C:/Users/x/.gemini/t/transcript.jsonl"
+FAIL
+FAIL	roundtable/internal/agent	0.023s
+ok  	roundtable/internal/agyhook	(cached)
+ok  	roundtable/internal/giteamcp	(cached)
+ok  	roundtable/internal/room	(cached)
+ok  	roundtable/internal/rtmcp	5.755s
+ok  	roundtable/internal/server	0.254s
+FAIL
+
+
+improved go test -count=1 ./...
+ok  	roundtable	0.007s
+ok  	roundtable/cmd/roundtable	0.008s
+ok  	roundtable/internal/agent	0.031s
+ok  	roundtable/internal/agyhook	0.007s
+ok  	roundtable/internal/giteamcp	0.156s
+ok  	roundtable/internal/room	14.232s
+ok  	roundtable/internal/rtmcp	5.786s
+ok  	roundtable/internal/server	0.126s
+?   	roundtable/tools/perf/fakecli	[no test files]
+
+
+improved go test -race -count=1 ./...
+ok  	roundtable	1.028s
+ok  	roundtable/cmd/roundtable	1.042s
+ok  	roundtable/internal/agent	1.330s
+ok  	roundtable/internal/agyhook	1.024s
+ok  	roundtable/internal/giteamcp	2.225s
+ok  	roundtable/internal/room	23.000s
+ok  	roundtable/internal/rtmcp	7.023s
+ok  	roundtable/internal/server	1.694s
+?   	roundtable/tools/perf/fakecli	[no test files]
+
+
+improved go vet ./... (empty output means success)
+
+
+Windows amd64 test-package and application cross-compilation (NOT execution)
+compiled roundtable
+compiled roundtable/cmd/roundtable
+compiled roundtable/internal/agent
+compiled roundtable/internal/agyhook
+compiled roundtable/internal/giteamcp
+compiled roundtable/internal/room
+compiled roundtable/internal/rtmcp
+compiled roundtable/internal/server
+?   	roundtable/tools/perf/fakecli	[no test files]
+compiled roundtable/tools/perf/fakecli
+Windows application compiled
+
+
+baseline snapshot regression
+baseline=8c9eda11c10ad16f6d4dbcb196bc1a01319cf5f7
+--- FAIL: TestSnapshotDetachesLiveTurnTiming (0.00s)
+    snapshot_timing_regression_test.go:27: live turn mutated an earlier snapshot: &{QueuedMs:0 FirstOutputMs:123 TotalMs:456}, want {QueuedMs:0 FirstOutputMs:0 TotalMs:0}
+FAIL
+FAIL	roundtable/internal/room	0.005s
+FAIL
+exit_code=1
+
+
+python tools/modcheck.py web/js
+problems 0
+
+
+node tools/perf/frontend-trace.test.mjs
+✔ trace SSE retains ordered full records after the initial tail and ignores duplicates (11.836244ms)
+✔ full history remains complete when new tool and subagent records arrive (1.407806ms)
+✔ display bounds and the full-history retry error survive subsequent events (0.301634ms)
+✔ streamed trace recency preserves the existing eight-trace eviction policy (0.295855ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19.654847
