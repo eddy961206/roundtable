@@ -417,20 +417,21 @@ type ParticipantPatch struct {
 
 // RoomPatch is a partial update.
 type RoomPatch struct {
-	Title              *string            `json:"title,omitempty"`
-	Note               *string            `json:"note,omitempty"`
-	Mode               *string            `json:"mode,omitempty"`
-	Workspace          *string            `json:"workspace,omitempty"`
-	MaxChain           *int               `json:"max_chain,omitempty"`
-	DiscussionRounds   *int               `json:"discussion_rounds,omitempty"`
-	Persona            *bool              `json:"persona,omitempty"`
-	BlindFirstDefault  *bool              `json:"blind_first_default,omitempty"`
-	InputWarnTokens    *int64             `json:"input_warn_tokens,omitempty"`
-	SeatInputBudget    *int64             `json:"seat_input_budget,omitempty"`
-	RoomInputBudget    *int64             `json:"room_input_budget,omitempty"`
-	ContextWarnPercent *int               `json:"context_warn_percent,omitempty"`
-	TurnTimeoutMinutes *int               `json:"turn_timeout_minutes,omitempty"`
-	Participants       []ParticipantPatch `json:"participants,omitempty"`
+	Title               *string            `json:"title,omitempty"`
+	Note                *string            `json:"note,omitempty"`
+	Mode                *string            `json:"mode,omitempty"`
+	Workspace           *string            `json:"workspace,omitempty"`
+	MaxChain            *int               `json:"max_chain,omitempty"`
+	DiscussionRounds    *int               `json:"discussion_rounds,omitempty"`
+	Persona             *bool              `json:"persona,omitempty"`
+	BlindFirstDefault   *bool              `json:"blind_first_default,omitempty"`
+	InputWarnTokens     *int64             `json:"input_warn_tokens,omitempty"`
+	SeatInputBudget     *int64             `json:"seat_input_budget,omitempty"`
+	RoomInputBudget     *int64             `json:"room_input_budget,omitempty"`
+	ContextWarnPercent  *int               `json:"context_warn_percent,omitempty"`
+	TurnTimeoutMinutes  *int               `json:"turn_timeout_minutes,omitempty"`
+	CompactWindowTokens *int               `json:"compact_window_tokens,omitempty"`
+	Participants        []ParticipantPatch `json:"participants,omitempty"`
 }
 
 func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
@@ -494,6 +495,9 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	}
 	if patch.ContextWarnPercent != nil {
 		next.ContextWarnPercent = *patch.ContextWarnPercent
+	}
+	if patch.CompactWindowTokens != nil {
+		next.CompactWindowTokens = *patch.CompactWindowTokens
 	}
 	if patch.TurnTimeoutMinutes != nil {
 		if err := validateTurnTimeout(*patch.TurnTimeoutMinutes); err != nil {
@@ -1357,7 +1361,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
-	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp}
+	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
 	h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
 	if forked {
@@ -1422,7 +1426,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 		view.Mode = agent.ModeWrite
 		prompt = BuildPrompt(&view, p, hist, tc)
 	}
-	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp}
+	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
 	h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, bootstrap: bootstrap}
 }
@@ -1439,7 +1443,7 @@ func (h *Hub) buildReviewTurn(rs *roomState, t *Turn, p *Participant, prov agent
 		return nil
 	}
 	reviewer := p.ID == part.Reviewer
-	opts := agent.RunOptions{Prompt: t.prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp}
+	opts := agent.RunOptions{Prompt: t.prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
 	if reviewer {
 		opts.SessionID, opts.Mode = "", agent.ModeRead
 	}

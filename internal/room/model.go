@@ -77,12 +77,15 @@ type Room struct {
 	BlindFirstDefault bool `json:"blind_first_default"`
 	// Usage guards (budget.go). InputWarnTokens and ContextWarnPercent: 0 is the
 	// default, -1 off. The budgets: 0 is no cap.
-	InputWarnTokens    int64     `json:"input_warn_tokens,omitempty"`
-	SeatInputBudget    int64     `json:"seat_input_budget,omitempty"`
-	RoomInputBudget    int64     `json:"room_input_budget,omitempty"`
-	ContextWarnPercent int       `json:"context_warn_percent,omitempty"`
-	TurnTimeoutMinutes int       `json:"turn_timeout_minutes,omitempty"` // 0: DefaultTurnTimeoutMinutes
-	Work               *WorkPlan `json:"-"`                              // stored in room.json "work"; clients get Snapshot.work and "work" events
+	InputWarnTokens    int64 `json:"input_warn_tokens,omitempty"`
+	SeatInputBudget    int64 `json:"seat_input_budget,omitempty"`
+	RoomInputBudget    int64 `json:"room_input_budget,omitempty"`
+	ContextWarnPercent int   `json:"context_warn_percent,omitempty"`
+	TurnTimeoutMinutes int   `json:"turn_timeout_minutes,omitempty"` // 0: DefaultTurnTimeoutMinutes
+	// CompactWindowTokens makes Claude seats compact their session at this
+	// context size (budget.go); 0 keeps the CLI default.
+	CompactWindowTokens int       `json:"compact_window_tokens,omitempty"`
+	Work                *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {

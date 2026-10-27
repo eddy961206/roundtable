@@ -54,6 +54,7 @@ func (s *Server) tools() []tool {
 	str := schema{Type: "string"}
 	limit := int64(600)
 	maxPercent := int64(99)
+	maxCompactWindow := int64(1_000_000)
 	maxTurnMinutes := int64(720)
 	roomLimit := int64(maxListRooms)
 	fork := object(map[string]schema{"room": id, "seat": id}, "room", "seat")
@@ -87,9 +88,10 @@ func (s *Server) tools() []tool {
 		{Name: "rt_cancel_turn", Description: "좌석의 실행 중인 턴 하나만 취소. 좌석은 켜진 채로 남아 이후 [[REQUEST]]·멘션·대기 턴을 계속 받음(웹의 '작업 중단'은 좌석까지 끔). 실행 중인 턴이 없으면 오류. 결과의 cancelled는 취소한 턴 id", InputSchema: object(map[string]schema{"room": id, "seat": id}, "room", "seat")},
 		{Name: "rt_apply_markers", Description: "오류로 끝난 좌석 답(seq)의 마커([[REQUEST]]·[[REQUEST_DONE]]·[[DECISION]]·[[ATTACH]])를 실행. 서버는 오류 턴의 마커를 스스로 처리하지 않고 시스템 안내로 알림. 답이 끝까지 쓰인 것을 확인했을 때만 호출(예: 답 뒤에 stream idle timeout). 한 번만 실행되며 결과의 message.requests가 새 요청", InputSchema: object(map[string]schema{"room": id, "seq": integer(1, nil)}, "room", "seq")},
 		{Name: "rt_decisions", Description: "결정 카드 목록 조회. status: proposed(좌석이 제안, 확정 대기)·active(안내문의 현재 결정)·superseded·dropped", InputSchema: object(map[string]schema{"room": id}, "room")},
-		{Name: "rt_update_room", Description: "방 설정 수정. 생략한 항목은 그대로이며 하나 이상 필요. 작업 폴더(git worktree)가 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 workspace를 새 폴더로 바꾼다. 실행 중인 턴에는 다음 턴부터 적용. 사용량 경보·상한: input_warn_tokens(좌석 누적 입력 경고 간격, 0=기본 1천만, -1=끔), context_warn_percent(문맥 경보 비율, 0=기본 70, -1=끔), seat_input_budget·room_input_budget(누적 입력 상한 토큰, 0=없음; 넘으면 그 좌석·방의 새 턴을 시작하지 않고 시스템 안내로 이유를 남김, 메시지는 상한을 올린 뒤 다음 턴에 전달)", InputSchema: object(map[string]schema{
+		{Name: "rt_update_room", Description: "방 설정 수정. 생략한 항목은 그대로이며 하나 이상 필요. 작업 폴더(git worktree)가 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 workspace를 새 폴더로 바꾼다. 실행 중인 턴에는 다음 턴부터 적용. 사용량 경보·상한: input_warn_tokens(좌석 누적 입력 경고 간격, 0=기본 1천만, -1=끔), context_warn_percent(문맥 경보 비율, 0=기본 70, -1=끔), seat_input_budget·room_input_budget(누적 입력 상한 토큰, 0=없음; 넘으면 그 좌석·방의 새 턴을 시작하지 않고 시스템 안내로 이유를 남김, 메시지는 상한을 올린 뒤 다음 턴에 전달), compact_window_tokens(Claude 좌석이 세션을 이 문맥 크기에서 자동 압축, 0=CLI 기본, 50000~1000000; 긴 세션의 입력을 줄이지만 압축 호출만큼 턴이 길어짐)", InputSchema: object(map[string]schema{
 			"room": id, "title": text, "note": str, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
 			"turn_timeout_minutes": integer(0, &maxTurnMinutes), "input_warn_tokens": integer(-1, nil), "seat_input_budget": integer(0, nil), "room_input_budget": integer(0, nil), "context_warn_percent": integer(-1, &maxPercent),
+			"compact_window_tokens": integer(0, &maxCompactWindow),
 		}, "room")},
 		{Name: "rt_update_decision", Description: "결정 카드 수정·상태 변경. 좌석이 [[DECISION]]으로 남긴 proposed 카드는 status active로 확정, dropped로 거절. 생략한 항목은 그대로이며 하나 이상 필요", InputSchema: object(map[string]schema{
 			"room": id, "id": id, "status": {Type: "string", Enum: []string{"active", "superseded", "dropped"}},

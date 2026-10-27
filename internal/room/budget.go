@@ -12,6 +12,11 @@ import (
 const (
 	DefaultInputWarnTokens    = 10_000_000
 	DefaultContextWarnPercent = 70
+	// Claude seats compact their session at CompactWindowTokens when a room
+	// sets it. 2026-10-28 A/B: a 150k window cut a review+fix turn's input by
+	// 38% with the same result, but took longer (docs/토큰효율_측정_20261028.md).
+	MinCompactWindow = 50_000
+	MaxCompactWindow = 1_000_000
 )
 
 // inputWarn is the warning step in tokens; 0 when off.
@@ -45,6 +50,9 @@ func validateGuards(r *Room) error {
 	}
 	if r.ContextWarnPercent < -1 || r.ContextWarnPercent > 99 {
 		return fmt.Errorf("context_warn_percent는 -1(끔), 0(기본 %d) 또는 1~99여야 함", DefaultContextWarnPercent)
+	}
+	if w := r.CompactWindowTokens; w != 0 && (w < MinCompactWindow || w > MaxCompactWindow) {
+		return fmt.Errorf("compact_window_tokens는 0(CLI 기본) 또는 %d~%d여야 함: %d", MinCompactWindow, MaxCompactWindow, w)
 	}
 	return nil
 }

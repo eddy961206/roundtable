@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,6 +48,17 @@ func (c *Claude) Models() []ModelOption {
 		{ID: "claude-sonnet-5-5", Label: "Sonnet 5.5"},
 		{ID: "claude-haiku-5-5", Label: "Haiku 5.5"},
 	}
+}
+
+// claudeEnv is the CLI environment for one run. A nested Claude Code refuses
+// to start when it thinks it is inside another session. The room's compaction
+// window, when set, replaces any inherited one; the user's settings are untouched.
+func claudeEnv(o RunOptions) []string {
+	if o.CompactWindow <= 0 {
+		return envWithout("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+	}
+	env := envWithout("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+	return append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(o.CompactWindow))
 }
 
 func claudeArgs(o RunOptions) []string {
@@ -117,8 +129,7 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 	}
 	cmd := exec.Command(path, claudeArgs(o)...)
 	cmd.Dir = workDir(o)
-	// A nested Claude Code refuses to start when it thinks it is inside another session.
-	cmd.Env = envWithout("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
+	cmd.Env = claudeEnv(o)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return Result{}, err

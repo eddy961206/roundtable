@@ -29,6 +29,9 @@ type RunOptions struct {
 	Timeout     time.Duration
 	Steer       <-chan string // live user messages while the turn runs (providers that CanSteer)
 	MCP         *MCPServer    // extra read-only tool server for this run (nil = none)
+	// CompactWindow is the context size at which the CLI compacts its session
+	// (Claude only); 0 keeps the CLI's own default.
+	CompactWindow int
 }
 
 type Image struct {
