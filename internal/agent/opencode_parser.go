@@ -1,6 +1,9 @@
 package agent
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 type openCodeParser struct {
 	session   string
@@ -56,9 +59,26 @@ func (p *openCodeParser) Line(line string, emit func(Event)) {
 		}
 		emit(x)
 	case "error":
-		p.errText = firstNonEmpty(str(obj(m, "error"), "message"), "OpenCode 실행 오류")
+		p.errText = openCodeErrorText(obj(m, "error"))
 		p.completed = false
 	}
+}
+
+// openCodeErrorText names the CLI's error event, e.g. a provider limit
+// {"type":"provider.free-limit","message":"Free usage limit reached…","status":429}.
+func openCodeErrorText(e map[string]any) string {
+	var tags []string
+	if kind := str(e, "type"); kind != "" {
+		tags = append(tags, kind)
+	}
+	if status, ok := e["status"].(float64); ok {
+		tags = append(tags, strconv.FormatFloat(status, 'f', -1, 64))
+	}
+	msg := firstNonEmpty(str(e, "message"), "OpenCode 실행 오류")
+	if len(tags) == 0 {
+		return "OpenCode 오류: " + msg
+	}
+	return "OpenCode 오류(" + strings.Join(tags, ", ") + "): " + msg
 }
 
 func (p *openCodeParser) Finish(emit func(Event)) Final {

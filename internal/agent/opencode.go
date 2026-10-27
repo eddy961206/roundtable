@@ -137,6 +137,14 @@ func (o *OpenCode) Run(ctx context.Context, opts RunOptions, emit func(Event)) (
 		return res, ctx.Err()
 	}
 	if runErr != nil {
+		// The CLI reports provider failures (limits, auth) as an error event
+		// before exiting non-zero; that event, not the exit status, is the cause.
+		if fin.Err != "" {
+			return res, fmt.Errorf("%s", fin.Err)
+		}
+		if tail := lastLines(stderr, 3); tail != "" {
+			return res, fmt.Errorf("OpenCode 실행이 끝나지 못했어: %w: %s", runErr, tail)
+		}
 		return res, fmt.Errorf("OpenCode 실행이 끝나지 못했어: %w", runErr)
 	}
 	return res, finishError("OpenCode", fin, nil, "")
