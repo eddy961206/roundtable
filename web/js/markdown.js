@@ -1,6 +1,7 @@
 // Safe Markdown rendering, agent marker lines and @mention text rewriting.
 import { esc, LABEL } from "./util.js";
-import { activeParticipants, participant, participantLabel, state } from "./state.js";
+import { activeParticipants, authorProvider, participant, participantLabel, seatClass, state } from "./state.js";
+import { MENTION_RE, parseMarkerNotice, requestMarker, resolveMention } from "./mentions.js";
 
 // ---------- Safe Markdown Rendering (Fix P1 #1: XSS & file:// handling) ----------
 function decodeHtmlEntities(str) {
@@ -253,15 +254,20 @@ function formatAgentMessageText(text, msg) {
   return prepareAgentMessageText(text, msg).text;
 }
 
-export function applyRejectedMarkerChips(container, rejectedMarkers) {
+export function applyRejectedMarkerChips(container, rejectedMarkers, msg) {
   if (!container || !Array.isArray(rejectedMarkers) || rejectedMarkers.length === 0) return;
   const markerSet = new Set(rejectedMarkers);
   container.querySelectorAll("code").forEach((codeEl) => {
     if (codeEl.parentElement && codeEl.parentElement.tagName === "PRE") return;
     const txt = codeEl.textContent || "";
-    if (markerSet.has(txt)) {
-      codeEl.classList.add("marker-chip", "muted");
+    if (!markerSet.has(txt)) return;
+    const route = requestRouteHtml(txt, msg);
+    if (route) {
+      codeEl.insertAdjacentHTML("beforebegin", route);
+      codeEl.remove();
+      return;
     }
+    codeEl.classList.add("marker-chip", "muted");
   });
 }
 
@@ -316,7 +322,7 @@ function friendlyMarkdownTokens(tokens) {
   for (const token of tokens) {
     if (["code", "codespan", "html", "link", "image", "def"].includes(token.type)) continue;
     if (token.tokens) friendlyMarkdownTokens(token.tokens);
-    else if (token.type === "text") { token.text = visibleMentions(token.text); token.escaped = false; }
+    else if (token.type === "text") { token.text = placeMentions(token.text); token.escaped = false; }
     if (token.items) for (const item of token.items) if (item.tokens) friendlyMarkdownTokens(item.tokens);
     if (token.header) for (const cell of token.header) friendlyMarkdownTokens(cell.tokens);
     if (token.rows) for (const row of token.rows) for (const cell of row) friendlyMarkdownTokens(cell.tokens);
@@ -328,11 +334,99 @@ export const md = (text) => {
     if (!markedLib) return "<p>" + esc(text) + "</p>";
     const tokens = markedLib.lexer(text || "");
     friendlyMarkdownTokens(tokens);
-    return markedLib.parser(tokens);
+    return fillMentions(markedLib.parser(tokens));
   } catch {
     return "<p>" + esc(text) + "</p>";
   }
 };
+
+// Mentions become private-use placeholders before escaping and pills after, so
+// the label text is escaped once and code spans/blocks are never touched.
+function placeMentions(text) {
+  return String(text || "").replace(MENTION_RE, (match, prefix, token) => prefix + "" + token + "");
+}
+function fillMentions(html) {
+  return html.replace(/([^]*)/g, (match, token) => mentionPill(token));
+}
+
+// mentionPill draws "@token" by what it reaches: a seat in its colour, a provider
+// group, everyone, a seat that is off (dashed), or nothing (red, not called).
+export function mentionPill(token) {
+  const seats = (state.room && state.room.participants) || [];
+  const res = resolveMention(token, seats);
+  if (res.kind === "none") {
+    return '<span class="mention-pill unmatched" title="일치하는 좌석 없음 · 호출되지 않음">@' + esc(token) + "</span>";
+  }
+  if (res.kind === "all") {
+    return '<span class="mention-pill group all" title="참여 중인 좌석 전원">@전원</span>';
+  }
+  if (res.kind === "group") {
+    const names = res.ids.map(participantLabel).join(", ");
+    return '<span class="mention-pill group ' + esc(res.provider) + '" title="' + esc(names) + '">@' + esc(LABEL[res.provider] || res.provider) + " 전체</span>";
+  }
+  const id = res.ids[0];
+  const off = res.enabled.length === 0;
+  const label = res.ids.map(participantLabel).join(", ");
+  const title = off ? label + " · 꺼진 좌석이라 호출되지 않음" : label + " (" + res.ids.join(", ") + ")";
+  return '<span class="mention-pill' + seatClass(id) + " " + esc(authorProvider(id)) + (off ? " off" : "") + '" title="' + esc(title) + '">@' + esc(label) + "</span>";
+}
+
+// mentionTextHtml renders plain (non-Markdown) text with mention pills.
+export function mentionTextHtml(text) {
+  return fillMentions(esc(rewriteProseMentions(String(text || ""), placeMentions)));
+}
+
+// seatChipHtml is the coloured name chip used in "from → to" routes.
+export function seatChipHtml(id) {
+  const p = participant(id);
+  const off = !!p && p.enabled === false;
+  return '<span class="seat-chip' + seatClass(id) + " " + esc(authorProvider(id)) + (off ? " off" : "") + '">' +
+    esc(participantLabel(id)) + (off ? " (꺼짐)" : "") + "</span>";
+}
+
+// targetChipHtml resolves the @name a marker named into a seat chip, or a red
+// "no such seat" chip. It also returns the readable name for aria labels.
+function target(name) {
+  const res = resolveMention(name, (state.room && state.room.participants) || []);
+  if (res.kind === "seat" && res.ids.length === 1) return { html: seatChipHtml(res.ids[0]), name: participantLabel(res.ids[0]) };
+  return { html: '<span class="seat-chip unmatched" title="일치하는 좌석 없음">@' + esc(name) + "</span>", name: "@" + name + "(일치하는 좌석 없음)" };
+}
+
+function routeHtml(fromId, targetName, kind, outcome, raw) {
+  const to = targetName ? target(targetName) : null;
+  const aria = "보낸 좌석 " + participantLabel(fromId) + (to ? " → 받는 좌석 " + to.name : "") + ", " + kind + ", " + outcome;
+  return '<span class="marker-route rejected" role="group" aria-label="' + esc(aria) + '">' +
+    seatChipHtml(fromId) + (to ? '<span class="route-arrow" aria-hidden="true">→</span>' + to.html : "") +
+    '<span class="route-kind">' + esc(kind) + "</span>" +
+    '<span class="route-fail">' + esc(outcome) + "</span>" +
+    '<details class="route-raw"><summary>원문</summary><code>' + esc(raw) + "</code></details></span>";
+}
+
+const MARKER_KIND = { request: "요청 마커", request_result: "요청 결과 마커", attach: "첨부 마커", decision: "결정 마커" };
+
+// markerNoticeHtml renders the server's marker rejection notice as
+// "sender → target · kind · 전달 안 됨: reason"; null for other system messages.
+export function markerNoticeHtml(m) {
+  if (!m || !m.notice_for || !MARKER_KIND[m.notice_marker]) return null;
+  const n = parseMarkerNotice(m.text);
+  if (!n) return null;
+  return routeHtml(m.notice_for, n.target, MARKER_KIND[m.notice_marker], "전달 안 됨: " + n.reason, n.marker);
+}
+
+// requestRouteHtml replaces a rejected [[REQUEST:@x]] line in a reply with the
+// same route, taking the reason from the room's rejection notice when present.
+export function requestRouteHtml(raw, msg) {
+  const r = requestMarker(raw);
+  if (!r || !msg) return null;
+  let reason = "";
+  for (const other of state.messages.values()) {
+    if (other.kind === "system" && other.notice_msg === msg.id && other.notice_marker === "request") {
+      const n = parseMarkerNotice(other.text);
+      if (n && n.marker === raw.trim()) reason = n.reason;
+    }
+  }
+  return routeHtml(msg.author, r.target, "요청", reason ? "전달 안 됨: " + reason : "처리되지 않음", raw.trim());
+}
 
 export function visibleMentions(text) {
   return String(text || "").replace(/(^|[\s([{])@([a-zA-Z0-9_-]+)/g, (match, prefix, id) => {

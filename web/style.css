@@ -2895,3 +2895,51 @@ dialog.dlg-stats { width: min(1100px, 96vw); }
 .update-banner .update-text { color: var(--warn); font-weight: 600; overflow-wrap: anywhere; }
 .update-banner code { font-family: var(--mono); font-size: 12px; }
 .update-banner .update-link { color: var(--accent); }
+
+/* ---- who → whom: mention pills and routes (sender chip → receiver chip) ---- */
+.mention-pill {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: var(--seat, var(--accent));
+  background: color-mix(in srgb, var(--seat, var(--accent)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--seat, var(--accent)) 55%, transparent);
+  white-space: nowrap;
+}
+.mention-pill.group.claude { --seat: var(--claude); }
+.mention-pill.group.codex { --seat: var(--codex); }
+.mention-pill.group.agy { --seat: var(--agy); }
+.mention-pill.group.opencode { --seat: var(--opencode); }
+.mention-pill.off { border-style: dashed; opacity: 0.75; }
+.mention-pill.unmatched {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px dashed var(--danger);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.seat-chip.off { border-style: dashed; opacity: 0.8; }
+.seat-chip.unmatched { color: var(--danger); background: var(--danger-bg); border: 1px dashed var(--danger); }
+.route-arrow { color: var(--muted); font-weight: 700; padding: 0 2px; }
+.marker-route {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  vertical-align: middle;
+}
+.marker-route .route-kind { font-size: 11.5px; color: var(--muted); }
+.marker-route .route-fail {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--danger);
+  background: var(--danger-bg);
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.marker-route .route-raw { font-size: 11.5px; color: var(--muted); }
+.marker-route .route-raw summary { cursor: pointer; }
+.marker-route .route-raw code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.steer-tag.route, .call-route { display: inline-flex; align-items: center; gap: 4px; }
+.steer-tag.route .route-how { font-weight: 500; }

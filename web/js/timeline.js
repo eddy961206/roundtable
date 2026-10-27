@@ -3,7 +3,7 @@ import { $, announce, avatarContent, DOM_CAP_STEP, el, esc, fmtDur, fmtElapsed, 
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { activeParticipants, authorProvider, modelLabel, openSeq, participant, participantLabel, seatClass, state } from "./state.js";
-import { applyRejectedMarkerChips, md, prepareAgentMessageText, rewriteProseMentions, visibleMentions } from "./markdown.js";
+import { applyRejectedMarkerChips, markerNoticeHtml, md, mentionTextHtml, prepareAgentMessageText, seatChipHtml, visibleMentions } from "./markdown.js";
 import { closeDrawers } from "./layout.js";
 import { messageInputTokens } from "./usage.js";
 import { renderMessageAttachments, renderMessageRequests } from "./attachments.js";
@@ -593,7 +593,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
       '<div class="bubble">' +
       sysBadges.join("") +
       "<span>ℹ " +
-      esc(rewriteProseMentions(m.text, visibleMentions)) +
+      (markerNoticeHtml(m) || mentionTextHtml(m.text)) +
       '</span> <span class="muted">' +
       fmtTime(m.ts) +
       "</span> " +
@@ -606,11 +606,21 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
     meta.push(seqChipHtml(m));
     meta.push(...replyChipHtml(m));
     if (m.kind === "user" && m.target) {
+      const how = m.live ? "즉시 주입됨" : "다음 턴 전달";
       meta.push(
-        '<span class="steer-tag">→ ' +
-          esc(participantLabel(m.target)) +
-          (m.live ? " (즉시 주입됨)" : " (다음 턴 전달)") +
-          "</span>"
+        '<span class="steer-tag route" role="group" aria-label="' + esc("나 → " + participantLabel(m.target) + ", " + how) + '">나' +
+          '<span class="route-arrow" aria-hidden="true">→</span>' + seatChipHtml(m.target) +
+          '<span class="route-how">' + how + "</span></span>"
+      );
+    }
+    // A reply's @mentions start turns for those seats (chain): show who it calls.
+    const called = m.kind === "agent" && m.status === "done" && m.reason !== "discussion" && m.reason !== "review" && Array.isArray(m.mentions)
+      ? m.mentions.filter((id) => id !== m.author)
+      : [];
+    if (called.length) {
+      meta.push(
+        '<span class="call-route" role="group" aria-label="' + esc(participantLabel(m.author) + " → " + called.map(participantLabel).join(", ") + " 호출") + '">' +
+          '<span class="route-arrow" aria-hidden="true">→</span>' + called.map((id) => seatChipHtml(id)).join("") + "</span>"
       );
     }
     if (m.model) meta.push('<span class="muted">' + esc(modelLabel(authorProvider(m.author), m.model)) + "</span>");
@@ -722,7 +732,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
       bodyEl.innerHTML =
         m.kind === "user"
           ? m.text
-            ? "<p>" + esc(rewriteProseMentions(m.text, visibleMentions)).replace(/\n/g, "<br>") + "</p>"
+            ? "<p>" + mentionTextHtml(m.text).replace(/\n/g, "<br>") + "</p>"
             : ""
           : live
           ? liveHtml(live)
@@ -732,7 +742,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
             : ""
           : md(m.text);
       if (m.kind === "agent" && !live) {
-        applyRejectedMarkerChips(bodyEl, agentPrepared.rejectedMarkers);
+        applyRejectedMarkerChips(bodyEl, agentPrepared.rejectedMarkers, m);
       }
       bodyEl.querySelectorAll("pre").forEach((preEl) => {
         const b = el("button", "copy", "복사");
