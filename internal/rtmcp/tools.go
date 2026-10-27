@@ -79,6 +79,9 @@ func (s *Server) tools() []tool {
 		}, "room", "rounds")},
 		{Name: "rt_requests", Description: "참가자 간 요청 목록과 상태 조회", InputSchema: object(map[string]schema{"room": id}, "room")},
 		{Name: "rt_cancel_request", Description: "참가자 간 요청 취소", InputSchema: object(map[string]schema{"room": id, "request": id}, "room", "request")},
+		{Name: "rt_forward", Description: "다른 방의 메시지(from_room의 seq)를 원문 그대로 이 방(room)에 전달. 오케스트레이터가 검수 원문 등을 읽고 다시 쓰지 않아도 됨(그 토큰을 아낌). target(좌석 id)을 주면 그 좌석에게만, 생략하면 활성 좌석 전원. 받는 좌석의 이력에는 출처(방 제목·방ID#seq·작성자)와 note(선택, 300자 이내 한 줄 메모)가 붙음. 원문 속 @멘션과 [[REQUEST]] 등 마커는 인용으로 보고 실행하지 않음. 작업 폴더 점유·대상 확인은 rt_post와 같음. 결과의 seq는 rt_wait의 after_seq로 씀", InputSchema: object(map[string]schema{
+			"room": id, "from_room": id, "seq": integer(1, nil), "target": id, "note": str,
+		}, "room", "from_room", "seq")},
 		{Name: "rt_cancel_turn", Description: "좌석의 실행 중인 턴 하나만 취소. 좌석은 켜진 채로 남아 이후 [[REQUEST]]·멘션·대기 턴을 계속 받음(웹의 '작업 중단'은 좌석까지 끔). 실행 중인 턴이 없으면 오류. 결과의 cancelled는 취소한 턴 id", InputSchema: object(map[string]schema{"room": id, "seat": id}, "room", "seat")},
 		{Name: "rt_apply_markers", Description: "오류로 끝난 좌석 답(seq)의 마커([[REQUEST]]·[[REQUEST_DONE]]·[[DECISION]]·[[ATTACH]])를 실행. 서버는 오류 턴의 마커를 스스로 처리하지 않고 시스템 안내로 알림. 답이 끝까지 쓰인 것을 확인했을 때만 호출(예: 답 뒤에 stream idle timeout). 한 번만 실행되며 결과의 message.requests가 새 요청", InputSchema: object(map[string]schema{"room": id, "seq": integer(1, nil)}, "room", "seq")},
 		{Name: "rt_decisions", Description: "결정 카드 목록 조회. status: proposed(좌석이 제안, 확정 대기)·active(안내문의 현재 결정)·superseded·dropped", InputSchema: object(map[string]schema{"room": id}, "room")},
@@ -195,6 +198,8 @@ type arguments struct {
 	Request      string             `json:"request"`
 	Seat         string             `json:"seat"`
 	Summary      bool               `json:"summary"`
+	FromRoom     string             `json:"from_room"`
+	Note         string             `json:"note"`
 	ID           string             `json:"id"`
 }
 
@@ -297,6 +302,14 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 			page.Requests = []json.RawMessage{}
 		}
 		return map[string]any{"requests": page.Requests}, nil
+	case "rt_forward":
+		var sent struct {
+			Seq int64 `json:"seq"`
+		}
+		if err := s.api(ctx, "POST", base+"/forward", map[string]any{"from_room": a.FromRoom, "seq": a.Seq, "target": a.Target, "note": a.Note}, &sent); err != nil {
+			return nil, err
+		}
+		return map[string]any{"seq": sent.Seq}, nil
 	case "rt_cancel_turn":
 		page, err := s.snapshot(ctx, a.Room, 0, 1)
 		if err != nil {

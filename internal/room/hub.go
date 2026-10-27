@@ -889,6 +889,12 @@ func (h *Hub) enabledIDs(rs *roomState) []string {
 // target addresses one agent; if that agent is running and can steer, the text
 // is injected live, otherwise a priority turn is queued.
 func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Message, error) {
+	return h.postUser(id, text, target, nil, attachmentIDs)
+}
+
+// postUser accepts a user message; fwd marks a forwarded copy (forward.go),
+// whose quoted @mentions are not parsed.
+func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentIDs []string) (*Message, error) {
 	text = strings.TrimSpace(text)
 	if text == "" && len(attachmentIDs) == 0 {
 		return nil, fmt.Errorf("빈 메시지")
@@ -923,8 +929,12 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 	m := rs.nextMessage("user", "user", text)
 	m.Attachments = attachments
 	m.Target = target
-	mentioned := append([]string{}, ParseParticipantMentions(text, rs.room.Participants)...)
+	mentioned := []string{}
+	if fwd == nil {
+		mentioned = append(mentioned, ParseParticipantMentions(text, rs.room.Participants)...)
+	}
 	m.Mentions = &mentioned
+	m.Forward = fwd
 	var liveRun *running
 	if target != "" && len(attachments) == 0 {
 		if run := rs.runningFor(target); run != nil && run.steer != nil && len(run.steer) < cap(run.steer) {

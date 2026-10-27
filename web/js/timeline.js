@@ -605,6 +605,15 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
     meta.push('<span class="who ' + esc(authorProvider(m.author)) + '">' + esc(who) + "</span>");
     meta.push(seqChipHtml(m));
     meta.push(...replyChipHtml(m));
+    if (m.forward) {
+      // A copy of another room's message (rt_forward): name where it came from.
+      const f = m.forward;
+      const src = "방 \"" + f.title + "\" #" + f.seq + " @" + f.author;
+      meta.push(
+        '<span class="badge forward-tag" title="' + esc("원문 그대로 전달됨 · " + f.room + "#" + f.seq + (f.note ? " · 메모: " + f.note : "")) + '">↪ 전달: ' + esc(src) + "</span>" +
+          (f.note ? '<span class="muted forward-note">' + esc(f.note) + "</span>" : "")
+      );
+    }
     if (m.kind === "user" && m.target) {
       const how = m.live ? "즉시 주입됨" : "다음 턴 전달";
       meta.push(

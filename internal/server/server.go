@@ -99,6 +99,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/session/open", s.openNativeSession)
 	s.mux.HandleFunc("DELETE /api/rooms/{id}", s.deleteRoom)
 	s.mux.HandleFunc("POST /api/rooms/{id}/messages", s.postMessage)
+	s.mux.HandleFunc("POST /api/rooms/{id}/forward", s.forwardMessage)
 	s.mux.HandleFunc("POST /api/rooms/{id}/attachments", s.uploadAttachment)
 	s.mux.HandleFunc("GET /api/rooms/{id}/attachments/{aid}", s.getAttachment)
 	s.mux.HandleFunc("POST /api/rooms/{id}/requests/{rid}/cancel", s.cancelRequest)
@@ -299,6 +300,30 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, err := s.hub.PostUser(r.PathValue("id"), body.Text, body.Target, body.Attachments...)
+	if errors.Is(err, room.ErrWorkspaceBusy) {
+		writeErr(w, 409, err)
+		return
+	}
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 201, m)
+}
+
+// forwardMessage copies another room's message here, text unchanged.
+func (s *Server) forwardMessage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		FromRoom string `json:"from_room"`
+		Seq      int64  `json:"seq"`
+		Target   string `json:"target"`
+		Note     string `json:"note"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	m, err := s.hub.Forward(r.PathValue("id"), body.FromRoom, body.Seq, body.Target, body.Note)
 	if errors.Is(err, room.ErrWorkspaceBusy) {
 		writeErr(w, 409, err)
 		return
