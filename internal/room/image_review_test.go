@@ -24,7 +24,7 @@ func TestQ1ReviewSignalBlock(t *testing.T) {
 		raw := "answer\n" + tail
 		msg := rs.nextMessage("agent", "codex", raw)
 		pr := &prepared{t: &Turn{}, p: r.Participants[0], msg: msg, requests: []string{"r1", "r2"}}
-		if err := h.finishMarkers(rs, pr, raw); err != nil {
+		if err := h.finishMarkers(rs, pr, raw, pr.msg.Status == "done"); err != nil {
 			t.Fatal(err)
 		}
 		if rs.request("r1").Status != "done" || rs.request("r2").Status != "rejected" {
@@ -219,7 +219,7 @@ func TestQ1ReviewRequestRejection(t *testing.T) {
 		rs := h.rooms[r.ID]
 		msg := rs.nextMessage("agent", "codex", tc.text)
 		pr := &prepared{t: &Turn{Reason: tc.reason}, p: r.Participants[0], msg: msg, opts: agent.RunOptions{Mode: agent.ModeChat}}
-		if err := h.finishMarkers(rs, pr, tc.text); err != nil {
+		if err := h.finishMarkers(rs, pr, tc.text, pr.msg.Status == "done"); err != nil {
 			t.Fatal(err)
 		}
 		if len(rs.requests) != 0 {

@@ -235,7 +235,7 @@ func TestReadOnly(t *testing.T) {
 		}
 		call(t, s, name, args)
 	}
-	for _, name := range []string{"rt_create_room", "rt_post", "rt_discuss", "rt_cancel_request", "rt_update_decision"} {
+	for _, name := range []string{"rt_create_room", "rt_post", "rt_discuss", "rt_cancel_request", "rt_update_decision", "rt_apply_markers"} {
 		if _, err := s.call(context.Background(), name, json.RawMessage(`{}`)); err == nil {
 			t.Fatalf("write exposed: %s", name)
 		}
@@ -565,7 +565,7 @@ func TestStdioProtocol(t *testing.T) {
 	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고") || !strings.Contains(text, "resume_after_seq를 after_seq로") || !strings.Contains(text, "사람에게 확인받는다") {
 		t.Fatal(initialized["instructions"])
 	}
-	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 13 {
+	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 14 {
 		t.Fatal(byID["list"])
 	}
 	content := byID["3"]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)
@@ -577,5 +577,22 @@ func TestStdioProtocol(t *testing.T) {
 	}
 	if !reflect.DeepEqual(codes, map[int]int{-32600: 4, -32700: 1, -32601: 1, -32602: 1}) {
 		t.Fatal(codes)
+	}
+}
+
+func TestApplyMarkersPostsSeq(t *testing.T) {
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Method != "POST" || r.URL.Path != "/api/rooms/r1/markers" || string(body) != `{"seq":27}` {
+			t.Errorf("%s %s %s", r.Method, r.URL.Path, body)
+		}
+		io.WriteString(w, `{"message":{"seq":27,"requests":["q1"]}}`)
+	}, false)
+	got := call(t, s, "rt_apply_markers", `{"room":"r1","seq":27}`)
+	if got["message"].(map[string]any)["requests"].([]any)[0] != "q1" {
+		t.Fatal(got)
+	}
+	if _, err := s.call(context.Background(), "rt_apply_markers", json.RawMessage(`{"room":"r1"}`)); err == nil {
+		t.Fatal("seq is required")
 	}
 }

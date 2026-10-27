@@ -18,7 +18,7 @@ func TestQ1R2RejectRequestsToUnfinishedPart(t *testing.T) {
 				msg := rs.nextMessage("agent", "claude", text)
 				turn := &Turn{ID: newID(), Agent: "claude", Reason: "mention", Cap: msg.Seq}
 				pr := &prepared{p: r.participant("claude"), t: turn, msg: msg}
-				if err := h.finishMarkers(rs, pr, text); err != nil {
+				if err := h.finishMarkers(rs, pr, text, pr.msg.Status == "done"); err != nil {
 					t.Fatal(err)
 				}
 				if len(rs.requests) != 0 || len(msg.Requests) != 0 {
@@ -111,7 +111,7 @@ func TestQ1R2ReleasedPartAcceptsRequests(t *testing.T) {
 		r.Work = &WorkPlan{Parts: []*Part{{ID: "p1", Seat: "codex", State: state}}}
 		msg := rs.nextMessage("agent", "claude", "[[REQUEST:@codex]] inspect")
 		pr := &prepared{p: r.participant("claude"), t: &Turn{Reason: "mention"}, msg: msg}
-		if err := h.finishMarkers(rs, pr, msg.Text); err != nil {
+		if err := h.finishMarkers(rs, pr, msg.Text, pr.msg.Status == "done"); err != nil {
 			t.Fatal(err)
 		}
 		if len(rs.requests) != 1 || rs.requests[0].Status != "pending" {

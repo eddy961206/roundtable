@@ -91,8 +91,10 @@ type Message struct {
 	NoticeMsg        string         `json:"notice_msg,omitempty"`    // reply whose marker was rejected
 	Attachments      []Attachment   `json:"attachments,omitempty"`
 	Requests         []string       `json:"requests,omitempty"`
-	Decisions        []string       `json:"decisions,omitempty"` // decision cards recorded by this reply's markers
-	Mentions         *[]string      `json:"mentions,omitempty"`  // nil: legacy; empty list: resolved without ordinary mentions
+	Decisions        []string       `json:"decisions,omitempty"`       // decision cards recorded by this reply's markers
+	PendingMarkers   int            `json:"pending_markers,omitempty"` // marker lines a failed turn left unapplied (Hub.ApplyMarkers)
+	MarkersApplied   bool           `json:"markers_applied,omitempty"` // a person applied this failed turn's markers: the answer counts as complete
+	Mentions         *[]string      `json:"mentions,omitempty"`        // nil: legacy; empty list: resolved without ordinary mentions
 	ID               string         `json:"id"`
 	Seq              int64          `json:"seq"`
 	TS               int64          `json:"ts"`

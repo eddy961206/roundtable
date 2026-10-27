@@ -78,6 +78,7 @@ func (s *Server) tools() []tool {
 		}, "room", "rounds")},
 		{Name: "rt_requests", Description: "참가자 간 요청 목록과 상태 조회", InputSchema: object(map[string]schema{"room": id}, "room")},
 		{Name: "rt_cancel_request", Description: "참가자 간 요청 취소", InputSchema: object(map[string]schema{"room": id, "request": id}, "room", "request")},
+		{Name: "rt_apply_markers", Description: "오류로 끝난 좌석 답(seq)의 마커([[REQUEST]]·[[REQUEST_DONE]]·[[DECISION]]·[[ATTACH]])를 실행. 서버는 오류 턴의 마커를 스스로 처리하지 않고 시스템 안내로 알림. 답이 끝까지 쓰인 것을 확인했을 때만 호출(예: 답 뒤에 stream idle timeout). 한 번만 실행되며 결과의 message.requests가 새 요청", InputSchema: object(map[string]schema{"room": id, "seq": integer(1, nil)}, "room", "seq")},
 		{Name: "rt_decisions", Description: "결정 카드 목록 조회. status: proposed(좌석이 제안, 확정 대기)·active(안내문의 현재 결정)·superseded·dropped", InputSchema: object(map[string]schema{"room": id}, "room")},
 		{Name: "rt_update_room", Description: "방 설정 수정. 생략한 항목은 그대로이며 하나 이상 필요. 작업 폴더(git worktree)가 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 workspace를 새 폴더로 바꾼다. 실행 중인 턴에는 다음 턴부터 적용", InputSchema: object(map[string]schema{
 			"room": id, "title": text, "note": str, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
@@ -184,6 +185,7 @@ type arguments struct {
 	Target       string             `json:"target"`
 	WaitSeconds  *int               `json:"wait_seconds"`
 	AfterSeq     int64              `json:"after_seq"`
+	Seq          int64              `json:"seq"`
 	MaxChars     int64              `json:"max_chars"`
 	Rounds       int                `json:"rounds"`
 	BlindFirst   *bool              `json:"blind_first"`
@@ -283,6 +285,10 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 			page.Requests = []json.RawMessage{}
 		}
 		return map[string]any{"requests": page.Requests}, nil
+	case "rt_apply_markers":
+		var result json.RawMessage
+		err := s.api(ctx, "POST", base+"/markers", map[string]any{"seq": a.Seq}, &result)
+		return result, err
 	case "rt_cancel_request":
 		var result json.RawMessage
 		err := s.api(ctx, "POST", base+"/requests/"+a.Request+"/cancel", map[string]any{}, &result)

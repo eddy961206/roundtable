@@ -1581,7 +1581,12 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if missingDiscussionSignal {
 		signal = "CONTINUE"
 	}
-	if msg.Status == "done" && t.Reason != "review" {
+	// A turn that wrote output had its prompt delivered even when the CLI then
+	// failed (e.g. a stream idle timeout after the answer). Advancing the cursor
+	// keeps a waiting turn for the same messages from doing the work again. A
+	// stop, or a failure before any output, leaves the messages unseen.
+	delivered := msg.Status == "done" || (msg.Status == "error" && rawText != "")
+	if delivered && t.Reason != "review" {
 		if pr.part != nil {
 			pr.part.LastSeen, pr.part.Unseen = pr.seen, pr.unseen
 		} else if pr.resetGen == rs.resetGen {
@@ -1590,6 +1595,8 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 				p.Brief = ""
 			}
 		}
+	}
+	if msg.Status == "done" && t.Reason != "review" {
 		if pr.bootstrap && t.Reason != "part" && pr.part.SessionID != "" && pr.stopGen == rs.stopGen {
 			replay := *t
 			replay.ID, replay.Status, replay.Created = newID(), "queued", nowMs()
@@ -1612,6 +1619,10 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			}
 		}
 	}
+	// A failed turn's markers wait for ApplyMarkers; count them so the room can say so.
+	if msg.Status == "error" && pr.part == nil && t.Reason != "discussion" && t.Reason != "review" {
+		msg.PendingMarkers = markerLines(rawText)
+	}
 	// D11: malformed output is not applied; allow one persisted correction per step.
 	var nextStep *ReviewStep
 	var outcome string
@@ -1629,7 +1640,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
 		msg.Status, msg.Error = "error", fmt.Sprintf("메시지 저장 실패: %v", err)
 	}
-	if err := h.finishMarkers(rs, pr, rawText); err != nil {
+	if err := h.finishMarkers(rs, pr, rawText, msg.Status == "done"); err != nil {
 		msg.Status, msg.Error = "error", fmt.Sprintf("첨부·요청 저장 실패: %v", err)
 	}
 	p.Turns++
@@ -1651,6 +1662,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		h.reportPersistenceError(rs, "메시지", err)
 	}
 	rs.broadcast("message", msg)
+	if msg.PendingMarkers > 0 {
+		h.addSystem(rs, fmt.Sprintf("@%s 턴 #%d이 오류로 끝나 답의 마커 %d개(요청·결정·첨부)를 처리하지 않음 · 답이 끝까지 쓰였다면 화면의 '마커 실행' 또는 rt apply_markers로 실행", p.ID, msg.Seq, msg.PendingMarkers))
+	}
 	if missingDiscussionSignal && msg.Status == "done" {
 		// No completion handler after this point can invalidate the recorded vote.
 		// A failed notice save reports its own storage error, not a failed answer.

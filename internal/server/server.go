@@ -102,6 +102,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/rooms/{id}/attachments", s.uploadAttachment)
 	s.mux.HandleFunc("GET /api/rooms/{id}/attachments/{aid}", s.getAttachment)
 	s.mux.HandleFunc("POST /api/rooms/{id}/requests/{rid}/cancel", s.cancelRequest)
+	s.mux.HandleFunc("POST /api/rooms/{id}/markers", s.applyMarkers)
 	s.mux.HandleFunc("GET /api/rooms/{id}/decisions", s.listDecisions)
 	s.mux.HandleFunc("POST /api/rooms/{id}/decisions", s.addDecision)
 	s.mux.HandleFunc("PATCH /api/rooms/{id}/decisions/{did}", s.patchDecision)

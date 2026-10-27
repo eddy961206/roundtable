@@ -165,9 +165,10 @@ func (h *Hub) addSeatNotice(rs *roomState, pr *prepared, kind, text string) erro
 	return nil
 }
 
-// Markers never run for an errored or interrupted response. Pending requests
-// claimed by this turn return to pending unless a valid terminal signal wins.
-func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
+// Markers run only when apply is set: for a done response, or when a person
+// applies a failed turn's markers (ApplyMarkers). Pending requests claimed by
+// this turn return to pending unless a valid terminal signal wins.
+func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string, apply bool) error {
 	msg := pr.msg
 	var processingErr error
 	reject := func(kind, marker, reason string) {
@@ -175,7 +176,7 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 			processingErr = err
 		}
 	}
-	if msg.Status == "done" {
+	if apply {
 		lines, signalStart := trailingSignals(raw)
 		for i, rawLine := range lines {
 			line := strings.TrimSpace(rawLine)
@@ -285,6 +286,73 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string) error {
 		}
 	}
 	return processingErr
+}
+
+// markerLines counts the lines finishMarkers would act on.
+func markerLines(text string) int {
+	n := 0
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[[REQUEST") || strings.HasPrefix(trimmed, "[[ATTACH") || strings.HasPrefix(trimmed, "[[DECISION") {
+			n++
+		}
+	}
+	return n
+}
+
+// ApplyMarkers runs the markers of a failed turn whose answer was complete
+// (e.g. the CLI timed out after writing it). A person or the orchestrator
+// decides that; the server never applies a failed turn's markers by itself.
+// Requests the seat still owes may be closed by its result markers.
+func (h *Hub) ApplyMarkers(roomID string, seq int64) (*Message, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	rs := h.rooms[roomID]
+	if rs == nil {
+		return nil, fmt.Errorf("방 없음")
+	}
+	var msg *Message
+	for _, m := range rs.msgs {
+		if m.Seq == seq {
+			msg = m
+		}
+	}
+	if msg == nil {
+		return nil, fmt.Errorf("메시지 없음: #%d", seq)
+	}
+	if msg.Kind != "agent" || msg.Status != "error" || msg.PendingMarkers == 0 {
+		return nil, fmt.Errorf("#%d은 처리하지 않은 마커가 남은 오류 턴이 아님", seq)
+	}
+	p := rs.room.participant(msg.Author)
+	if p == nil || p.Removed {
+		return nil, fmt.Errorf("#%d을 쓴 좌석이 없음", seq)
+	}
+	var owed []string
+	for _, r := range rs.requests {
+		if r.To == p.ID && r.Status == "pending" {
+			next := r
+			next.Status = "in_progress"
+			if err := h.saveRequest(rs, next); err != nil {
+				return nil, err
+			}
+			owed = append(owed, r.ID)
+		}
+	}
+	t := &Turn{Reason: msg.Reason}
+	pr := &prepared{t: t, p: p, msg: msg, requests: owed, stopGen: rs.stopGen, resetGen: rs.resetGen,
+		opts: agent.RunOptions{Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch}}
+	markerErr := h.finishMarkers(rs, pr, msg.Text, true)
+	n := msg.PendingMarkers
+	msg.PendingMarkers, msg.MarkersApplied = 0, true
+	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
+		return nil, h.reportPersistenceError(rs, "메시지", err)
+	}
+	rs.broadcast("message", msg)
+	h.addSystem(rs, fmt.Sprintf("@%s 오류 턴 #%d의 마커를 실행함 (마커 %d개 · 새 요청 %d · 결정 %d)", p.ID, seq, n, len(msg.Requests), len(msg.Decisions)))
+	h.chainMentions(rs, msg, t)
+	h.pump(rs)
+	h.saveRoom(rs)
+	return msg, markerErr
 }
 
 func ordinaryMentionText(text string) string {

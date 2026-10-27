@@ -248,7 +248,7 @@ func TestMarkersOnlyApplyToDoneAndModeBrief(t *testing.T) {
 		msg := rs.nextMessage("agent", "codex", "body")
 		msg.Status = status
 		pr := &prepared{p: r.Participants[0], t: &Turn{}, msg: msg, opts: agent.RunOptions{Mode: agent.ModeRead, Workspace: t.TempDir(), ScratchDir: h.scratch}}
-		if err := h.finishMarkers(rs, pr, "[[ATTACH:missing.png]]\n[[REQUEST:@claude]] do it"); err != nil {
+		if err := h.finishMarkers(rs, pr, "[[ATTACH:missing.png]]\n[[REQUEST:@claude]] do it", pr.msg.Status == "done"); err != nil {
 			t.Fatal(err)
 		}
 		if len(rs.requests) != 0 || len(msg.Attachments) != 0 || len(rs.msgs) != 1 {
@@ -309,7 +309,7 @@ func TestRequestResultMustBeLastAndBelongToReceiver(t *testing.T) {
 		}
 		msg := rs.nextMessage("agent", "claude", text)
 		pr := &prepared{t: &Turn{}, p: r.Participants[1], msg: msg, requests: []string{"r1"}}
-		if err := h.finishMarkers(rs, pr, text); err != nil {
+		if err := h.finishMarkers(rs, pr, text, pr.msg.Status == "done"); err != nil {
 			t.Fatal(err)
 		}
 		if rs.request("r1").Status != "pending" || rs.request("r2").Status != "in_progress" {

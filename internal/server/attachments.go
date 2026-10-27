@@ -58,6 +58,27 @@ func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, a.Name, time.UnixMilli(a.At), f)
 }
 
+// applyMarkers runs the markers of a failed turn whose answer was complete.
+func (s *Server) applyMarkers(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Seq int64 `json:"seq"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	msg, err := s.hub.ApplyMarkers(r.PathValue("id"), body.Seq)
+	if err != nil && msg == nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if err != nil { // applied, but a marker could not be stored; the room has the notice
+		writeJSON(w, 200, map[string]any{"message": msg, "error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": msg})
+}
+
 func (s *Server) cancelRequest(w http.ResponseWriter, r *http.Request) {
 	request, err := s.hub.CancelRequest(r.PathValue("id"), r.PathValue("rid"))
 	if err != nil {

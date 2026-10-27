@@ -494,6 +494,19 @@ function findPrevUserMessage(msgId) {
   return null;
 }
 
+async function applyMarkers(m, btn) {
+  if (!state.roomId) return;
+  if (!confirm("#" + m.seq + " 답이 끝까지 쓰였나요? 답 끝의 마커 " + m.pending_markers + "개(요청·결정·첨부)를 실행합니다.")) return;
+  btn.disabled = true;
+  try {
+    const res = await api("POST", "/api/rooms/" + state.roomId + "/markers", { seq: m.seq });
+    announce("#" + m.seq + " 마커 실행" + (res.error ? " (일부 실패: " + res.error + ")" : ""));
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+
 async function retryTurn(msgId, btn) {
   const m = state.messages.get(msgId);
   if (!m || !state.roomId) return;
@@ -760,6 +773,13 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
           rBtn.title = participantLabel(m.author) + "에게 직전 사용자 메시지를 다시 요청합니다";
           rBtn.onclick = () => retryTurn(m.id, rBtn);
           errBox.appendChild(rBtn);
+        }
+        if (m.pending_markers > 0) {
+          const mBtn = el("button", "retry-btn", "▶ 마커 실행 (" + m.pending_markers + "개)");
+          mBtn.type = "button";
+          mBtn.title = "오류로 끝난 답의 요청·결정·첨부 마커를 실행합니다. 답이 끝까지 쓰였는지 먼저 확인하세요.";
+          mBtn.onclick = () => applyMarkers(m, mBtn);
+          errBox.appendChild(mBtn);
         }
       }
       errSlot.appendChild(errBox);

@@ -298,8 +298,10 @@ func renderHistory(r *Room, history []*Message) string {
 	for i := len(history) - 1; i >= 0; i-- {
 		m := history[i]
 		line := fmt.Sprintf("[#%d %s] %s", m.Seq, speaker(m, r), strings.TrimSpace(m.Text))
-		if m.Status == "error" {
+		if m.Status == "error" && !m.MarkersApplied {
 			line = fmt.Sprintf("[#%d %s] (응답 실패: %s)", m.Seq, speaker(m, r), m.Error)
+		} else if m.Status == "error" {
+			line = fmt.Sprintf("[#%d %s] (CLI 오류 뒤 완료로 확인된 답) %s", m.Seq, speaker(m, r), strings.TrimSpace(m.Text))
 		}
 		total += len(line)
 		if total > maxHistoryChars {
