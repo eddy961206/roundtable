@@ -92,7 +92,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 
-`timed_out:true`는 대기 시간 초과이며 실행 취소가 아니다. 긴 대기를 쓸 때는 MCP 클라이언트의 도구 제한 시간도 그보다 길게 설정해야 한다. MCP의 `notifications/cancelled`는 해당 요청의 HTTP 조회와 대기만 취소한다. 클라이언트가 stdin을 닫으면 진행 중인 MCP 요청을 모두 취소하고 MCP 서버를 종료한다. 방에서 실행 중인 에이전트 턴은 취소하지 않는다. 대기 중에도 `ping`과 다른 도구 호출을 처리하며, 응답은 요청 id로 구분한다. MCP `initialize`의 instructions에는 두 규칙을 싣는다. `timed_out`이면 다시 보내지 말고 `rt_read`로 이어 읽는다. 이때 `after_seq`에는 `timed_out:true` 결과에만 붙는 `resume_after_seq`를 쓴다. 이 값은 보낸 seq와, 아직 `streaming`이거나 예산 밖으로 빠진 답 중 가장 작은 seq−1 가운데 작은 값이다. 빠진 답은 배열에 없어도 이 값에 들어간다. `live:true`면 기존 답의 seq가 보낸 seq보다 작으므로 보낸 seq를 그대로 쓰면 그 답이 빠진다. 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.
+`timed_out:true`는 대기 시간 초과이며 실행 취소가 아니다. 긴 대기를 쓸 때는 MCP 클라이언트의 도구 제한 시간도 그보다 길게 설정해야 한다. MCP의 `notifications/cancelled`는 해당 요청의 HTTP 조회와 대기만 취소한다. 클라이언트가 stdin을 닫으면 진행 중인 MCP 요청을 모두 취소하고 MCP 서버를 종료한다. 방에서 실행 중인 에이전트 턴은 취소하지 않는다. 대기 중에도 `ping`과 다른 도구 호출을 처리하며, 응답은 요청 id로 구분한다. MCP `initialize`의 instructions에는 핵심 규칙(작업 하나에 방 하나, 좌석 id로 부르기, `rt_wait` 사용, 흐름을 바꾸는 호출은 사람 확인)과 [에이전트 안내서](docs/AGENT_GUIDE.md) 경로를 싣는다. 그중 `timed_out` 규칙은 이렇다. `timed_out`이면 다시 보내지 말고 `rt_read`로 이어 읽는다. 이때 `after_seq`에는 `timed_out:true` 결과에만 붙는 `resume_after_seq`를 쓴다. 이 값은 보낸 seq와, 아직 `streaming`이거나 예산 밖으로 빠진 답 중 가장 작은 seq−1 가운데 작은 값이다. 빠진 답은 배열에 없어도 이 값에 들어간다. `live:true`면 기존 답의 seq가 보낸 seq보다 작으므로 보낸 seq를 그대로 쓰면 그 답이 빠진다. 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.
 
 `rt_list_rooms`는 최근 갱신순으로 `limit`개(기본 20, 최대 100)를 반환한다. 방마다 id·제목·모드·실행 여부와 좌석의 id·이름·공급사·모델·`enabled`만 담는다. 삭제된 좌석은 호출할 수 없으므로 빼고, 꺼진 좌석은 `enabled:false`로 남긴다. 좌석 역할 같은 나머지 정보는 방 화면에서 본다.
 
@@ -127,7 +127,7 @@ roundtable rt wait --rooms <방A>:<seq>,<방B>:<seq> --timeout_seconds 3600   # 
 roundtable rt usage --rooms <방A>,<방B>                                       # 방별·좌석별 토큰 합계
 ```
 
-결과는 stdout에 한 줄 JSON으로 나온다. 실패하면 사유를 stderr에 쓰고, 검증·실행 실패는 종료 코드 1, 명령 형식 오류는 2를 돌려준다. 정수는 `--rounds 2`, 참·거짓은 `--blind_first false`, 배열은 JSON(`--participants '[{"provider":"agy"}]'`)으로 쓴다. 다른 서버는 `roundtable rt --url http://127.0.0.1:8791 ...`로 지정한다(loopback만 허용). 에이전트에게 사용법을 알려 줄 때는 [skills/roundtable/SKILL.md](skills/roundtable/SKILL.md)를 스킬로 설치하거나 지침에 붙인다.
+결과는 stdout에 한 줄 JSON으로 나온다. 실패하면 사유를 stderr에 쓰고, 검증·실행 실패는 종료 코드 1, 명령 형식 오류는 2를 돌려준다. 정수는 `--rounds 2`, 참·거짓은 `--blind_first false`, 배열은 JSON(`--participants '[{"provider":"agy"}]'`)으로 쓴다. 다른 서버는 `roundtable rt --url http://127.0.0.1:8791 ...`로 지정한다(loopback만 허용). 에이전트에게 사용법을 알려 줄 때는 [skills/roundtable/SKILL.md](skills/roundtable/SKILL.md)를 스킬로 설치하거나 지침에 붙인다. 이 짧은 진입점은 오케스트레이션 플레이북·좌석 전달 규칙·공급사별 능력표·실패 대처를 담은 [에이전트 안내서](docs/AGENT_GUIDE.md)로 이어진다.
 
 등록 명령은 각 CLI의 `mcp add --help`와 [Codex 공식 MCP 문서](https://developers.openai.com/codex/mcp)를 기준으로 확인했다. stdio는 기존 `gitea-mcp`와 같은 줄 단위 JSON-RPC이며 [MCP stdio 규격](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#stdio)을 따른다.
 

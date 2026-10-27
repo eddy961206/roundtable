@@ -20,6 +20,16 @@ import (
 
 const protocolVersion = "2024-11-05"
 
+// instructions is what an MCP-only agent learns before reading any tool
+// description; the full guide lives in docs/AGENT_GUIDE.md.
+const instructions = "Roundtable: 서로 다른 공급사의 AI CLI 좌석이 한 방에서 일하는 로컬 서버의 HTTP API.\n" +
+	"- 작업 하나에 방 하나를 쓴다. 작성 좌석과 다른 공급사의 검수 좌석을 같은 방에 두고 [[REQUEST:@좌석ID]]로 직접 주고받게 한다. 오케스트레이터는 검수 원문을 옮기지 말고 판정 줄과 head만 읽는다. 끝난 방에는 더 보내지 않는다.\n" +
+	"- 좌석은 이름이 아니라 id로 부른다. target 없이 보낸 메시지는 켜진 좌석 전원을 부른다.\n" +
+	"- 여러 방은 wait_seconds 없이 rt_post하고 받은 seq로 rt_wait(rooms=방:seq,...)를 부른다. 폴링하지 않는다.\n" +
+	"- rt_post의 timed_out은 대기만 종료하며 실행 중인 턴을 취소하지 않는다. timed_out이면 같은 메시지를 다시 보내지 말고 결과의 resume_after_seq를 after_seq로 주어 rt_read로 이어 읽는다(live:true면 기존 답의 seq가 보낸 seq보다 작아 보낸 seq로는 그 답이 빠진다).\n" +
+	"- 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.\n" +
+	"- 좌석 추가·max_chain·좌석 켜기는 HTTP 전용이다. 기능 색인·전달 규칙·공급사별 능력·실패 대처는 Roundtable 저장소의 docs/AGENT_GUIDE.md(https://github.com/eddy961206/roundtable/blob/main/docs/AGENT_GUIDE.md)를 읽는다."
+
 type Server struct {
 	base     string
 	readOnly bool
@@ -245,7 +255,7 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 			"protocolVersion": protocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "roundtable", "version": "1"},
-			"instructions":    "Roundtable HTTP API. rt_post의 timed_out은 대기만 종료하며 실행 중인 턴을 취소하지 않는다. timed_out이면 같은 메시지를 다시 보내지 말고 결과의 resume_after_seq를 after_seq로 주어 rt_read로 이어 읽는다(live:true면 기존 답의 seq가 보낸 seq보다 작아 보낸 seq로는 그 답이 빠진다).\n사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.",
+			"instructions":    instructions,
 		}, nil
 	case "ping":
 		return map[string]any{}, nil
