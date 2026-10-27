@@ -17,13 +17,23 @@ func roomIn(t *testing.T, h *Hub, title, mode, dir string) *Room {
 	return r
 }
 
+// gitTree is a temporary folder that is a git work tree (a .git entry marks it).
+func gitTree(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // 2026-10-27: a reviewer ran in the worktree an author was still changing, so the
 // reviewed commit and the files on disk differed. Two rooms on one folder may not
 // run together when either writes; posting is refused with the busy room named,
 // and turns already queued wait until that room is done.
 func TestWorkspaceBusyRefusesPostAndWaitsQueuedTurns(t *testing.T) {
 	h, _, ps := controlledHub(t, "codex")
-	dir := t.TempDir()
+	dir := gitTree(t)
 	writer := roomIn(t, h, "작성 방", "write", dir)
 	reviewer := roomIn(t, h, "검수 방", "read", dir)
 	if _, err := h.PostUser(writer.ID, "write it", ""); err != nil {
@@ -63,9 +73,50 @@ func TestWorkspaceBusyRefusesPostAndWaitsQueuedTurns(t *testing.T) {
 	waitIdle(t, h, reviewer.ID)
 }
 
+// 2026-10-27: VMS-next rooms all use the worktrees root (no .git) as their
+// folder and work in different git worktrees below it, so they must run
+// together. Only a folder inside a git work tree is locked.
+func TestWorkspaceOutsideGitIsShared(t *testing.T) {
+	h, _, ps := controlledHub(t, "codex")
+	dir := t.TempDir() // a folder of worktrees, not a work tree itself
+	a := roomIn(t, h, "A", "write", dir)
+	b := roomIn(t, h, "B", "write", dir)
+	if _, err := h.PostUser(a.ID, "work", ""); err != nil {
+		t.Fatal(err)
+	}
+	first := nextCall(t, ps[0])
+	if _, err := h.PostUser(b.ID, "work too", ""); err != nil {
+		t.Fatalf("rooms on a folder outside git must run together: %v", err)
+	}
+	second := nextCall(t, ps[0])
+	finishCall(first, "done")
+	finishCall(second, "done")
+	waitIdle(t, h, a.ID)
+	waitIdle(t, h, b.ID)
+
+	// The same two write rooms on a git work tree still exclude each other,
+	// also when the folder is a subfolder of the tree.
+	tree := gitTree(t)
+	sub := filepath.Join(tree, "pkg")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c := roomIn(t, h, "C", "write", sub)
+	d := roomIn(t, h, "D", "write", sub)
+	if _, err := h.PostUser(c.ID, "work", ""); err != nil {
+		t.Fatal(err)
+	}
+	running := nextCall(t, ps[0])
+	if _, err := h.PostUser(d.ID, "work too", ""); !errors.Is(err, ErrWorkspaceBusy) {
+		t.Fatalf("two write rooms in one git work tree: %v", err)
+	}
+	finishCall(running, "done")
+	waitIdle(t, h, c.ID)
+}
+
 func TestWorkspaceBusyOnlyWhenOneWritesInTheSameFolder(t *testing.T) {
 	h, _, ps := controlledHub(t, "codex")
-	dir := t.TempDir()
+	dir := gitTree(t)
 	sub := filepath.Join(dir, "wt")
 	if err := os.MkdirAll(sub, 0o700); err != nil {
 		t.Fatal(err)

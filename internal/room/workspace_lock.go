@@ -3,6 +3,7 @@ package room
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -12,8 +13,9 @@ import (
 
 // ErrWorkspaceBusy refuses work for a folder another room is running in when
 // either room writes (docs/다중에이전트_도구조사_20261027.md item 3). Only the
-// exact same folder counts: a room on a parent folder (e.g. a worktrees root)
-// cannot be told apart by path and is left to the orchestrator's claims.
+// exact same folder inside a git work tree counts. A folder outside git, such
+// as a worktrees root that rooms share while each works in its own worktree
+// below it, is never locked; that is left to the orchestrator's claims.
 var ErrWorkspaceBusy = errors.New("작업 폴더 사용 중")
 
 func workspaceKey(r *Room) string {
@@ -21,10 +23,28 @@ func workspaceKey(r *Room) string {
 		return ""
 	}
 	k := filepath.Clean(r.Workspace)
+	if !inGitWorkTree(k) {
+		return ""
+	}
 	if runtime.GOOS == "windows" {
 		k = strings.ToLower(k)
 	}
 	return k
+}
+
+// inGitWorkTree tells whether dir or a folder above it has a .git entry (a
+// directory, or the file a linked worktree has).
+func inGitWorkTree(dir string) bool {
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }
 
 // workspaceRival is another room with a running turn in rs's folder that rs may

@@ -11,7 +11,7 @@ import (
 
 func TestWorkspaceRivalDeletedWakesWaiters(t *testing.T) {
 	h, _, ps := controlledHub(t, "codex")
-	dir := t.TempDir()
+	dir := gitTree(t)
 	writer := roomIn(t, h, "작성 방", "write", dir)
 	reviewer := roomIn(t, h, "검수 방", "read", dir)
 	if _, err := h.PostUser(writer.ID, "write it", ""); err != nil {
@@ -36,7 +36,7 @@ func TestWorkspaceRivalDeletedWakesWaiters(t *testing.T) {
 
 func TestWorkspaceRivalIgnoresTurnsOutsideTheRoomFolder(t *testing.T) {
 	h, _, _ := controlledHub(t, "codex")
-	dir := t.TempDir()
+	dir := gitTree(t)
 	a := roomIn(t, h, "A", "write", dir)
 	b := roomIn(t, h, "B", "read", dir)
 	h.mu.Lock()
