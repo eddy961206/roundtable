@@ -2,6 +2,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"roundtable/internal/agent"
 	"roundtable/internal/room"
@@ -143,9 +145,19 @@ func writeErr(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, map[string]string{"error": err.Error()})
 }
 
+// decode reads one JSON value from the request body. encoding/json would turn
+// bytes that are not UTF-8 (e.g. an inline curl argument in a Windows console
+// code page) into U+FFFD and store the damage, so such a body is refused.
 func decode(r *http.Request, v any) error {
 	defer r.Body.Close()
-	return json.NewDecoder(http.MaxBytesReader(nil, r.Body, 4<<20)).Decode(v)
+	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 4<<20))
+	if err != nil {
+		return err
+	}
+	if !utf8.Valid(body) {
+		return errors.New("요청 본문이 UTF-8이 아님: 한글 등은 UTF-8로 저장한 파일을 curl --data-binary @파일로 보내")
+	}
+	return json.NewDecoder(bytes.NewReader(body)).Decode(v)
 }
 
 func (s *Server) config(w http.ResponseWriter, r *http.Request) {

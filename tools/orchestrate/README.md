@@ -14,6 +14,7 @@ roundtable 방(작성·검수 좌석)과 Gitea PR·리뷰를 오케스트레이�
 - **제품 코드 PR에는 자동 병합을 쓰지 않는다.** CI 통과·검수 방 승인은 병합 근거가 아니다. 상대 개발자가 승인한 것을 확인한 뒤 사람이 손으로 병합한다. `ci_wait.sh`는 CI 상태만 알려 준다.
 - **`rt wait`에는 after_seq를 준다.** `rtwait.sh`는 `방:seq` 형식만 받는다. seq는 `rt post` 결과의 `seq`다. after_seq를 빼면 서버는 대기를 시작한 뒤 생긴 답만 센다. 그래서 대기 전에 이미 도착한 답은 보이지 않고 timeout까지 기다린다.
 - Gitea 게시물에 `Generated with`·`Co-Authored-By`·대리 작성 표식을 넣지 않는다. `glint.py`가 막는다.
+- Windows에서 한글이 든 JSON은 인라인 인자(`curl -d '{...}'`) 대신 UTF-8로 저장한 파일을 `curl --data-binary @파일`로 보낸다. 인라인 인자는 콘솔 코드 페이지 바이트로 넘어갈 수 있다. roundtable 서버는 UTF-8이 아닌 본문을 400으로 거절한다.
 - 토큰을 이 폴더·설정 파일·명령 인자에 넣지 않는다. `tea`는 자기 로그인 설정을, `git push`는 Git Credential Manager를 쓴다.
 - 한 worktree에는 한 번에 한 방만 작업을 보낸다. 작성 방이 실행 중이면 검수를 보내지 않는다. 작성 방 workspace가 상위 폴더면 `worktree_claims.py claim`으로 점유를 등록한다.
 - roundtable 자체를 고칠 때는 저장소의 [동시 작업 규칙](../../CONTRIBUTING.md)을 따른다. 세션마다 worktree·브랜치를 쓴다. main에는 시험 통과 뒤 fast-forward로만 올린다. 서버는 `roundtable install`로 바이너리를 바꾸고 `roundtable restart`로만 재기동한다.
