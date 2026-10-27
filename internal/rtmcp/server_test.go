@@ -189,6 +189,16 @@ func TestInputValidationDoesNotCallHTTP(t *testing.T) {
 	}
 }
 
+// A range error names the accepted bounds so a script can fix its argument
+// instead of mistaking the failure for an empty result.
+func TestIntegerRangeErrorNamesBounds(t *testing.T) {
+	s := newHTTP(t, func(http.ResponseWriter, *http.Request) { t.Error("invalid input reached HTTP") }, false)
+	_, err := s.call(context.Background(), "rt_list_rooms", json.RawMessage(`{"limit":200}`))
+	if err == nil || !strings.Contains(err.Error(), "(1~100)") {
+		t.Fatalf("want bounds in range error, got %v", err)
+	}
+}
+
 func TestReadOnly(t *testing.T) {
 	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {

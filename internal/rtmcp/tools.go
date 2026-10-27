@@ -145,7 +145,7 @@ func (s schema) validate(value any, path string) error {
 		}
 		v, err := n.Int64()
 		if err != nil || (s.Minimum != nil && v < *s.Minimum) || (s.Maximum != nil && v > *s.Maximum) {
-			return bad("정수 허용 범위를 벗어남")
+			return bad("정수 허용 범위를 벗어남" + s.rangeHint())
 		}
 	case "boolean":
 		if _, ok := value.(bool); !ok {
@@ -305,4 +305,18 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 		return result, err
 	}
 	return nil, fmt.Errorf("알 수 없는 도구: %s", name)
+}
+
+// rangeHint names the accepted bounds so a caller can correct the value
+// without reading the schema (for example list_rooms limit).
+func (s schema) rangeHint() string {
+	switch {
+	case s.Minimum != nil && s.Maximum != nil:
+		return fmt.Sprintf(" (%d~%d)", *s.Minimum, *s.Maximum)
+	case s.Minimum != nil:
+		return fmt.Sprintf(" (%d 이상)", *s.Minimum)
+	case s.Maximum != nil:
+		return fmt.Sprintf(" (%d 이하)", *s.Maximum)
+	}
+	return ""
 }

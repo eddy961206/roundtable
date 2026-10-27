@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1520,6 +1521,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if err == nil {
 		err = pr.inputErr
 	}
+	if err == nil {
+		err = workspaceMissing(opts)
+	}
 	if err == nil && len(opts.Images) > 0 && p.Provider != "codex" && p.Provider != "claude" && p.Provider != "agy" {
 		err = fmt.Errorf("%s 공급사의 이미지 전달은 지원하지 않음", p.Provider)
 	}
@@ -1916,4 +1920,17 @@ func (h *Hub) SetMCP(m *agent.MCPServer) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.mcp = m
+}
+
+// workspaceMissing reports a room or seat folder that disappeared after the
+// room was created (for example a removed git worktree), naming the folder
+// instead of letting the CLI fail with an OS process-start error.
+func workspaceMissing(o agent.RunOptions) error {
+	if o.Mode == agent.ModeChat || o.Workspace == "" {
+		return nil
+	}
+	if info, err := os.Stat(o.Workspace); err == nil && info.IsDir() {
+		return nil
+	}
+	return fmt.Errorf("작업 폴더가 없어 실행하지 않았어: %s (지워졌거나 옮겨졌으면 같은 경로에 다시 만들거나 새 방을 만들어)", o.Workspace)
 }
