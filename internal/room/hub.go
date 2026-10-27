@@ -1300,27 +1300,28 @@ func (h *Hub) pump(rs *roomState) {
 
 // prepared contains a prompt rendered from live messages up to the turn's cap.
 type prepared struct {
-	started     time.Time
-	notices     []*Message
-	requests    []string
-	inputErr    error
-	forkCost    float64 // the base session's running cost; a fork's reported cost includes it
-	t           *Turn
-	p           *Participant
-	seen        int64
-	unseen      []int64
-	brief       string
-	stopGen     int
-	resetGen    int
-	prov        agent.Provider
-	msg         *Message
-	opts        agent.RunOptions
-	ctx         context.Context
-	cancel      context.CancelFunc
-	part        *Part // the turn runs in this part's worktree (D9, review)
-	reviewer    bool  // fresh reviewer session that must not be kept (D10)
-	handoffFrom int64 // HistoryFrom when the turn was built; a delivered turn clears it
-	bootstrap   bool  // first part turn contains plan context only
+	started        time.Time
+	notices        []*Message
+	requests       []string
+	inputErr       error
+	forkCost       float64 // the base session's running cost; a fork's reported cost includes it
+	t              *Turn
+	p              *Participant
+	seen           int64
+	unseen         []int64
+	brief          string
+	stopGen        int
+	resetGen       int
+	prov           agent.Provider
+	msg            *Message
+	opts           agent.RunOptions
+	ctx            context.Context
+	cancel         context.CancelFunc
+	part           *Part  // the turn runs in this part's worktree (D9, review)
+	reviewer       bool   // fresh reviewer session that must not be kept (D10)
+	handoffFrom    int64  // HistoryFrom when the turn was built; only a done turn ends the handoff
+	pendingSession string // session a post-handoff turn reported, committed only when it is done
+	bootstrap      bool   // first part turn contains plan context only
 }
 
 // buildTurn renders a prompt without reserving a participant. Caller holds h.mu.
@@ -1342,13 +1343,12 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	if t.Reason == "part" {
 		return nil // the part left working/fixing before its turn started
 	}
-	// After a handoff every turn starts a new session from the summary until
-	// one is delivered (handoff.go); a partial session a failed turn left is dropped.
-	first := p.SessionID == "" || p.HistoryFrom > 0
-	sessionID := p.SessionID
+	first := p.SessionID == ""
 	cap := rs.historyCap(t)
 	if p.HistoryFrom > 0 {
-		sessionID, cap = "", max(cap, p.HistoryFrom)
+		// Until a turn after the handoff is done the seat has no session
+		// (handoff.go); that turn reads at least up to the summary.
+		cap = max(cap, p.HistoryFrom)
 	}
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
 	if len(hist) == 0 && t.Reason != "discussion" && t.Reason != "handoff" && len(rs.pendingNotices(p.ID, "")) == 0 {
@@ -1371,7 +1371,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	if t.Reason == "handoff" {
 		prompt += "\n\n" + t.prompt
 	}
-	opts := agent.RunOptions{Prompt: prompt, SessionID: sessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
+	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
 	h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, handoffFrom: p.HistoryFrom}
 	if forked {
@@ -1381,6 +1381,9 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 			pr.opts.Prompt = forkMovedNote(p.Fork.Dir, sessionDir(rs.room)) + pr.opts.Prompt
 		}
 		pr.forkCost, pr.inputErr = h.forkBaseCost(p.Fork)
+		if pr.inputErr != nil && p.HistoryFrom > 0 {
+			pr.inputErr = fmt.Errorf("%w · rt handoff --fresh true로 기반 없이 인계 요약부터 시작할 수 있음", pr.inputErr)
+		}
 	}
 	return pr
 }
@@ -1466,6 +1469,8 @@ func (h *Hub) keepSession(rs *roomState, pr *prepared, id string) {
 	case pr.reviewer:
 	case pr.part != nil:
 		pr.part.SessionID = id
+	case pr.handoffFrom > 0:
+		pr.pendingSession = id
 	case pr.resetGen == rs.resetGen:
 		pr.p.SessionID = id
 	}
@@ -1683,14 +1688,19 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	// keeps a waiting turn for the same messages from doing the work again. A
 	// stop, or a failure before any output, leaves the messages unseen.
 	delivered := msg.Status == "done" || (msg.Status == "error" && rawText != "")
+	if pr.handoffFrom > 0 && pr.part == nil {
+		// The first turn after a handoff commits all or nothing: only a done
+		// turn makes its session the seat's and ends the handoff (handoff.go).
+		delivered = msg.Status == "done" && pr.pendingSession != "" && pr.resetGen == rs.resetGen && p.HistoryFrom == pr.handoffFrom
+		if delivered {
+			p.SessionID, p.HistoryFrom = pr.pendingSession, 0
+		}
+	}
 	if delivered && t.Reason != "review" {
 		if pr.part != nil {
 			pr.part.LastSeen, pr.part.Unseen = pr.seen, pr.unseen
 		} else if pr.resetGen == rs.resetGen {
 			p.LastSeen, p.Unseen, p.Brief = pr.seen, pr.unseen, pr.brief
-			if pr.handoffFrom > 0 && p.HistoryFrom == pr.handoffFrom {
-				p.HistoryFrom = 0 // the new session now holds the summary
-			}
 			if compacted { // the summary may have dropped the brief; send it again next turn
 				p.Brief = ""
 			}
@@ -1890,6 +1900,11 @@ func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, part
 			seen = m.Seq
 		}
 		if (m.Target != "" && m.Target != p.ID) || (!first && (m.Author == p.ID || (m.Live && m.Part == partID))) {
+			continue
+		}
+		if p.HistoryFrom > 0 && m.Author == p.ID && m.Seq > p.HistoryFrom {
+			// Own replies after the summary are failed attempts (a done one
+			// ends the handoff); the retry does not read them as answered.
 			continue
 		}
 		if m.Status == "streaming" {

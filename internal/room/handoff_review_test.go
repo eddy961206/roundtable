@@ -309,3 +309,65 @@ func TestHandoffRefusedWithQueuedTurn(t *testing.T) {
 	finishCall(nextCall(t, ps[0]), "ok")
 	waitIdle(t, h, r.ID)
 }
+
+// Recheck 1·3: a post-handoff turn that fails (with or without a session, with
+// or without partial output) leaves the seat waiting to start from the summary;
+// the failed attempt's own text is not fed back as history.
+func TestFailedPostHandoffTurnKeepsSummaryStart(t *testing.T) {
+	for _, withSessionEvent := range []bool{true, false} {
+		h, r, ps := controlledHub(t, "codex")
+		withSession(t, h, r.ID, ps[0], "codex")
+		handedOff(t, h, r, ps[0], "codex", "SUMMARY")
+		postQueueMessage(t, h, r.ID, "첫 일", "codex")
+		c := nextCall(t, ps[0])
+		if withSessionEvent {
+			c.emit(agent.Event{Kind: agent.KindSession, Text: "partial"})
+		}
+		c.result <- controlledResult{text: "HALF-ANSWER", err: errors.New("stream idle timeout")}
+		waitIdle(t, h, r.ID)
+		if s := seatOf(t, h, r.ID, "codex"); s.SessionID != "" || s.HistoryFrom == 0 {
+			t.Fatalf("session=%v: a failed post-handoff turn commits nothing: %+v", withSessionEvent, s)
+		}
+		postQueueMessage(t, h, r.ID, "다시", "codex")
+		next := nextCall(t, ps[0])
+		if next.opts.SessionID != "" || !strings.Contains(next.opts.Prompt, "SUMMARY") || strings.Contains(next.opts.Prompt, "HALF-ANSWER") || strings.Contains(next.opts.Prompt, "stream idle timeout") || strings.Contains(next.opts.Prompt, "준비 codex") {
+			t.Fatalf("session=%v %q\n%s", withSessionEvent, next.opts.SessionID, next.opts.Prompt)
+		}
+		finishCall(next, "ok")
+		waitIdle(t, h, r.ID)
+		if s := seatOf(t, h, r.ID, "codex"); s.SessionID != "codex-session" || s.HistoryFrom != 0 {
+			t.Fatalf("a done turn commits the new session: %+v", s)
+		}
+	}
+}
+
+// Recheck 2: the base room goes away after a fork seat handed off; fresh drops
+// the base and the seat starts from its summary.
+func TestFreshDropsDeletedBaseAfterHandoff(t *testing.T) {
+	h, r, ps := controlledHub(t, "codex")
+	base, err := h.CreateRoom(RoomSpec{Title: "기반", Mode: r.Mode, Workspace: r.Workspace, Participants: []string{"codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.rooms[r.ID].room.participant("codex").Fork = &ForkSource{Room: base.ID, Seat: "codex", Session: "base-s", Dir: sessionDir(r)}
+	h.mu.Unlock()
+	postQueueMessage(t, h, r.ID, "작업", "codex")
+	finishCall(nextCall(t, ps[0]), "done")
+	waitIdle(t, h, r.ID)
+	handedOff(t, h, r, ps[0], "codex", "SUMMARY")
+	if err := h.DeleteRoom(base.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Handoff(r.ID, "codex", "", true); err != nil {
+		t.Fatalf("fresh must free the seat: %v", err)
+	}
+	noMoreCalls(t, ps[0]) // the summary is already written
+	postQueueMessage(t, h, r.ID, "다음", "codex")
+	next := nextCall(t, ps[0])
+	if next.opts.ForkSession != "" || next.opts.SessionID != "" || !strings.Contains(next.opts.Prompt, "SUMMARY") {
+		t.Fatalf("%+v\n%s", next.opts.ForkSession, next.opts.Prompt)
+	}
+	finishCall(next, "ok")
+	waitIdle(t, h, r.ID)
+}

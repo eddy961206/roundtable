@@ -20,9 +20,10 @@ import (
 //   - The request is the turn's own instruction, not a room message, so a
 //     failed handoff leaves nothing behind for the next turn.
 //   - The handoff turn takes no steer, requests or markers.
-//   - HistoryFrom stays set until a later turn is delivered; until then every
-//     turn starts a new session from the summary (and the messages still
-//     unseen at the switch), whatever partial session a failed turn left.
+//   - HistoryFrom stays set until a later turn is done; until then every turn
+//     starts a new session from the summary (and the messages still unseen at
+//     the switch). A failed attempt commits no session or cursor, and its own
+//     text is not fed back. fresh on a handed-off seat only drops the base.
 
 const handoffRequest = "이번 턴은 인계 요약 턴이야. 이 세션을 정리하고 새 세션으로 넘기려 해. 다음 세션이 이 대화 없이 이어서 일할 수 있게 인계 요약을 써 줘. " +
 	"들어갈 것: 확인한 동작과 근거 위치(파일:줄·커밋), 결정한 것, 남은 위험·미해결, 진행 중인 작업 상태(브랜치·커밋·바꾼 파일), 다음에 할 일. " +
@@ -48,6 +49,19 @@ func (h *Hub) Handoff(roomID, seat, note string, fresh bool) (*Message, error) {
 	p := rs.room.participant(seat)
 	if p == nil || p.Removed || !p.Enabled {
 		return nil, fmt.Errorf("활성 좌석 없음: %s", seat)
+	}
+	if fresh && p.HistoryFrom > 0 && p.Fork != nil && rs.runningFor(seat) == nil {
+		// Already handed off, but the base can no longer be (or should not be)
+		// forked: drop it; the next turn starts from the same summary.
+		p.Fork = nil
+		h.saveRoom(rs)
+		rs.broadcast("participant", p)
+		m, err := h.addSystem(rs, fmt.Sprintf("@%s 기반 포크를 버림 · 다음 턴은 인계 요약 #%d부터 기반 없이 새 세션으로 시작", seat, p.HistoryFrom))
+		if err != nil {
+			return nil, err
+		}
+		mc := *m
+		return &mc, nil
 	}
 	if why := rs.handoffBlocked(h, p, fresh); why != "" {
 		return nil, fmt.Errorf("@%s 인계 거절: %s", seat, why)
