@@ -18,6 +18,7 @@ import (
 
 	"roundtable/internal/agent"
 	"roundtable/internal/room"
+	"roundtable/internal/update"
 )
 
 type Server struct {
@@ -26,6 +27,7 @@ type Server struct {
 	web     fs.FS
 	mux     *http.ServeMux
 	stopped chan struct{} // closed once POST /api/shutdown closed the hub
+	updates interface{ Status() update.Status }
 }
 
 func New(hub *room.Hub, reg *agent.Registry, web fs.FS) *Server {
@@ -74,6 +76,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) routes() {
 	s.mux.Handle("GET /", staticFiles(s.web))
 	s.mux.HandleFunc("GET /api/config", s.config)
+	s.mux.HandleFunc("GET /api/version", s.version)
 	s.mux.HandleFunc("GET /api/providers", s.providers)
 	s.mux.HandleFunc("POST /api/providers/versions", s.refreshVersions)
 	s.mux.HandleFunc("GET /api/role-presets", s.rolePresets)
@@ -148,6 +151,18 @@ func decode(r *http.Request, v any) error {
 func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 	wd, _ := os.Getwd()
 	writeJSON(w, 200, map[string]any{"default_workspace": wd, "version": Version, "max_participants": room.MaxParticipants})
+}
+
+// SetUpdates attaches the update checker read by GET /api/version. Call it
+// before serving; without it the endpoint reports state "off".
+func (s *Server) SetUpdates(u interface{ Status() update.Status }) { s.updates = u }
+
+func (s *Server) version(w http.ResponseWriter, r *http.Request) {
+	if s.updates == nil {
+		writeJSON(w, 200, update.Status{State: "off", Running: update.ReadBuild(), Commits: []update.Commit{}})
+		return
+	}
+	writeJSON(w, 200, s.updates.Status())
 }
 
 // Version is stamped at build time with -ldflags "-X roundtable/internal/server.Version=…".

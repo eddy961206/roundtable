@@ -10,6 +10,12 @@
 <body>
 <div id="live-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+<div id="update-banner" class="update-banner" role="status" hidden>
+  <span id="update-text" class="update-text"></span>
+  <span class="update-how muted">적용: 새 빌드로 <code>roundtable install …</code> 후 <code>roundtable restart</code></span>
+  <a id="update-link" class="update-link" target="_blank" rel="noopener noreferrer">변경 보기</a>
+  <button type="button" id="btn-update-close" class="icon-btn" aria-label="업데이트 알림 닫기" title="이 업데이트 알림 닫기">✕</button>
+</div>
 
 <div id="app">
   <nav id="sidebar" aria-label="방 목록 및 계정 사용량">

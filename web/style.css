@@ -2853,3 +2853,29 @@ dialog.dlg-stats { width: min(1100px, 96vw); }
 .stats-table th[aria-sort="ascending"] .sort-btn, .stats-table th[aria-sort="descending"] .sort-btn { color: var(--text); }
 .stats-table tbody tr:hover { background: var(--panel2); }
 @media (min-width: 1180px) { .onboard-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* Update banner: floats over the layout so the 100vh grid keeps its size. */
+.update-banner {
+  position: fixed;
+  top: 8px;
+  left: 16px;
+  right: 16px;
+  width: fit-content;
+  margin: 0 auto;
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  max-width: 520px; /* centred, it stays clear of the 240px sidebar from 1000px up */
+  padding: 6px 8px 6px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  font-size: 13px;
+}
+.update-banner[hidden] { display: none; }
+.update-banner .update-text { color: var(--warn); font-weight: 600; overflow-wrap: anywhere; }
+.update-banner code { font-family: var(--mono); font-size: 12px; }
+.update-banner .update-link { color: var(--accent); }

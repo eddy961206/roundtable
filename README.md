@@ -49,6 +49,21 @@ Windows에서는 Hyper-V·WinNAT 등이 기본 포트 8787을 예약 범위로 �
 
 `restart`를 실행한 셸이 새 서버 프로세스가 되므로, 서버를 원래 띄우던 방식(백그라운드 셸, 서비스 등)으로 실행한다.
 
+### 새 업데이트 알림
+
+서버는 시작할 때 한 번, 그 뒤로 6시간마다 실행 중인 빌드의 커밋과 공개 저장소의 `main`을 비교한다. 비교에는 GitHub API `GET /repos/eddy961206/roundtable/compare/<실행 커밋>...main`을 인증 없이 한 번 부른다. 앞 응답의 `ETag`를 `If-None-Match`로 보내 바뀌지 않았으면 304를 받는다. 밖으로 나가는 것은 이 요청 하나다(헤더는 `User-Agent: roundtable-update-check`와 GitHub API 버전뿐). 네트워크나 API가 실패해도 서버 동작은 바뀌지 않고 상태에 오류만 남는다.
+
+- 화면: `main`에 새 커밋이 있으면 위쪽에 "새 업데이트 N개" 배너가 뜬다. 닫으면 그 커밋까지는 다시 뜨지 않고, `main`이 더 움직이면 다시 뜬다. "변경 보기"는 GitHub 비교 화면을 연다. 적용은 위의 `install`과 `restart`로 한다.
+- API: `GET /api/version`은 `state`, `running`(`revision`·`modified`·`time`), `latest`, `behind_by`, `ahead_by`, `commits`(최근 5개, 최신순), `checked_at`(ms), `update_available`, `error`를 돌려준다. `state`는 `behind`(업데이트 있음)·`up_to_date`·`ahead`(원격에 없는 커밋이 더 있음)·`diverged`·`unknown_revision`(실행 커밋이 원격에 없음, 예: push 전 로컬 커밋)·`local_build`(빌드에 커밋 정보가 없음)·`pending`·`off`·`error` 중 하나다. `error`이면 직전 비교 결과는 그대로 남는다.
+- 에이전트: `roundtable rt version`(MCP `rt_version`)이 같은 값을 읽는다. 서버가 저장한 값을 읽을 뿐 GitHub를 부르지 않는다.
+- `running.modified:true`는 커밋하지 않은 변경(추적하지 않는 파일 포함)이 있는 작업 폴더에서 빌드했다는 뜻이다. 이때도 기준 커밋으로 비교한다. `go run`이나 `-buildvcs=false` 빌드처럼 커밋 정보가 없으면 확인하지 않는다.
+- 설정(플래그, 괄호는 같은 기본값을 주는 환경변수):
+  - `-update-check on|off`(`ROUNDTABLE_UPDATE_CHECK`): `off`면 아무 요청도 보내지 않는다.
+  - `-update-interval 6h`(`ROUNDTABLE_UPDATE_INTERVAL`): 10분 미만은 거부한다. 인증 없는 GitHub API 한도는 주소당 시간당 60회다.
+  - `-update-repo eddy961206/roundtable`(`ROUNDTABLE_UPDATE_REPO`), `-update-branch main`(`ROUNDTABLE_UPDATE_BRANCH`)
+  - `-update-api https://api.github.com`(`ROUNDTABLE_UPDATE_API`): https 주소만 받는다. 시험용으로 `http://127.0.0.1`·`http://localhost`도 받는다.
+- 한계: 브랜치가 250커밋 넘게 앞서면 GitHub가 오래된 쪽 250개만 주므로 `commits`가 최신 커밋이 아닐 수 있다(`behind_by`는 정확하다). 사용자 화면은 30분마다 `/api/version`을 다시 읽는다.
+
 ### 실행 권한
 
 2026-10-20 사용자 결정에 따라 roundtable이 실행하는 Codex·Antigravity·Claude는 기본으로 OS 샌드박스를 사용하지 않는다. 새 턴, 세션 재개, `CLI에서 열기`에 같은 정책을 적용한다. CLI 전역 설정 파일은 변경하지 않는다.
@@ -73,7 +88,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 - Codex: `codex mcp add roundtable -- roundtable mcp --url http://127.0.0.1:8787`
 - agy: `agy mcp add roundtable roundtable mcp --url http://127.0.0.1:8787`
 
-기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_decisions`, `rt_update_decision`, `rt_update_room`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·요청·결정 카드 조회 6개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
+기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_version`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_decisions`, `rt_update_decision`, `rt_update_room`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·버전·요청·결정 카드 조회 7개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 

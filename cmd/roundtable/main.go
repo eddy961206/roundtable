@@ -25,6 +25,7 @@ import (
 	"roundtable/internal/room"
 	"roundtable/internal/rtmcp"
 	"roundtable/internal/server"
+	"roundtable/internal/update"
 )
 
 func main() {
@@ -65,12 +66,21 @@ func serve(listenWait time.Duration) {
 	giteaRepos := flag.String("gitea-repos", "", "comma-separated Owner/Name list agents may read through the read-only Gitea tool (empty = off)")
 	giteaLogin := flag.String("gitea-login", "", "tea login name used for the read-only Gitea tool")
 	teaCmd := flag.String("tea", "tea", "tea (Gitea CLI) command for the read-only Gitea tool")
+	updateCheck := flag.String("update-check", envOr("ROUNDTABLE_UPDATE_CHECK", "on"), "on | off: compare this build with the published branch (one anonymous GitHub API GET per check; env ROUNDTABLE_UPDATE_CHECK)")
+	updateRepo := flag.String("update-repo", envOr("ROUNDTABLE_UPDATE_REPO", "eddy961206/roundtable"), "GitHub owner/name the update check compares with (env ROUNDTABLE_UPDATE_REPO)")
+	updateBranch := flag.String("update-branch", envOr("ROUNDTABLE_UPDATE_BRANCH", "main"), "branch the update check compares with (env ROUNDTABLE_UPDATE_BRANCH)")
+	updateInterval := flag.String("update-interval", envOr("ROUNDTABLE_UPDATE_INTERVAL", "6h"), "time between update checks, at least 10m (env ROUNDTABLE_UPDATE_INTERVAL)")
+	updateAPI := flag.String("update-api", envOr("ROUNDTABLE_UPDATE_API", "https://api.github.com"), "GitHub API base URL for the update check (env ROUNDTABLE_UPDATE_API)")
 	flag.Parse()
 	if *agyStatus == "" {
 		*agyStatus = filepath.Join(*data, "agy-status.json")
 	}
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
+	updateCfg, err := updateConfig(*updateCheck, *updateRepo, *updateBranch, *updateInterval, *updateAPI)
+	if err != nil {
+		logger.Fatalf("update check: %v", err)
+	}
 	// Reserve the address before startup recovery can mutate persisted rooms.
 	ln, err := listen(*addr, listenWait)
 	if err != nil {
@@ -110,6 +120,8 @@ func serve(listenWait time.Duration) {
 		logger.Fatal(err)
 	}
 	srv := server.New(hub, reg, web)
+	updates := update.New(updateCfg)
+	srv.SetUpdates(updates)
 
 	url := "http://" + ln.Addr().String()
 	for _, info := range reg.Infos() {
@@ -120,6 +132,14 @@ func serve(listenWait time.Duration) {
 		logger.Printf("provider %-7s %s", info.ID, state)
 	}
 	logger.Printf("roundtable listening on %s (data %s)", url, *data)
+	if st := updates.Status(); st.State == "pending" {
+		logger.Printf("update check on: %s %s every %s", updateCfg.Repo, updateCfg.Branch, updateCfg.Interval)
+	} else {
+		logger.Printf("update check %s", st.State)
+	}
+	updateCtx, stopUpdates := context.WithCancel(context.Background())
+	defer stopUpdates()
+	go updates.Run(updateCtx)
 	if *open {
 		openBrowser(url)
 	}

@@ -72,6 +72,7 @@ func (s *Server) tools() []tool {
 			"rooms": waitList, "timeout_seconds": integer(1, &waitLimit), "max_chars": integer(1, nil),
 		}, "rooms")},
 		{Name: "rt_usage", Description: "방별 토큰 사용량 합계와 좌석별 내역. rooms는 쉼표로 이은 방ID. 공급사별 차이를 맞춘 값: input_tokens(처리한 입력 전체)=cached_tokens(캐시 읽기)+uncached_tokens(나머지, 캐시 쓰기 포함), output_tokens, cost_usd(보고하는 공급사만), max_context_tokens(턴의 가장 큰 단일 호출), turns·errors·duration_ms. totals는 지정한 방 전체 합", InputSchema: object(map[string]schema{"rooms": usageList}, "rooms")},
+		{Name: "rt_version", Description: "실행 중인 Roundtable 빌드와 공개 브랜치 비교(GET /api/version). state: behind면 update_available:true이고 behind_by·commits(최근 5개, 최신순)가 새 커밋. up_to_date·ahead·diverged·unknown_revision(원격에 없는 로컬 커밋)·local_build(빌드에 커밋 정보 없음)·pending·off·error. running.modified는 커밋하지 않은 변경이 있던 빌드. checked_at은 마지막 확인 시각(ms). 서버가 주기적으로 확인한 값을 읽기만 하며 GitHub를 직접 부르지 않음", InputSchema: object(map[string]schema{})},
 		{Name: "rt_discuss", Description: "토론 시작. blind_first 생략 시 방의 기본 설정 사용. 좌석들이 이미 같은 질문에 답했다면 블라인드 1라운드는 독립 답을 다시 받느라 호출을 좌석 수(N)만큼 더 쓰므로 blind_first:false를 고려", InputSchema: object(map[string]schema{
 			"room": id, "rounds": integer(1, nil), "blind_first": {Type: "boolean"},
 		}, "room", "rounds")},
@@ -88,7 +89,7 @@ func (s *Server) tools() []tool {
 	}
 	out := make([]tool, 0, len(all))
 	for _, t := range all {
-		read := slices.Contains([]string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_requests", "rt_decisions"}, t.Name)
+		read := slices.Contains([]string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_version", "rt_requests", "rt_decisions"}, t.Name)
 		if s.readOnly && !read {
 			continue
 		}
@@ -261,6 +262,10 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 		return s.wait(ctx, a.Rooms, time.Duration(a.Timeout)*time.Second, a.MaxChars)
 	case "rt_usage":
 		return s.usage(ctx, a.Rooms)
+	case "rt_version":
+		var result json.RawMessage
+		err := s.api(ctx, "GET", "/api/version", nil, &result)
+		return result, err
 	case "rt_discuss":
 		body := map[string]any{"rounds": a.Rounds}
 		if a.BlindFirst != nil {

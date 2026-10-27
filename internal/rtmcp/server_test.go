@@ -211,6 +211,8 @@ func TestReadOnly(t *testing.T) {
 			io.WriteString(w, snapshotBody(`[]`, `[]`))
 		case "/api/rooms/r1/decisions":
 			io.WriteString(w, `[]`)
+		case "/api/version":
+			io.WriteString(w, `{"state":"behind","behind_by":2,"update_available":true,"commits":[]}`)
 		default:
 			t.Error(r.URL)
 		}
@@ -222,7 +224,7 @@ func TestReadOnly(t *testing.T) {
 			t.Fatal(tool)
 		}
 	}
-	want := []string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_requests", "rt_decisions"}
+	want := []string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_version", "rt_requests", "rt_decisions"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatal(names)
 	}
@@ -237,6 +239,12 @@ func TestReadOnly(t *testing.T) {
 		if _, err := s.call(context.Background(), name, json.RawMessage(`{}`)); err == nil {
 			t.Fatalf("write exposed: %s", name)
 		}
+	}
+	if v := call(t, s, "rt_version", `{}`); v["state"] != "behind" || v["update_available"] != true || v["behind_by"] != float64(2) {
+		t.Fatal(v)
+	}
+	if _, err := s.call(context.Background(), "rt_version", json.RawMessage(`{"room":"r1"}`)); err == nil {
+		t.Fatal("rt_version accepted an unknown argument")
 	}
 }
 
@@ -557,7 +565,7 @@ func TestStdioProtocol(t *testing.T) {
 	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고") || !strings.Contains(text, "resume_after_seq를 after_seq로") || !strings.Contains(text, "사람에게 확인받는다") {
 		t.Fatal(initialized["instructions"])
 	}
-	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 12 {
+	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 13 {
 		t.Fatal(byID["list"])
 	}
 	content := byID["3"]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)
