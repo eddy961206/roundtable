@@ -226,7 +226,8 @@ type claudeParser struct {
 	result     string
 	errText    string
 	usage      map[string]any
-	context    int // tokens in the last API call = current context size
+	context    int    // tokens in the last API call = current context size
+	model      string // model of the top-level assistant messages
 	finished   bool
 	toolNames  map[string]string // tool_use id -> name
 	subagents  map[string]bool   // tool_use ids that spawned subagents
@@ -292,6 +293,14 @@ func (p *claudeParser) Line(line string, emit func(Event)) {
 		}
 		if p.context > 0 {
 			p.usage["context_tokens"] = p.context
+		}
+		// modelUsage carries each model's context window (claude-opus-5-5: 1000000 on
+		// CLI 2.1.299). ContextWindow's fixed 200000 made the context alarm read 226%
+		// for a seat at 45%.
+		if mu := obj(m, "modelUsage"); mu != nil {
+			if w, ok := obj(mu, p.model)["contextWindow"].(float64); ok && w > 0 {
+				p.usage["context_window"] = int(w)
+			}
 		}
 	}
 }
@@ -388,6 +397,9 @@ func (p *claudeParser) system(m map[string]any, emit func(Event)) {
 func (p *claudeParser) assistant(m map[string]any, parent string, emit func(Event)) {
 	msg := obj(m, "message")
 	if parent == "" {
+		if model := str(msg, "model"); model != "" && model != "<synthetic>" {
+			p.model = model
+		}
 		if u := obj(msg, "usage"); u != nil {
 			in, _ := u["input_tokens"].(float64)
 			cr, _ := u["cache_read_input_tokens"].(float64)
