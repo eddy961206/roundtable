@@ -24,6 +24,7 @@ func (c *Claude) Label() string   { return "Claude Code" }
 func (c *Claude) Command() string { return c.cmd }
 func (c *Claude) Available() bool { return available(c.cmd) }
 func (c *Claude) CanSteer() bool  { return true }
+func (c *Claude) CanFork() bool   { return true }
 
 // Efforts are the values `claude --effort` accepts (claude --help, 2.1.299).
 func (c *Claude) Efforts() []string                 { return []string{"low", "medium", "high", "xhigh", "max"} }
@@ -61,6 +62,11 @@ func claudeArgs(o RunOptions) []string {
 	}
 	if o.SessionID != "" {
 		args = append(args, "--resume", o.SessionID)
+	}
+	if o.ForkSession != "" {
+		// Claude stores sessions per working directory, so the fork runs where
+		// the original session ran.
+		args = append(args, "--resume", o.ForkSession, "--fork-session")
 	}
 	// Print mode cannot prompt for permission, so every tool that needs approval
 	// must be listed here; one --allowedTools carries the whole list.

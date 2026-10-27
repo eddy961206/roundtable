@@ -26,6 +26,7 @@ func (echoProvider) Command() string             { return "claude" }
 func (echoProvider) Models() []agent.ModelOption { return nil }
 func (echoProvider) Available() bool             { return true }
 func (echoProvider) CanSteer() bool              { return true }
+func (echoProvider) CanFork() bool               { return false }
 func (echoProvider) ContextWindow(string) int    { return 10 }
 func (echoProvider) Run(ctx context.Context, o agent.RunOptions, emit func(agent.Event)) (agent.Result, error) {
 	emit(agent.Event{Kind: agent.KindToolCall, ID: "t1", Name: "Read", Input: `{"f":"x"}`})

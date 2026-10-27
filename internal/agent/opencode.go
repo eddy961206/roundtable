@@ -23,6 +23,7 @@ func (o *OpenCode) Label() string      { return "OpenCode" }
 func (o *OpenCode) Command() string    { return o.cmd }
 func (o *OpenCode) Available() bool    { return available(o.cmd) }
 func (o *OpenCode) CanSteer() bool     { return false }
+func (o *OpenCode) CanFork() bool      { return true }
 
 // A worker model is always an explicit user choice, never a public-catalog default.
 func (o *OpenCode) DefaultModel() (string, string) { return "", "" }
@@ -103,9 +104,12 @@ func (o *OpenCode) Run(ctx context.Context, opts RunOptions, emit func(Event)) (
 		return Result{}, err
 	}
 	args := []string{"run", "--standalone", "--format", "json", "--thinking", "--agent", openCodeAgent(opts.Mode), "--model", model}
-	if opts.SessionID != "" {
+	switch {
+	case opts.SessionID != "":
 		args = append(args, "--session", opts.SessionID)
-	} else {
+	case opts.ForkSession != "":
+		args = append(args, "--session", opts.ForkSession, "--fork")
+	default:
 		args = append(args, "--title", "Roundtable · "+model)
 	}
 	cmd := exec.Command(path, args...)

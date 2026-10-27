@@ -530,7 +530,7 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 			// the same session instead of re-sending the room history.
 			if p.Model != original.Model {
 				p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
-				p.Unseen = nil
+				p.Unseen, p.Fork = nil, nil
 				p.ContextWindow = prov.ContextWindow(p.Model)
 			}
 		}
@@ -538,7 +538,7 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	if contextChanged {
 		for _, p := range next.Participants {
 			p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
-			p.Unseen = nil
+			p.Unseen, p.Fork = nil, nil
 		}
 	}
 	for _, p := range next.Participants {
@@ -608,7 +608,7 @@ func (h *Hub) ResetSessions(id string) error {
 	for i, p := range rs.room.Participants {
 		copy := *p
 		copy.SessionID, copy.LastSeen, copy.ContextTokens = "", 0, 0
-		copy.Unseen = nil
+		copy.Unseen, copy.Fork = nil, nil
 		next.Participants[i] = &copy
 	}
 	if err := h.store.SaveRoom(&next); err != nil {
@@ -1224,6 +1224,7 @@ type prepared struct {
 	notices   []*Message
 	requests  []string
 	inputErr  error
+	forkCost  float64 // the base session's running cost; a fork's reported cost includes it
 	t         *Turn
 	p         *Participant
 	seen      int64
@@ -1271,14 +1272,33 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	}
 	decisions := rs.activeDecisionTexts(cap)
 	brief := briefKey(standingBrief(rs.room, p, decisions, h.scratch))
-	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Briefed: !first && p.Brief == brief, Decisions: decisions, Scratch: h.scratch}
+	forked := first && p.Fork != nil
+	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Forked: forked, Briefed: !first && p.Brief == brief, Decisions: decisions, Scratch: h.scratch}
 	if rs.disc != nil && t.Reason == "discussion" {
 		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
 	h.addTurnImages(rs, p, hist, &opts, t.Reason)
-	return &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
+	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
+	if forked {
+		pr.opts.ForkSession = p.Fork.Session
+		pr.forkCost, pr.inputErr = h.forkBaseCost(p.Fork)
+	}
+	return pr
+}
+
+// forkBaseCost is the base session's running cost. A running base turn would
+// be copied half-written, so it fails this turn instead. Caller holds h.mu.
+func (h *Hub) forkBaseCost(f *ForkSource) (float64, error) {
+	base, ok := h.rooms[f.Room]
+	if !ok {
+		return 0, fmt.Errorf("기반 방 %s이 삭제되어 세션을 포크할 수 없음", f.Room)
+	}
+	if base.runningFor(f.Seat) != nil {
+		return 0, fmt.Errorf("기반 좌석 %s가 실행 중이라 세션을 포크할 수 없음. 기반 턴이 끝난 뒤 다시 보내야 함", f.Seat)
+	}
+	return base.sessionCost(f.Session), nil
 }
 
 // buildPartTurn runs every turn of a seat with a working/fixing part in the
@@ -1473,7 +1493,11 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			}
 		case agent.KindUsage:
 			if c, ok := e.Meta["session_cost_usd"].(float64); ok {
-				e.Meta["total_cost_usd"] = c - rs.sessionCost(opts.SessionID)
+				before := rs.sessionCost(opts.SessionID)
+				if opts.ForkSession != "" {
+					before = pr.forkCost
+				}
+				e.Meta["total_cost_usd"] = c - before
 			}
 			compacted = applyUsage(p, prov, e.Meta) || compacted
 		}

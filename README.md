@@ -70,6 +70,8 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 
 `rt_list_rooms`는 최근 갱신순으로 `limit`개(기본 20, 최대 100)를 반환한다. 방마다 id·제목·모드·실행 여부와 좌석의 id·이름·공급사·모델·`enabled`만 담는다. 삭제된 좌석은 호출할 수 없으므로 빼고, 꺼진 좌석은 `enabled:false`로 남긴다. 좌석 역할 같은 나머지 정보는 방 화면에서 본다.
 
+`rt_create_room`은 방 id와 만든 좌석의 id·이름·공급사·모델·`enabled`를 반환한다. 좌석 id는 `rt_post`의 `target`과 다른 방 좌석의 `fork_from.seat`에 쓴다.
+
 `rt_read`는 메시지를 오래된 순으로 반환한다. `after_seq`를 주면 그보다 큰 seq만, 생략하면 최신 메시지부터 예산까지만 담는다. `max_chars`는 본문 합계의 Unicode 문자 수이며 기본값은 20000이다. 예산은 최신 메시지부터 채운다. 예산 경계에 걸린 메시지는 앞부분을 줄이고 그 메시지와 전체에 `truncated:true`, 전체에 `omitted_chars`(줄인 문자 수)를 표시한다. 예산 밖의 오래된 메시지는 배열에 넣지 않고 `omitted_messages`(개수)와 `first_seq`(담긴 첫 seq)로 알린다. 빠진 메시지가 필요하면 `max_chars`를 늘린다. `after_seq`를 생략하면 예산을 다 쓴 뒤의 이전 페이지는 조회하지 않는다. 메시지마다 seq·작성자·이름·역할·상태·본문을 넣고, `kind`·`target`·`attachments`(`id`·`name`)·`requests`·`decisions`·`reply_to`는 값이 있을 때만 넣는다. `reply_to`는 그 답이 응답한 계기 메시지의 seq다. 계기 메시지가 대화에 없으면 빈 값으로 넘기지 않고 오류를 반환한다. 이어 읽기는 `next_seq`를 사용하되, 시간 초과 시 아직 `streaming`인 메시지는 같은 `after_seq`로 다시 조회해야 갱신된 본문을 볼 수 있다.
 
 `rt_discuss`의 `blind_first`를 생략하면 방 설정을 따른다. 좌석들이 이미 같은 질문에 답한 뒤라면 블라인드 1라운드는 독립 답을 다시 받느라 호출을 좌석 수(N)만큼 더 쓴다. 이때는 `blind_first:false`로 순차 1라운드가 기존 답을 보고 시작하게 한다.
@@ -88,6 +90,7 @@ roundtable rt post --room <방ID> --text "검토해 줘" --wait_seconds 300
 cat 긴_설명.md | roundtable rt post --room <방ID> --text -   # 값 - 는 stdin에서 읽음
 roundtable rt read --room <방ID> --after_seq 12
 roundtable rt update_decision --room <방ID> --id <결정ID> --status active   # 제안 카드 확정
+roundtable rt create_room --title "작업 1" --workspace <폴더> --mode write --participants '[{"provider":"codex","fork_from":{"room":"<기반방ID>","seat":"<기반좌석ID>"}}]'   # 기반 세션 포크
 ```
 
 결과는 stdout에 한 줄 JSON으로 나온다. 실패하면 사유를 stderr에 쓰고, 검증·실행 실패는 종료 코드 1, 명령 형식 오류는 2를 돌려준다. 정수는 `--rounds 2`, 참·거짓은 `--blind_first false`, 배열은 JSON(`--participants '[{"provider":"agy"}]'`)으로 쓴다. 다른 서버는 `roundtable rt --url http://127.0.0.1:8791 ...`로 지정한다(loopback만 허용). 에이전트에게 사용법을 알려 줄 때는 [skills/roundtable/SKILL.md](skills/roundtable/SKILL.md)를 스킬로 설치하거나 지침에 붙인다.
@@ -167,22 +170,26 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 
 화면은 최근 100개부터 불러오며 한 번에 최대 200개 메시지를 유지한다. 이전 기록은 페이지로 이동한다. 작업 기록은 처음 펼칠 때 최근 200개 이벤트와 필요한 서브에이전트 문맥을 디스크에서 읽는다. 브라우저는 최대 8개 답변의 기록을 캐시하며, 열린 기록에는 새 이벤트를 계속 추가한다. 이전 기록을 요청하면 전체 기록을 불러오므로 답변 하나의 캐시는 200개를 넘을 수 있다. 전체 기록 다운로드와 대화 내보내기는 유지한다. 서버의 메시지 본문과 디스크 기록은 여전히 누적되므로 무기한 보관에 대한 용량 제한은 별도로 필요하다. 서버는 작업 기록 전체를 상시 메모리에 보관하지 않는다.
 
+### 공통 문맥을 한 번만 읽히기: 기반 세션 포크
+
+같은 프로젝트의 작업을 여러 방에 나눠 맡길 때는 공통 문서를 **기반 방**의 좌석에 한 번만 읽힌다. 작업 방의 좌석은 `participant_specs[].fork_from`(`{"room","seat"}`)으로 그 세션을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않는다. 포크마다 세션이 따로라 작성 좌석과 검수 좌석을 같은 기반에서 각각 포크해도 문맥이 섞이지 않는다. 공급사·모델·CLI 실행 폴더가 기반 좌석과 같아야 하고, agy는 지원하지 않는다. 계약은 [docs/기반문맥_포크_계약.md](docs/기반문맥_포크_계약.md), 실측은 [docs/기반문맥_포크_측정_20261027.md](docs/기반문맥_포크_측정_20261027.md)에 있다. 지금은 HTTP API·`rt`·MCP에서만 지정할 수 있다.
+
 스트리밍·작업 기록 조회·화면 갱신의 성능 측정과 재현 방법은 [2026-10-21 성능 측정](docs/성능최적화_측정_20261021.md)과 [tools/perf](tools/perf/README.md)에 정리했다.
 
 ## 각 CLI에서 무엇을 어떻게 읽는가
 
-| | 호출 | 세션 재개 | 서브에이전트 관측 | 한도 |
+| | 호출 | 세션 재개 (기반 포크) | 서브에이전트 관측 | 한도 |
 |---|---|---|---|---|
-| Claude Code | `claude -p --input-format stream-json --output-format stream-json` | `--resume <session>` | 스트림의 `parent_tool_use_id`, `task_started/task_notification` | 스트림의 `rate_limit_event` |
-| Codex | `codex exec - --json -c features.plugins=false` | `codex exec resume … <thread> -` | `~/.codex/sessions` 에서 `parent_thread_id` 가 같은 rollout 파일을 추적 | rollout 관측 + `codex app-server`의 `account/rateLimits/read` |
-| Antigravity | `agy --output-format stream-json --input-format stream-json -p=` (프롬프트는 stdin) | `--conversation <id>` | `invoke_subagent` 의 `log_uri` → `transcript.jsonl` | statusLine 훅(위) |
-| OpenCode v2 | `opencode run --standalone --format json` | `--session <id>` | Roundtable 권한 모드에서는 하위 에이전트 실행을 허용하지 않음 | 응답의 토큰·비용만 기록, 계정 잔액 조회 없음 |
+| Claude Code | `claude -p --input-format stream-json --output-format stream-json` | `--resume <session>` (`--resume <기반> --fork-session`) | 스트림의 `parent_tool_use_id`, `task_started/task_notification` | 스트림의 `rate_limit_event` |
+| Codex | `codex exec - --json -c features.plugins=false` | `codex exec resume … <thread> -` (`codex exec fork … <기반> -`) | `~/.codex/sessions` 에서 `parent_thread_id` 가 같은 rollout 파일을 추적 | rollout 관측 + `codex app-server`의 `account/rateLimits/read` |
+| Antigravity | `agy --output-format stream-json --input-format stream-json -p=` (프롬프트는 stdin) | `--conversation <id>` (포크 없음) | `invoke_subagent` 의 `log_uri` → `transcript.jsonl` | statusLine 훅(위) |
+| OpenCode v2 | `opencode run --standalone --format json` | `--session <id>` (`--session <기반> --fork`) | Roundtable 권한 모드에서는 하위 에이전트 실행을 허용하지 않음 | 응답의 토큰·비용만 기록, 계정 잔액 조회 없음 |
 
 - 각 에이전트는 자기 CLI 세션을 이어 가며 **자기 마지막 발언 이후 새 메시지만** 받는다. 매번 전체 대화를 보내지 않아 토큰이 덜 들고, 각자의 도구 맥락이 유지된다. 턴이 실패하면 그 메시지는 다음 턴에 다시 전달된다.
 - 재개 턴은 방 참가자·공지·규칙을 다시 보내지 않고 한 줄 알림만 보낸다. CLI가 문맥을 압축한 것이 보이면 다음 턴에 전체 안내문을 다시 보낸다. 추론 수준만 바꾸면 세션을 유지한다(그 턴은 Gemini·Codex에서 캐시를 쓰지 못한다). 실측: [docs/토큰절감_측정_20261020.md](docs/토큰절감_측정_20261020.md).
 - agy는 프롬프트를 stdin stream-json으로 받으므로 명령줄 길이 한도가 없다.
 - Codex는 사용자 플러그인을 끄고 실행한다. 플러그인 스킬 목록(수만 자)을 재개 턴마다 다시 보내는 것을 실측했고, Roundtable은 플러그인 도구를 쓰지 않는다. 사용자 메모리·전역 AGENTS.md·개인 스킬은 그대로 읽는다.
-- 답변별 토큰·비용은 그 턴의 값이다. agy와 Codex는 대화 전체 누적 토큰을 보고하므로 agy는 단계별 사용량을 더하고, Codex는 rollout의 턴 시작 전 누적값을 빼서 계산한다. Claude의 비용은 세션 누적값이라 `session_cost_usd`로 보관하고 직전 값과의 차이를 턴 비용으로 쓴다. 문맥 크기는 캐시를 포함한 마지막 호출의 입력이다. 이 수정 전 빌드로 쌓인 기록은 `tools/fix_cumulative_usage.py`로 한 번 보정한다(서버를 멈추고 실행, 먼저 미리보기).
+- 답변별 토큰·비용은 그 턴의 값이다. agy와 Codex는 대화 전체 누적 토큰을 보고하므로 agy는 단계별 사용량을 더하고, Codex는 rollout의 턴 시작 전 누적값을 빼서 계산한다. Claude의 비용은 세션 누적값이라 `session_cost_usd`로 보관하고 직전 값과의 차이를 턴 비용으로 쓴다. 포크 첫 턴은 기반 세션의 누적값(Codex는 기반 rollout, Claude는 기반 방 기록)을 빼서 계산한다. 문맥 크기는 캐시를 포함한 마지막 호출의 입력이다. 이 수정 전 빌드로 쌓인 기록은 `tools/fix_cumulative_usage.py`로 한 번 보정한다(서버를 멈추고 실행, 먼저 미리보기).
 - Windows에서 npm으로 설치한 Codex는 `codex.cmd` 뒤의 실제 `codex.exe`를 찾아 실행한다(별도 설치본에 code-mode host가 빠진 경우가 있었다).
 - Codex Windows 샌드박스를 명시적으로 켠 실행에서는 `setup refresh had errors`가 발생할 수 있다. 샌드박스 설정과 다른 프로세스의 Codex 런타임 파일 잠금을 확인한다.
 

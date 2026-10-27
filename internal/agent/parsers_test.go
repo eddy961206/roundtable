@@ -241,7 +241,7 @@ func TestCodexLimitsFromRollout(t *testing.T) {
 	}
 	p := newCodexParser()
 	var events []Event
-	codexLimitsFromRollout(path, p, func(e Event) { events = append(events, e) })
+	codexLimitsFromRollout(path, nil, p, func(e Event) { events = append(events, e) })
 	if p.window != 475000 || p.context != 25802 {
 		t.Fatalf("context parse wrong: window=%d ctx=%d", p.window, p.context)
 	}
@@ -269,7 +269,7 @@ func TestCodexResumedTurnUsageIsPerTurn(t *testing.T) {
 	}
 	p := newCodexParser()
 	p.Line(`{"type":"turn.completed","usage":{"input_tokens":64000,"cached_input_tokens":32000,"output_tokens":640}}`, func(Event) {})
-	codexLimitsFromRollout(path, p, func(Event) {})
+	codexLimitsFromRollout(path, nil, p, func(Event) {})
 	fin := p.Finish(func(Event) {})
 	if fin.Usage["input_tokens"] != 34000.0 || fin.Usage["cached_input_tokens"] != 17000.0 || fin.Usage["output_tokens"] != 340.0 || fin.Usage["context_tokens"] != 21333 {
 		t.Fatalf("usage %v", fin.Usage)
@@ -470,5 +470,52 @@ func TestOpenCodeContextIncludesCache(t *testing.T) {
 	fin := p.Finish(func(Event) {})
 	if fin.Usage["context_tokens"] != 1231.0 || fin.Usage["input_tokens"] != 1224.0 || fin.Usage["cache_read_input_tokens"] != 1024.0 {
 		t.Fatalf("usage %v", fin.Usage)
+	}
+}
+
+// A fork's turn.completed totals include the original thread's usage, which
+// the fork's own rollout (copied history, no token counts) does not repeat.
+func TestCodexForkTurnUsageIsPerTurn(t *testing.T) {
+	sessions := t.TempDir()
+	day := filepath.Join(sessions, "2026", "10", "27")
+	if err := os.MkdirAll(day, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	count := func(input, cached int) string {
+		return fmt.Sprintf(`{"timestamp":"x","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":%d,"cached_input_tokens":%d,"output_tokens":74},"last_token_usage":{"input_tokens":16000}}}}`+"\n", input, cached)
+	}
+	base := `{"timestamp":"x","type":"turn_context","payload":{}}` + "\n" + count(30000, 20000) + count(49773, 35712)
+	if err := os.WriteFile(filepath.Join(day, "rollout-2026-10-27T10-25-00-base-id.jsonl"), []byte(base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &Codex{sessionsDir: sessions}
+	totals, err := c.threadTotals("base-id")
+	if err != nil || totals["input_tokens"] != 49773.0 {
+		t.Fatalf("base totals %v %v", totals, err)
+	}
+	if _, err := c.threadTotals("missing"); err == nil {
+		t.Fatal("a missing base rollout must fail")
+	}
+	fork := filepath.Join(day, "rollout-2026-10-27T10-25-58-fork-id.jsonl")
+	if err := os.WriteFile(fork, []byte(`{"timestamp":"x","type":"session_meta","payload":{}}`+"\n"+`{"timestamp":"x","type":"turn_context","payload":{}}`+"\n"+count(76041, 48000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := newCodexParser()
+	p.Line(`{"type":"turn.completed","usage":{"input_tokens":76041,"cached_input_tokens":48000,"output_tokens":204}}`, func(Event) {})
+	codexLimitsFromRollout(fork, totals, p, func(Event) {})
+	fin := p.Finish(func(Event) {})
+	if fin.Usage["input_tokens"] != 26268.0 || fin.Usage["cached_input_tokens"] != 12288.0 || fin.Usage["output_tokens"] != 130.0 {
+		t.Fatalf("fork usage %v", fin.Usage)
+	}
+}
+
+func TestForkArguments(t *testing.T) {
+	codex := strings.Join(codexArgs(RunOptions{ForkSession: "base-id", Mode: ModeRead, Workspace: "ws"}, ""), " ")
+	if !strings.HasPrefix(codex, "exec fork --json") || !strings.HasSuffix(codex, " base-id -") || strings.Contains(codex, "--cd") || strings.Contains(codex, "--color") {
+		t.Fatalf("codex fork args: %s", codex)
+	}
+	claude := strings.Join(claudeArgs(RunOptions{ForkSession: "base-id", Mode: ModeRead, Workspace: "ws"}), " ")
+	if !strings.Contains(claude, "--resume base-id --fork-session") {
+		t.Fatalf("claude fork args: %s", claude)
 	}
 }

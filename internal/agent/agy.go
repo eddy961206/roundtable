@@ -33,6 +33,7 @@ func (a *Agy) Label() string   { return "Antigravity" }
 func (a *Agy) Command() string { return a.cmd }
 func (a *Agy) Available() bool { return available(a.cmd) }
 func (a *Agy) CanSteer() bool  { return false }
+func (a *Agy) CanFork() bool   { return false }
 
 // Efforts is the union `agy --effort` accepts; ModelEfforts narrows it per model.
 func (a *Agy) Efforts() []string              { return []string{"low", "medium", "high", "xhigh", "max"} }

@@ -24,6 +24,7 @@ type scriptedProvider struct {
 func (p *scriptedProvider) ID() string      { return p.id }
 func (p *scriptedProvider) Available() bool { return true }
 func (p *scriptedProvider) CanSteer() bool  { return true }
+func (p *scriptedProvider) CanFork() bool   { return false }
 func (p *scriptedProvider) Run(ctx context.Context, opts agent.RunOptions, _ func(agent.Event)) (agent.Result, error) {
 	return p.run(ctx, opts)
 }

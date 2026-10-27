@@ -69,12 +69,12 @@ func TestToolsHTTP(t *testing.T) {
 			if err := json.Unmarshal(body["participant_specs"], &participants); err != nil {
 				t.Error(err)
 			}
-			want := []map[string]any{{"provider": "codex", "model": "chosen-model", "effort": "", "label": "검토자", "role": "정확성"}}
+			want := []map[string]any{{"provider": "codex", "model": "chosen-model", "effort": "", "label": "검토자", "role": "정확성", "fork_from": map[string]any{"room": "base", "seat": "codex-1"}}}
 			if !reflect.DeepEqual(participants, want) {
 				t.Errorf("participants: %v", participants)
 			}
 			w.WriteHeader(201)
-			io.WriteString(w, `{"id":"created"}`)
+			io.WriteString(w, `{"id":"created","participants":[{"id":"codex-2","label":"검토자","provider":"codex","model":"chosen-model","role":"정확성","enabled":true}]}`)
 		case "POST /api/rooms/r1/messages":
 			var body map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -121,8 +121,10 @@ func TestToolsHTTP(t *testing.T) {
 	if _, role := seat["role"]; seat["id"] != "s1" || seat["label"] != "검토자" || seat["provider"] != "codex" || seat["model"] != "chosen-model" || role {
 		t.Fatalf("seat: %v", seat)
 	}
-	if got := call(t, s, "rt_create_room", `{"title":"논의","workspace":"","mode":"chat","participants":[{"provider":"codex","model":"chosen-model","effort":"","label":"검토자","role":"정확성"}]}`); got["room"] != "created" {
-		t.Fatal(got)
+	created := call(t, s, "rt_create_room", `{"title":"논의","workspace":"","mode":"chat","participants":[{"provider":"codex","model":"chosen-model","effort":"","label":"검토자","role":"정확성","fork_from":{"room":"base","seat":"codex-1"}}]}`)
+	wantCreated := map[string]any{"room": "created", "participants": []any{map[string]any{"id": "codex-2", "label": "검토자", "provider": "codex", "model": "chosen-model", "enabled": true}}}
+	if !reflect.DeepEqual(created, wantCreated) {
+		t.Fatal(created)
 	}
 	if got := call(t, s, "rt_post", `{"room":"r1","text":"질문","target":"s1"}`); !reflect.DeepEqual(got, map[string]any{"seq": float64(1)}) {
 		t.Fatal(got)
@@ -163,6 +165,8 @@ func TestInputValidationDoesNotCallHTTP(t *testing.T) {
 		{"rt_create_room", `{"title":"x","workspace":"","mode":"chat","participants":[]}`},
 		{"rt_create_room", `{"title":"x","workspace":"","mode":"chat","participants":[{"provider":"codex","count":2}]}`},
 		{"rt_create_room", `{"title":"x","workspace":"","mode":"chat","participants":[{"provider":"codex","effort":null}]}`},
+		{"rt_create_room", `{"title":"x","workspace":"","mode":"chat","participants":[{"provider":"codex","fork_from":{"room":"base"}}]}`},
+		{"rt_create_room", `{"title":"x","workspace":"","mode":"chat","participants":[{"provider":"codex","fork_from":{"room":"base","seat":"../x"}}]}`},
 		{"rt_post", `{"room":"r1","text":" "}`}, {"rt_post", `{"room":"r1","text":"x","wait_seconds":601}`},
 		{"rt_post", `{"room":"r1","text":"x","wait_seconds":-1}`}, {"rt_post", `{"room":"r1","text":"x","wait_seconds":0.5}`},
 		{"rt_post", `{"room":"r1","text":"x","wait_seconds":null}`}, {"rt_post", `{"room":"r1","text":"x","target":"../stop"}`},

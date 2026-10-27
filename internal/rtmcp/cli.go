@@ -151,5 +151,6 @@ func toolUsage(w io.Writer, t tool) {
 	}
 	if t.Name == "rt_create_room" {
 		fmt.Fprintln(w, `  participants 예: [{"provider":"agy","model":"gemini-4-argon","effort":"high","label":"Argon","role":"문구 검토"}]`)
+		fmt.Fprintln(w, `  기반 세션 포크 예: [{"provider":"codex","label":"작성","fork_from":{"room":"<기반 방ID>","seat":"<기반 좌석ID>"}}]`)
 	}
 }

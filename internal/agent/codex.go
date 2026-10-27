@@ -38,6 +38,7 @@ func (c *Codex) Label() string   { return "Codex" }
 func (c *Codex) Command() string { return c.cmd }
 func (c *Codex) Available() bool { return available(c.cmd) }
 func (c *Codex) CanSteer() bool  { return false }
+func (c *Codex) CanFork() bool   { return true }
 
 // model/list also advertises ultra orchestration, but forwarding it through
 // exec's model_reasoning_effort has not been verified. Expose the verified range.
@@ -60,12 +61,15 @@ func (c *Codex) Models() []ModelOption {
 }
 
 func codexArgs(o RunOptions, windowsSandbox string) []string {
-	// `codex exec resume` accepts fewer flags than `codex exec` (no --color, no --cd),
-	// and wants options before the positional session id.
-	resume := o.SessionID != ""
+	// `codex exec resume` and `codex exec fork` accept fewer flags than `codex exec`
+	// (no --color, no --cd), and want options before the positional session id.
+	resume, fork := o.SessionID != "", o.ForkSession != ""
 	args := []string{"exec"}
-	if resume {
+	switch {
+	case resume:
 		args = append(args, "resume")
+	case fork:
+		args = append(args, "fork")
 	}
 	// Plugins add their skills to the instructions, and Codex re-sends that whole
 	// list (about 10K tokens) whenever its shortened form changes, which happened on
@@ -74,7 +78,7 @@ func codexArgs(o RunOptions, windowsSandbox string) []string {
 	for _, im := range o.Images {
 		args = append(args, "--image", im.Path)
 	}
-	if !resume {
+	if !resume && !fork {
 		args = append(args, "--color", "never")
 	}
 	if o.Model != "" {
@@ -107,8 +111,11 @@ func codexArgs(o RunOptions, windowsSandbox string) []string {
 			args = append(args, "-c", "sandbox_workspace_write.writable_roots=["+cache+"]")
 		}
 	}
-	if resume {
+	switch {
+	case resume:
 		return append(args, o.SessionID, "-")
+	case fork:
+		return append(args, o.ForkSession, "-")
 	}
 	return append(args, "--cd", workDir(o), "-")
 }
@@ -129,7 +136,7 @@ func codexPermissionArgs(mode, windowsSandbox string) []string {
 }
 
 func codexPrompt(o RunOptions) string {
-	if o.MCP == nil || o.MCP.Name != "gitea" || o.Mode == ModeChat || o.SessionID != "" {
+	if o.MCP == nil || o.MCP.Name != "gitea" || o.Mode == ModeChat || o.SessionID != "" || o.ForkSession != "" {
 		return o.Prompt
 	}
 	return "Gitea 조회는 gitea_list·gitea_search·gitea_issue·gitea_pull·gitea_pull_diff 도구를 사용하세요. " +
@@ -157,6 +164,14 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 		}
 		cmd.Env = append(cmd.Env, "GOCACHE="+cache)
 	}
+	// turn.completed totals of a fork include the original thread's usage, but
+	// the fork's rollout does not repeat its token counts.
+	var forkTotals map[string]any
+	if o.ForkSession != "" {
+		if forkTotals, err = c.threadTotals(o.ForkSession); err != nil {
+			return Result{}, err
+		}
+	}
 	p := newCodexParser()
 	watcher := newRolloutWatcher(c.sessionsDir, time.Now().Add(-5*time.Second))
 	stop := make(chan struct{})
@@ -183,7 +198,7 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 		watcher.scan(id, emit)
 		watcher.finish(emit)
 		if path := watcher.pathOf(id); path != "" {
-			codexLimitsFromRollout(path, p, emit)
+			codexLimitsFromRollout(path, forkTotals, p, emit)
 		}
 	}
 	fin := p.Finish(emit)
@@ -377,10 +392,39 @@ func (p *codexParser) Finish(emit func(Event)) Final {
 	return Final{Text: strings.TrimSpace(strings.Join(p.parts, "\n\n")), SessionID: p.thread, Err: p.errText, Usage: p.usage, Complete: p.completed}
 }
 
+// threadTotals reads a saved thread's total_token_usage from its rollout file.
+func (c *Codex) threadTotals(id string) (map[string]any, error) {
+	paths, err := filepath.Glob(filepath.Join(c.sessionsDir, "*", "*", "*", "rollout-*-"+id+".jsonl"))
+	if err != nil || len(paths) != 1 {
+		return nil, fmt.Errorf("포크할 Codex 세션 %s의 기록 파일을 찾지 못함", id)
+	}
+	f, err := os.Open(paths[0])
+	if err != nil {
+		return nil, fmt.Errorf("포크할 Codex 세션 기록: %w", err)
+	}
+	defer f.Close()
+	total := map[string]any{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), maxLineBytes)
+	for sc.Scan() {
+		if line := sc.Text(); strings.Contains(line, `"total_token_usage"`) {
+			if t := obj(obj(obj(parseLine(line), "payload"), "info"), "total_token_usage"); t != nil {
+				total = t
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("포크할 Codex 세션 기록: %w", err)
+	}
+	return total, nil
+}
+
 // codexLimitsFromRollout reads the turn's own rollout file. The newest
 // token_count carries the account rate limits and the context window; the last
 // one before the newest turn_context holds the thread totals before this turn.
-func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
+// base is the totals the thread started from (a fork's original thread; nil
+// for a new or resumed thread, whose rollout holds its own history).
+func codexLimitsFromRollout(path string, base map[string]any, p *codexParser, emit func(Event)) {
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -389,6 +433,9 @@ func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
 	var last map[string]any
 	var observedAt int64
 	before, total := map[string]any{}, map[string]any{}
+	if base != nil {
+		before, total = base, base
+	}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), maxLineBytes)
 	for sc.Scan() {

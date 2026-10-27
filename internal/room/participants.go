@@ -17,6 +17,24 @@ type ParticipantSpec struct {
 	Effort   *string `json:"effort"`
 	Role     string  `json:"role"`
 	Count    int     `json:"count"`
+	// ForkFrom starts every seat of this spec from a copy of that seat's
+	// session. Model and effort default to the base seat's.
+	ForkFrom *ForkRef `json:"fork_from"`
+}
+
+// ForkRef names a base seat in another room.
+type ForkRef struct {
+	Room string `json:"room"`
+	Seat string `json:"seat"`
+}
+
+// sessionDir is where a room's CLIs run (agent workDir): "" is the server
+// scratch shared by chat rooms. Claude finds a session only from its own directory.
+func sessionDir(r *Room) string {
+	if r.Mode == agent.ModeChat {
+		return ""
+	}
+	return r.Workspace
 }
 
 func validateMode(mode, workspace string) error {
@@ -56,6 +74,8 @@ type preparedParticipant struct {
 	label, model, effort string
 	available            bool
 	contextWindow        int
+	fork                 *ForkSource
+	forkDir              string // sessionDir of the base room
 }
 
 // Provider discovery can spawn a CLI and must happen outside the hub mutex.
@@ -64,13 +84,41 @@ func (h *Hub) prepareParticipant(spec ParticipantSpec) (preparedParticipant, err
 	out := preparedParticipant{spec: spec}
 	h.mu.Lock()
 	closing := h.closing
+	var base *Participant
+	var baseErr error
+	if spec.ForkFrom != nil {
+		base, out.forkDir, baseErr = h.forkBaseLocked(*spec.ForkFrom)
+	}
 	h.mu.Unlock()
 	if closing {
 		return out, fmt.Errorf("서버가 종료 중이야")
 	}
+	if baseErr != nil {
+		return out, baseErr
+	}
 	prov := h.reg.Get(spec.Provider)
 	if prov == nil {
 		return out, fmt.Errorf("알 수 없는 공급자: %s", spec.Provider)
+	}
+	if base != nil {
+		if !prov.CanFork() {
+			return out, fmt.Errorf("%s는 세션 포크를 지원하지 않음", prov.Label())
+		}
+		if base.Provider != spec.Provider {
+			return out, fmt.Errorf("기반 좌석 %s의 공급자는 %s라서 %s 좌석으로 포크할 수 없음", base.ID, base.Provider, spec.Provider)
+		}
+		// A model change would not reuse the base context's cache, and Codex
+		// reasoning items belong to the model that wrote them.
+		if spec.Model == "" {
+			spec.Model = base.Model
+		}
+		if spec.Model != base.Model {
+			return out, fmt.Errorf("포크 좌석의 모델은 기반 좌석과 같은 %s여야 함", base.Model)
+		}
+		if spec.Effort == nil {
+			spec.Effort = &base.Effort // base is a copy taken under h.mu
+		}
+		out.fork = &ForkSource{Room: spec.ForkFrom.Room, Seat: base.ID, Session: base.SessionID}
 	}
 	if spec.Count == 0 {
 		spec.Count = 1
@@ -95,7 +143,24 @@ func (h *Hub) prepareParticipant(spec ParticipantSpec) (preparedParticipant, err
 	if err := validateModel(prov.ID(), spec.Model, effort, choices); err != nil {
 		return out, err
 	}
-	return preparedParticipant{spec: spec, label: prov.Label(), model: spec.Model, effort: effort, available: prov.Available(), contextWindow: prov.ContextWindow(spec.Model)}, nil
+	return preparedParticipant{spec: spec, label: prov.Label(), model: spec.Model, effort: effort, available: prov.Available(), contextWindow: prov.ContextWindow(spec.Model), fork: out.fork, forkDir: out.forkDir}, nil
+}
+
+// forkBaseLocked finds a base seat whose finished session can be copied. Caller holds h.mu.
+func (h *Hub) forkBaseLocked(ref ForkRef) (*Participant, string, error) {
+	rs, ok := h.rooms[ref.Room]
+	if !ok {
+		return nil, "", fmt.Errorf("기반 방 없음: %s", ref.Room)
+	}
+	base := rs.room.participant(ref.Seat)
+	if base == nil || base.Removed {
+		return nil, "", fmt.Errorf("기반 방 %s에 좌석 %s가 없음", ref.Room, ref.Seat)
+	}
+	if base.SessionID == "" {
+		return nil, "", fmt.Errorf("기반 좌석 %s에 아직 세션이 없음. 기반 방에서 공통 문맥을 먼저 읽혀야 함", ref.Seat)
+	}
+	copied := *base
+	return &copied, sessionDir(rs.room), nil
 }
 
 func newParticipants(r *Room, prepared preparedParticipant) ([]*Participant, error) {
@@ -112,6 +177,9 @@ func newParticipants(r *Room, prepared preparedParticipant) ([]*Participant, err
 	if active+spec.Count > MaxParticipants {
 		return nil, fmt.Errorf("참가자는 방마다 최대 %d명까지 추가할 수 있음", MaxParticipants)
 	}
+	if prepared.fork != nil && sessionDir(r) != prepared.forkDir {
+		return nil, fmt.Errorf("기반 방과 작업 폴더가 같아야 포크할 수 있음(채팅 모드는 채팅 모드끼리)")
+	}
 	var seats []*Participant
 	for i := 0; i < spec.Count; i++ {
 		label := strings.TrimSpace(spec.Label)
@@ -124,7 +192,12 @@ func newParticipants(r *Room, prepared preparedParticipant) ([]*Participant, err
 		for r.participant(id) != nil || slices.ContainsFunc(seats, func(p *Participant) bool { return p.ID == id }) {
 			id = spec.Provider + "-" + newID()
 		}
-		seats = append(seats, &Participant{ID: id, Provider: spec.Provider, Label: label, Enabled: prepared.available, Model: prepared.model, Effort: prepared.effort, Role: spec.Role, Status: "idle", ContextWindow: prepared.contextWindow})
+		seat := &Participant{ID: id, Provider: spec.Provider, Label: label, Enabled: prepared.available, Model: prepared.model, Effort: prepared.effort, Role: spec.Role, Status: "idle", ContextWindow: prepared.contextWindow}
+		if prepared.fork != nil {
+			fork := *prepared.fork
+			seat.Fork = &fork
+		}
+		seats = append(seats, seat)
 	}
 	return seats, nil
 }

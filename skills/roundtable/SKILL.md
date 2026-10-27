@@ -23,6 +23,21 @@ Roundtable은 서로 다른 공급사의 AI CLI가 한 방에서 대화·리뷰�
 4. 여러 모델의 의견을 겨루게 하려면 `roundtable rt discuss --room <방ID> --rounds 2`를 쓴다. 1라운드는 기본으로 블라인드라 서로의 답을 보지 않는다. 좌석들이 이미 같은 질문에 답했다면 블라인드 1라운드는 호출을 좌석 수만큼 더 쓰므로 `--blind_first false`를 붙인다.
 5. 합의 내용은 `roundtable rt decisions --room <방ID>`로 확인한다. AGREE는 의견이 같다는 뜻일 뿐 검증이 아니다. 좌석이 남긴 카드는 `proposed`(제안)이고 안내문에 들어가지 않는다. 근거를 확인한 뒤 `roundtable rt update_decision --room <방ID> --id <결정ID> --status active`로 확정하고, 받아들이지 않으면 `--status dropped`로 거절한다.
 
+## 같은 프로젝트의 여러 작업을 맡길 때: 기반 세션 포크
+작업마다 새 방을 만들면 좌석마다 같은 공통 문서(AGENTS.md, 설계 기록, 계약 문서 등)를 처음부터 다시 읽는다. 공통 문서는 기반 방에서 한 번만 읽히고, 작업 방의 좌석은 그 세션을 복사(포크)해서 시작한다. 포크마다 문맥이 따로라 작성 좌석과 검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않는다.
+
+1. 기반 방을 만든다. 결과의 `room`과 `participants[0].id`를 적어 둔다.
+   `roundtable rt create_room --title "<프로젝트> 기반" --workspace <저장소> --mode read --participants '[{"provider":"codex","model":"gpt-6.1-sol","effort":"high","label":"기반"}]'`
+2. 공통 문서를 읽힌다. 작업은 시키지 않는다.
+   `roundtable rt post --room <기반방> --text "공통 문서 A, B, C를 끝까지 읽어. 작업은 하지 말고 '준비됨'만 답해." --wait_seconds 600`
+3. 작업마다 새 방에서 기반 좌석을 포크한다. 공급사·모델은 기반 좌석과 같아야 하고(생략하면 기반 좌석 값), 작업 폴더도 같아야 한다. 모드와 추론 수준은 달라도 된다.
+   `roundtable rt create_room --title "작업 X 작성" --workspace <같은 저장소> --mode write --participants '[{"provider":"codex","label":"작성","fork_from":{"room":"<기반방>","seat":"<기반좌석>"}}]'`
+4. 작업 지시에는 공통 문서를 다시 읽으라는 말을 넣지 않는다. 검수는 같은 기반에서 다른 방으로 포크한다.
+
+- 기반 방에는 작업을 보내지 않는다. 기반이 커지면 모든 포크가 그 짐을 이어받는다. 공통 문서가 바뀌면 기반 방을 새로 만든다.
+- 기반 좌석이 실행 중이면 포크 좌석의 첫 턴은 실패한다. 기반 턴이 끝난 뒤 다시 보낸다.
+- agy(Gemini)는 세션 포크를 지원하지 않는다. Claude·Codex·OpenCode만 쓸 수 있다.
+
 ## 규칙
 - 출력은 한 줄 JSON이다. 종료 코드가 0이 아니면 stderr의 사유를 읽고 고친다. 같은 명령을 그대로 반복하지 않는다.
 - 인자 이름이 기억나지 않으면 `roundtable rt <명령> --help`를 먼저 본다.

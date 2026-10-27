@@ -14,6 +14,7 @@ type Participant struct {
 	Effort        string         `json:"effort"`
 	Role          string         `json:"role,omitempty"` // seat role directive; see docs/역할카드_개선_계약.md
 	SessionID     string         `json:"session_id"`
+	Fork          *ForkSource    `json:"fork,omitempty"`   // base session copied on the first turn; see docs/기반문맥_포크_계약.md
 	Brief         string         `json:"brief,omitempty"`  // briefKey of the standing brief this session holds
 	LastSeen      int64          `json:"last_seen"`        // highest message seq considered for delivery
 	Unseen        []int64        `json:"unseen,omitempty"` // unfinished replies below LastSeen
@@ -24,6 +25,14 @@ type Participant struct {
 	Totals        Totals         `json:"totals"`          // this room, all turns
 	ContextTokens int            `json:"context_tokens"`  // size of the agent's last API call
 	ContextWindow int            `json:"context_window"`
+}
+
+// ForkSource is the base seat session a seat starts from. The copy is made on
+// the seat's first turn (SessionID empty) and kept as provenance afterwards.
+type ForkSource struct {
+	Room    string `json:"room"`
+	Seat    string `json:"seat"`
+	Session string `json:"session"`
 }
 
 // Totals accumulates token usage of one participant.

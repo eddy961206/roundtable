@@ -22,6 +22,7 @@ type turnContext struct {
 	Round       int
 	TotalRounds int
 	FirstTurn   bool     // no resumable session: the whole transcript is included
+	Forked      bool     // the first turn continues a copy of a base seat's session from another room
 	Briefed     bool     // the resumed session already holds the current standing brief
 	Part        *Part    // the seat's working/fixing part (D9)
 	BlindFirst  bool     // the discussion started with a blind round 1
@@ -171,6 +172,9 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 		}
 	} else {
 		b.WriteString(standingBrief(r, me, tc.Decisions, tc.Scratch))
+	}
+	if tc.Forked {
+		b.WriteString("\n이 세션은 다른 방의 기반 세션을 복사해 시작했습니다. 그 세션에서 읽고 확인한 내용은 다시 읽지 말고 활용하세요. 다만 그 방의 이름·참가자·역할·규칙·요청은 더 이상 유효하지 않고, 위 안내와 아래 대화가 지금 방의 것입니다. 기반 세션 뒤에 바뀌었을 수 있는 파일은 필요할 때 다시 확인하세요.\n")
 	}
 	if tc.Parallel || tc.Reason == "discussion" || tc.Part != nil {
 		b.WriteString("\n이번 턴:\n")

@@ -17,17 +17,18 @@ const (
 
 // RunOptions describes one turn of one agent.
 type RunOptions struct {
-	Images     []Image // validated local originals selected by the room delivery cursor
-	Prompt     string
-	SessionID  string // resume when non-empty
-	Model      string
-	Effort     string
-	Mode       string
-	Workspace  string // absolute path; required for read/write
-	ScratchDir string // absolute server scratch: chat cwd and Codex write-mode cache
-	Timeout    time.Duration
-	Steer      <-chan string // live user messages while the turn runs (providers that CanSteer)
-	MCP        *MCPServer    // extra read-only tool server for this run (nil = none)
+	Images      []Image // validated local originals selected by the room delivery cursor
+	Prompt      string
+	SessionID   string // resume when non-empty
+	ForkSession string // start a new session copied from this one (SessionID empty; providers that CanFork)
+	Model       string
+	Effort      string
+	Mode        string
+	Workspace   string // absolute path; required for read/write
+	ScratchDir  string // absolute server scratch: chat cwd and Codex write-mode cache
+	Timeout     time.Duration
+	Steer       <-chan string // live user messages while the turn runs (providers that CanSteer)
+	MCP         *MCPServer    // extra read-only tool server for this run (nil = none)
 }
 
 type Image struct {
@@ -65,6 +66,7 @@ type Provider interface {
 	DefaultModel() (model, effort string)
 	Available() bool
 	CanSteer() bool // true when a message can be injected into a running turn
+	CanFork() bool  // true when RunOptions.ForkSession is supported
 	ContextWindow(model string) int
 	Run(ctx context.Context, opts RunOptions, emit func(Event)) (Result, error)
 }

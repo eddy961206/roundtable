@@ -231,6 +231,7 @@ type fakeProvider struct {
 	steer   bool
 	drain   bool // read steer messages while delaying (a real CLI would)
 	fail    error
+	noFork  bool
 }
 
 func (f *fakeProvider) ID() string      { return f.id }
@@ -241,6 +242,7 @@ func (f *fakeProvider) Models() []agent.ModelOption {
 }
 func (f *fakeProvider) Available() bool          { return true }
 func (f *fakeProvider) CanSteer() bool           { return f.steer }
+func (f *fakeProvider) CanFork() bool            { return !f.noFork }
 func (f *fakeProvider) ContextWindow(string) int { return 1000 }
 func (f *fakeProvider) calls() int               { f.mu.Lock(); defer f.mu.Unlock(); return len(f.prompts) }
 func (f *fakeProvider) Run(ctx context.Context, o agent.RunOptions, emit func(agent.Event)) (agent.Result, error) {

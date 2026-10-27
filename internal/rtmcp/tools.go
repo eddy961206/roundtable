@@ -49,10 +49,11 @@ func (s *Server) tools() []tool {
 	str := schema{Type: "string"}
 	limit := int64(600)
 	roomLimit := int64(maxListRooms)
-	participant := object(map[string]schema{"provider": text, "model": str, "effort": str, "label": str, "role": str}, "provider")
+	fork := object(map[string]schema{"room": id, "seat": id}, "room", "seat")
+	participant := object(map[string]schema{"provider": text, "model": str, "effort": str, "label": str, "role": str, "fork_from": fork}, "provider")
 	all := []tool{
 		{Name: "rt_list_rooms", Description: fmt.Sprintf("최근 갱신순 방 id·제목·모드·실행 여부와 좌석(id·이름·공급사·모델·enabled) 조회. 삭제된 좌석은 빠지고 enabled:false는 꺼진 좌석. limit 기본 %d, 최대 %d", defaultListRooms, maxListRooms), InputSchema: object(map[string]schema{"limit": integer(1, &roomLimit)})},
-		{Name: "rt_create_room", Description: "새 방 생성. 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용", InputSchema: object(map[string]schema{
+		{Name: "rt_create_room", Description: "새 방 생성. 결과는 방 id와 좌석 목록(id·이름·공급사·모델·enabled). 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용. fork_from {room, seat}을 주면 그 좌석의 세션(공통 문서를 읽힌 기반 세션)을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않음. 포크 좌석은 공급사·모델이 기반 좌석과 같아야 하고(생략 시 기반 좌석 값), 방의 작업 폴더도 같아야 함. 포크마다 문맥이 따로라 작성·검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않음. agy는 포크 미지원", InputSchema: object(map[string]schema{
 			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
 			"participants": {Type: "array", Items: &participant, MinItems: 1},
 		}, "title", "workspace", "mode", "participants")},
@@ -151,6 +152,10 @@ type participantInput struct {
 	Effort   *string `json:"effort,omitempty"`
 	Label    string  `json:"label,omitempty"`
 	Role     string  `json:"role,omitempty"`
+	ForkFrom *struct {
+		Room string `json:"room"`
+		Seat string `json:"seat"`
+	} `json:"fork_from,omitempty"`
 }
 
 type arguments struct {
@@ -215,7 +220,8 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 			return nil, fmt.Errorf("read/write 모드는 workspace가 필요함")
 		}
 		var created struct {
-			ID string `json:"id"`
+			ID           string `json:"id"`
+			Participants []seat `json:"participants"`
 		}
 		err := s.api(ctx, "POST", "/api/rooms", map[string]any{"title": a.Title, "workspace": a.Workspace, "mode": a.Mode, "participant_specs": a.Participants}, &created)
 		if err != nil {
@@ -224,7 +230,12 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if created.ID == "" {
 			return nil, fmt.Errorf("방 생성 응답에 id가 없음")
 		}
-		return map[string]string{"room": created.ID}, nil
+		// Seat ids are what post targets and a later fork_from name.
+		seats := make([]listSeat, 0, len(created.Participants))
+		for _, sp := range created.Participants {
+			seats = append(seats, listSeat{ID: sp.ID, Label: sp.Label, Provider: sp.Provider, Model: sp.Model, Enabled: sp.Enabled})
+		}
+		return map[string]any{"room": created.ID, "participants": seats}, nil
 	case "rt_post":
 		return s.post(ctx, a)
 	case "rt_read":
