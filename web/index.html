@@ -281,11 +281,11 @@
       <label class="inline" title="1라운드는 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개합니다"><input type="checkbox" name="blind_first_default"> 토론 1라운드 블라인드</label>
     </div>
     <div class="row" id="room-guards">
-      <label title="좌석 누적 입력(캐시 포함)이 이 값의 배수를 넘을 때마다 안내합니다. 0은 기본 1천만, -1은 끔">입력 경고 간격(토큰) <input name="input_warn_tokens" type="number" min="-1" step="1000000" placeholder="0 = 1천만"></label>
+      <label title="좌석 누적 입력(캐시 포함)이 이 값의 배수를 넘을 때마다 안내합니다. 0은 기본 1천만, -1은 끔">입력 경고 간격(토큰) <input name="input_warn_tokens" type="number" min="-1" placeholder="0 = 1천만"></label>
       <label title="좌석 문맥이 모델 한도의 이 비율을 넘으면 한 번 안내합니다. 0은 기본 70, -1은 끔">문맥 경보(%) <input name="context_warn_percent" type="number" min="-1" max="99" placeholder="0 = 70"></label>
-      <label title="좌석 하나의 누적 입력이 넘으면 그 좌석의 새 턴을 시작하지 않습니다. 0은 상한 없음">좌석 입력 상한(토큰) <input name="seat_input_budget" type="number" min="0" step="1000000" placeholder="0 = 없음"></label>
-      <label title="방 전체 누적 입력이 넘으면 모든 좌석의 새 턴을 시작하지 않습니다. 0은 상한 없음">방 입력 상한(토큰) <input name="room_input_budget" type="number" min="0" step="1000000" placeholder="0 = 없음"></label>
-      <label title="Claude 좌석이 세션 문맥이 이 크기에 이르면 자동 압축합니다. 긴 세션의 입력이 줄지만 압축 호출만큼 턴이 길어집니다. 0은 CLI 기본, 100000~1000000">Claude 압축 기준(토큰) <input name="compact_window_tokens" type="number" min="0" max="1000000" step="50000" placeholder="0 = CLI 기본"></label>
+      <label title="좌석 하나의 누적 입력이 넘으면 그 좌석의 새 턴을 시작하지 않습니다. 0은 상한 없음">좌석 입력 상한(토큰) <input name="seat_input_budget" type="number" min="0" placeholder="0 = 없음"></label>
+      <label title="방 전체 누적 입력이 넘으면 모든 좌석의 새 턴을 시작하지 않습니다. 0은 상한 없음">방 입력 상한(토큰) <input name="room_input_budget" type="number" min="0" placeholder="0 = 없음"></label>
+      <label title="Claude 좌석이 세션 문맥이 이 크기에 이르면 자동 압축합니다. 긴 세션의 입력이 줄지만 압축 호출만큼 턴이 길어집니다. 0은 CLI 기본, 100000~1000000">Claude 압축 기준(토큰) <input name="compact_window_tokens" type="number" min="0" max="1000000" placeholder="0 = CLI 기본"></label>
     </div>
     <menu>
       <button value="cancel" type="button" id="dlg-room-cancel">취소</button>
