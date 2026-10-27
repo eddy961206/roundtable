@@ -31,3 +31,13 @@ state_dir() { mkdir -p "$ORCH_STATE" && echo "$ORCH_STATE"; }
 export $(compgen -v ORCH_)
 # winpath prints a path the way a model on this host reads it (Windows form under Git Bash).
 winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else echo "$1"; fi; }
+# verify_pushed <worktree> <branch>: the remote branch tip is the worktree HEAD.
+# A push can exit 0 and still not land there (pushurl, hooks, a lagging mirror),
+# so posting waits for this, not for the exit code alone.
+verify_pushed() {
+  local lh rh
+  lh=$(git -C "$1" rev-parse HEAD) || return 1
+  rh=$(git -C "$1" -c credential.useHttpPath=false ls-remote origin "refs/heads/$2" | cut -f1) \
+    || { echo "cannot read the remote head of $2; nothing posted" >&2; return 1; }
+  [ "$rh" = "$lh" ] || { echo "remote head of $2 is ${rh:-missing}, local is $lh; nothing posted" >&2; return 1; }
+}

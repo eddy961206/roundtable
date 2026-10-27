@@ -12,6 +12,7 @@ roundtable 방(작성·검수 좌석)과 Gitea PR·리뷰를 오케스트레이�
 ## 지켜야 할 규칙
 
 - **제품 코드 PR에는 자동 병합을 쓰지 않는다.** CI 통과·검수 방 승인은 병합 근거가 아니다. 상대 개발자가 승인한 것을 확인한 뒤 사람이 손으로 병합한다. `ci_wait.sh`는 CI 상태만 알려 준다.
+- **push 뒤 게시는 push를 확인한 뒤에만 한다.** push 종료 코드가 0이고 원격 브랜치 head가 로컬 HEAD와 같을 때만 PR·댓글·재리뷰 요청을 보낸다. `gpost.sh pr`과 `push_and_notify.sh`가 이 순서를 지킨다. 손으로 push했다면 `git ls-remote origin refs/heads/<branch>`로 확인한 뒤 게시한다(2026-10-27 VMS-next #66: 인증 실패로 끝난 force push 뒤 "새 head로 반영" 댓글이 먼저 나갔다).
 - **`rt wait`에는 after_seq를 준다.** `rtwait.sh`는 `방:seq` 형식만 받는다. seq는 `rt post` 결과의 `seq`다. after_seq를 빼면 서버는 대기를 시작한 뒤 생긴 답만 센다. 그래서 대기 전에 이미 도착한 답은 보이지 않고 timeout까지 기다린다.
 - Gitea 게시물에 `Generated with`·`Co-Authored-By`·대리 작성 표식을 넣지 않는다. `glint.py`가 막는다.
 - Windows에서 한글이 든 JSON은 인라인 인자(`curl -d '{...}'`) 대신 UTF-8로 저장한 파일을 `curl --data-binary @파일`로 보낸다. 인라인 인자는 콘솔 코드 페이지 바이트로 넘어갈 수 있다. roundtable 서버는 UTF-8이 아닌 본문을 400으로 거절한다.
@@ -73,13 +74,27 @@ python tools/orchestrate/glint.py <본문.md> [...]
 ```
 
 - `comment`: 본문 파일을 그대로 JSON으로 만들어 `tea api`로 댓글을 단다. 출력은 `comment <id> on #<번호>`.
-- `pr`: worktree가 깨끗한지 확인하고 branch를 push한 뒤 PR을 만든다(base는 `ORCH_BASE`). `ORCH_REVIEWER`가 있으면 리뷰를 요청한다. 리뷰 요청이 실패하면 PR 번호를 출력한 뒤 종료 코드 1로 끝난다. 병합은 하지 않는다.
+- `pr`: worktree가 깨끗한지 확인하고 branch를 push한다. push가 실패하거나 원격 브랜치 head가 로컬 HEAD와 다르면 PR을 만들지 않고 종료 코드 1로 끝난다. 그다음 PR을 만든다(base는 `ORCH_BASE`). `ORCH_REVIEWER`가 있으면 리뷰를 요청한다. 리뷰 요청이 실패하면 PR 번호를 출력한 뒤 종료 코드 1로 끝난다. 병합은 하지 않는다.
 - `glint.py`는 아래를 찾으면 `LINT: 파일:줄: 이유: 일치 문자열`을 출력하고 종료 코드 1을 낸다. 빈 본문도 막는다.
   - 작성자 초안 문구(`push·PR`, `PR 게시`, `게시하지 않`, `로컬 초안`, `사용자가 별도로` 등)
   - 로컬 절대 경로(`C:\…`, `C:/…`, `/c/…/`, `/home/<u>/`, `/Users/<u>/`, `ORCH_LINT_EXTRA`)
   - 빈 코드 조각: 단독 ``` `` ```, `head`·`base`·`커밋`·`commit`·`sha` 뒤의 연속 공백
   - 대리 작성 표식: `Generated with`, `Co-Authored-By`, `대신 작성`
 - 관측 한계: 정규식 검사다. 다른 표현의 초안 문구, 공백 없이 사라진 값, 상대 경로는 잡지 못한다. 규칙마다 첫 일치만 보고한다. PR 제목은 검사하지 않는다. `tea`가 저장소에 맞는 로그인을 찾지 못하면 기본 로그인으로 게시하며 `NOTE:` 줄을 남긴다. 게시 뒤 원문은 Gitea에서 다시 조회해 확인한다.
+
+### `push_and_notify.sh` — 재기반·수정 뒤 push하고 PR에 알리기
+
+```bash
+tools/orchestrate/push_and_notify.sh <worktree> <branch> <PR 번호> <본문.md> [--force]
+```
+
+- 순서: 본문 검사(`glint.py`) → push → 원격 브랜치 head 확인 → PR head 확인 → 댓글 → 재리뷰 요청(`ORCH_REVIEWER`).
+- 앞 단계가 하나라도 실패하면 뒤 단계는 하지 않고 종료 코드 1로 끝난다. 인자 오류는 2다.
+- `--force`는 `--force-with-lease`로 push한다(재기반 뒤). 원격 추적 브랜치가 오래됐으면 lease가 거절되어 아무것도 게시하지 않는다. 그때는 fetch한 뒤 다시 실행한다.
+- worktree는 그 branch를 체크아웃한 깨끗한 상태여야 한다.
+- 본문의 `{{HEAD}}`는 확인한 짧은 head로 바뀐다. 예: 본문에 `새 head {{HEAD}}로 반영했습니다.`라고 쓰면 `새 head 7bc1ffb로 반영했습니다.`로 게시된다.
+- PR head는 Gitea가 push 뒤 비동기로 갱신하므로 `ORCH_PR_HEAD_TRIES`(기본 10)회, `ORCH_PR_HEAD_INTERVAL`(기본 3초) 간격으로 확인한다.
+- 관측 한계: 댓글은 게시했는데 재리뷰 요청이 실패하면 종료 코드 1과 함께 그 사실만 알린다(댓글은 이미 게시됨). fork PR처럼 원격이 `origin`이 아닌 경우는 다루지 않는다.
 
 ### `assign_fix.sh` — 리뷰를 작성 방에 배정
 
@@ -228,5 +243,6 @@ python -m unittest discover -s tools/orchestrate -p "test_*.py"
   - 점유 판정 세 방식(workspace·대응표·등록), 실행 중이 아닌 방, 등록·해제 거부
   - `queue_review.sh`가 rebase 전에 거부, `assign_fix.sh`가 게시 전에 거부
 - 가드를 하나씩 지운 변형 17개를 각각 해당 시험이 잡는 것을 확인했다(2026-10-27).
-- 시험하지 않는 것: 실제 Gitea·roundtable 서버 호출, `gpost.sh pr`의 push, `queue_review.sh`의 rebase·충돌 해결, 폴링 반복. Windows에서 전체 시험은 git 호출이 많아 약 2분 걸린다.
+- `test_push.py`는 임시 bare 저장소에 실제로 push해서 확인한다: push 실패, push는 성공했지만 원격 head가 다름(`pushurl`이 다른 저장소), PR head가 늦음, 재기반 뒤 `--force` 필요, 본문 검사가 push보다 먼저, 모든 확인 뒤 댓글·재리뷰 요청과 `{{HEAD}}` 치환. 가드를 지운 변형 8개를 모두 잡았다.
+- 시험하지 않는 것: 실제 Gitea·roundtable 서버 호출, 실제 Gitea 원격으로의 push, `queue_review.sh`의 rebase·충돌 해결, 폴링 반복. Windows에서 전체 시험은 git 호출이 많아 약 2분 걸린다.
 - Windows에서 `bash`가 WSL 실행기로 잡히면 Git Bash를 찾아 쓴다. 다른 Bash를 쓰려면 `ORCH_BASH`를 지정한다. Bash가 없으면 셸 시험은 건너뛴다.
