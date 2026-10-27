@@ -132,10 +132,12 @@ tools/orchestrate/ci_wait.sh <PR 번호>
 
 ```bash
 python tools/orchestrate/reviewer_check.py 2026-10-27T05:00:00Z [--user <login>] [--repos owner/a,owner/b]
+python tools/orchestrate/reviewer_check.py --approved-open [--user <login>] [--repos ...]
 tools/orchestrate/reviewer_watch.sh 2026-10-27T05:00:00Z
 ```
 
 - `reviewer_check.py`는 지정 시각 뒤 그 사용자의 이슈·PR 댓글, PR 리뷰(APPROVED·REQUEST_CHANGES·COMMENT), 새 이슈·PR을 `시각 | 저장소 | 종류 | 번호 | id | 앞 400자`로 출력한다. 없으면 아무것도 출력하지 않는다. `tea` 호출이 실패하면 "반응 없음"이 아니라 오류로 끝난다.
+- `--approved-open`은 시각 대신 지금 상태를 본다. 열린 PR 가운데 그 사용자의 마지막 판정(APPROVED·REQUEST_CHANGES) 리뷰가 APPROVED이고 그 리뷰의 커밋이 현재 head인 PR을 `승인 시각 | 저장소 | approved-open | 번호 | 리뷰 id | 제목`으로 출력한다. 감시가 승인 이벤트를 놓쳤거나 처리 중 잊은 승인을 다시 찾는다(10-27 VMS-next #69가 승인 뒤 8시간 넘게 병합되지 않았다). 반응을 처리할 때와 진행 상황을 보고할 때마다 함께 돌린다. 승인 뒤 COMMENT 리뷰는 판정을 바꾸지 않는다고 본다.
 - `reviewer_watch.sh`는 `ORCH_WATCH_INTERVAL`(기본 300초)마다 최대 `ORCH_WATCH_TRIES`(기본 24)회 확인한다. 첫 반응을 출력하고 끝난다. 반응이 없으면 종료 코드 3이다.
 - 관측 한계: 저장소마다 최근 갱신 PR 15개, 댓글 50개, 이슈 30개만 본다. 그보다 많이 움직인 구간은 빠질 수 있다. 줄 단위 리뷰 댓글과 반응(이모지)은 보지 않는다. 시각 비교는 ISO-8601 문자열 비교라서 UTC `Z` 형식으로 준다. 다음 감시의 기준 시각은 호출한 쪽이 기억해야 한다.
 
@@ -231,7 +233,7 @@ python -m unittest discover -s tools/orchestrate -p "test_*.py"
 ```
 
 - `glint.py` 규칙별 일치·비일치, 줄 번호, 종료 코드를 확인한다.
-- `reviewer_check.py`의 인자·기본값 처리를 확인한다.
+- `reviewer_check.py`의 인자·기본값 처리와 `--approved-open` 판정(옛 head 승인·뒤이은 변경 요청·다른 사용자 제외)을 확인한다.
 - 셸 스크립트는 가짜 `tea`·`rt` 실행 파일로 돌린다. 인자 오류에서 아무 호출도 하지 않는지, 필수 설정 누락, 설정 파일 적용, 본문 원문 보존(백틱·`$`·따옴표), lint 실패 시 게시 중단, `rt wait` 인자 조립, CI context 선택을 확인한다.
 - `test_overlap.py`는 임시 git 저장소(bare origin + `refs/pull/<n>/head` + 로컬 clone)에서 아래 반례를 확인한다. Gitea는 `orchlib.tea_api` 대체, roundtable은 로컬 가짜 HTTP 서버다.
   - 줄 충돌 쌍과 충돌 없는 쌍

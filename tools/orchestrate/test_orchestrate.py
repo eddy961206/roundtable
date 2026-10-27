@@ -114,6 +114,23 @@ class ReviewerArgsTest(unittest.TestCase):
                     reviewer_check.parse(argv, env)
             self.assertEqual(cm.exception.code, 2)
 
+    def test_approved_open_needs_head_approval(self):
+        a = reviewer_check.parse(['--approved-open'], {'ORCH_REVIEWER': 'bob', 'ORCH_REPO': 'o/r'})
+        self.assertTrue(a.approved_open)
+        rv = lambda state, sha, at, user='bob': {'user': {'login': user}, 'state': state, 'commit_id': sha,
+                                                 'submitted_at': at, 'id': at}
+        pulls = [{'number': n, 'title': 't%d' % n, 'head': {'sha': 'h%d' % n}} for n in range(1, 6)]
+        reviews = {
+            1: [rv('REQUEST_CHANGES', 'old', '1'), rv('APPROVED', 'h1', '2'), rv('REQUEST_REVIEW', '', '3')],
+            2: [rv('APPROVED', 'old', '1')],                          # approved an older head
+            3: [rv('APPROVED', 'h3', '1'), rv('REQUEST_CHANGES', 'h3', '2')],
+            4: [rv('APPROVED', 'h4', '1', user='eve')],               # someone else
+            5: [rv('APPROVED', 'h5', '1'), rv('COMMENT', 'h5', '2')],  # a later comment keeps the verdict
+        }
+        get = lambda path: pulls if path.endswith('state=open&limit=50') else reviews[int(path.split('/')[-2])]
+        got = [o[3] for o in reviewer_check.approved_open(['o/r'], 'bob', get)]
+        self.assertEqual(got, [5, 1])
+
 
 @unittest.skipIf(not BASH, 'bash not found (set ORCH_BASH)')
 class ShellArgsTest(unittest.TestCase):
