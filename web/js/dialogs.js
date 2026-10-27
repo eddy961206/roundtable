@@ -413,6 +413,9 @@ export function openRoomDialog(room, initialPrompt = "") {
   f.discussion_rounds.value = room ? room.discussion_rounds : 3;
   f.persona.checked = room ? !!room.persona : false;
   f.blind_first_default.checked = room ? room.blind_first_default === true : true;
+  // Usage guards apply to an existing room (PATCH); a new room starts with the defaults.
+  $("#room-guards").hidden = !room;
+  for (const k of ["input_warn_tokens", "context_warn_percent", "seat_input_budget", "room_input_budget"]) f[k].value = room ? room[k] || 0 : 0;
   $("#room-seats-fieldset").hidden = !!room;
   $("#room-seat-specs").replaceChildren();
   $("#btn-copy-room-seats").hidden = !!room || !state.room;
@@ -440,6 +443,7 @@ export async function onRoomSubmit(e) {
   };
   try {
     if (f.dataset.editing) {
+      for (const k of ["input_warn_tokens", "context_warn_percent", "seat_input_budget", "room_input_budget"]) body[k] = Number(f[k].value || 0);
       await api("PATCH", "/api/rooms/" + f.dataset.editing, body);
     } else {
       body.participant_specs = readSeatSpecs($("#room-seat-specs"));

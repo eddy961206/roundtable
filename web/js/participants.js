@@ -526,6 +526,31 @@ export function syncEffortSelect(es, effList, currentEffort) {
   return es.value;
 }
 
+// Usage guard badges (server: internal/room/budget.go): context share past the
+// room's warning level, and a seat whose new turns are held at an input budget.
+function renderGuardBadges(card, p) {
+  let box = card.querySelector(".guard-badges");
+  if (!box) {
+    box = el("div", "guard-badges");
+    card.querySelector(".status-line").before(box);
+  }
+  box.replaceChildren();
+  const room = state.room || {};
+  const warnPct = room.context_warn_percent < 0 ? 0 : room.context_warn_percent || 70;
+  const pct = p.context_window > 0 ? Math.floor((p.context_tokens * 100) / p.context_window) : 0;
+  if (warnPct && pct >= warnPct) {
+    const b = el("span", "badge guard warn", "문맥 " + pct + "%");
+    b.title = "문맥이 모델 한도의 " + pct + "%입니다(경보 " + warnPct + "%). 작업이 바뀌면 세션 초기화나 새 세션(포크)을 고려하세요.";
+    box.appendChild(b);
+  }
+  if (p.budget_held) {
+    const b = el("span", "badge guard danger", "입력 상한 · 턴 보류");
+    b.title = p.budget_held + ". 방 설정에서 상한을 올리거나 0으로 지우면 다음 턴에 남은 메시지가 전달됩니다.";
+    box.appendChild(b);
+  }
+  box.hidden = !box.childElementCount;
+}
+
 function updateParticipantCardInPlace(card, p, info) {
   const signature = JSON.stringify([p, participantLabel(p.id), info.available, info.catalog_status, info.catalog_error, state.catalogRevision, seatTimes(p.id), seatClass(p.id)]);
   if (card.dataset.signature === signature) return;
@@ -617,6 +642,7 @@ function updateParticipantCardInPlace(card, p, info) {
     const t = seatTimes(p.id);
     rt.textContent = t ? "응답 시간 · 최근 " + fmtElapsed(t.last) + " · 평균 " + fmtElapsed(t.avg) + " (" + t.n + "회)" : "응답 시간 · 아직 완료한 답변 없음";
   }
+  renderGuardBadges(card, p);
   const stLine = card.querySelector(".status-line");
   if (stLine) {
     stLine.className = "status-line " + (p.status || "idle");
@@ -657,6 +683,8 @@ function updateParticipantCardInPlace(card, p, info) {
       );
       stats.appendChild(usageGauge(pct, false));
     }
+    const seatBudget = (state.room && state.room.seat_input_budget) || 0;
+    addStatRow("누적 입력(캐시 포함)", fmtK(p.input_all || 0) + (seatBudget ? " / 상한 " + fmtK(seatBudget) : ""));
     addStatRow(
       "이 방 누적",
       "입력 " + fmtK(t.input) + " · 출력 " + fmtK(t.output) + " · 캐시 " + fmtK(t.cached)

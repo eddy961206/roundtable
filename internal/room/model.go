@@ -25,6 +25,13 @@ type Participant struct {
 	Totals        Totals         `json:"totals"`          // this room, all turns
 	ContextTokens int            `json:"context_tokens"`  // size of the agent's last API call
 	ContextWindow int            `json:"context_window"`
+	// Usage guards (budget.go): normalized cumulative input in this room, the
+	// warning level already announced, whether the context warning is out, and
+	// the budget reason last announced for a held turn.
+	InputAll      float64 `json:"input_all"`
+	InputWarned   int     `json:"input_warned,omitempty"`
+	ContextWarned bool    `json:"context_warned,omitempty"`
+	BudgetHeld    string  `json:"budget_held,omitempty"`
 }
 
 // ForkSource is the base seat session a seat starts from. The copy is made on
@@ -60,8 +67,14 @@ type Room struct {
 	Seq              int64          `json:"seq"`
 	Persona          bool           `json:"persona"` // allow light banter between agents
 	// BlindFirstDefault is the 토론 시작 default: round 1 answers independently from one cap.
-	BlindFirstDefault bool      `json:"blind_first_default"`
-	Work              *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
+	BlindFirstDefault bool `json:"blind_first_default"`
+	// Usage guards (budget.go). InputWarnTokens and ContextWarnPercent: 0 is the
+	// default, -1 off. The budgets: 0 is no cap.
+	InputWarnTokens    int64     `json:"input_warn_tokens,omitempty"`
+	SeatInputBudget    int64     `json:"seat_input_budget,omitempty"`
+	RoomInputBudget    int64     `json:"room_input_budget,omitempty"`
+	ContextWarnPercent int       `json:"context_warn_percent,omitempty"`
+	Work               *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {

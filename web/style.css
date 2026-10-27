@@ -2943,3 +2943,9 @@ dialog.dlg-stats { width: min(1100px, 96vw); }
 .marker-route .route-raw code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .steer-tag.route, .call-route { display: inline-flex; align-items: center; gap: 4px; }
 .steer-tag.route .route-how { font-weight: 500; }
+
+/* Usage guard badges on a seat card (budget.go). */
+.pcard .guard-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.pcard .guard-badges[hidden] { display: none; }
+.badge.guard.warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn); }
+.badge.guard.danger { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); }

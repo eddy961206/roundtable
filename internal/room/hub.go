@@ -128,6 +128,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 			}
 		}
 		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
+		backfillInput(rs)
 		rs.requests, err = store.loadRequests(r.ID)
 		if err != nil {
 			return nil, err
@@ -408,15 +409,19 @@ type ParticipantPatch struct {
 
 // RoomPatch is a partial update.
 type RoomPatch struct {
-	Title             *string            `json:"title,omitempty"`
-	Note              *string            `json:"note,omitempty"`
-	Mode              *string            `json:"mode,omitempty"`
-	Workspace         *string            `json:"workspace,omitempty"`
-	MaxChain          *int               `json:"max_chain,omitempty"`
-	DiscussionRounds  *int               `json:"discussion_rounds,omitempty"`
-	Persona           *bool              `json:"persona,omitempty"`
-	BlindFirstDefault *bool              `json:"blind_first_default,omitempty"`
-	Participants      []ParticipantPatch `json:"participants,omitempty"`
+	Title              *string            `json:"title,omitempty"`
+	Note               *string            `json:"note,omitempty"`
+	Mode               *string            `json:"mode,omitempty"`
+	Workspace          *string            `json:"workspace,omitempty"`
+	MaxChain           *int               `json:"max_chain,omitempty"`
+	DiscussionRounds   *int               `json:"discussion_rounds,omitempty"`
+	Persona            *bool              `json:"persona,omitempty"`
+	BlindFirstDefault  *bool              `json:"blind_first_default,omitempty"`
+	InputWarnTokens    *int64             `json:"input_warn_tokens,omitempty"`
+	SeatInputBudget    *int64             `json:"seat_input_budget,omitempty"`
+	RoomInputBudget    *int64             `json:"room_input_budget,omitempty"`
+	ContextWarnPercent *int               `json:"context_warn_percent,omitempty"`
+	Participants       []ParticipantPatch `json:"participants,omitempty"`
 }
 
 func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
@@ -468,6 +473,21 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	}
 	if contextChanged && (rs.room.Work != nil || rs.workBusy[busyPlan]) {
 		return nil, fmt.Errorf("작업 계획이 있는 방은 모드와 작업 폴더를 변경할 수 없음")
+	}
+	if patch.InputWarnTokens != nil {
+		next.InputWarnTokens = *patch.InputWarnTokens
+	}
+	if patch.SeatInputBudget != nil {
+		next.SeatInputBudget = *patch.SeatInputBudget
+	}
+	if patch.RoomInputBudget != nil {
+		next.RoomInputBudget = *patch.RoomInputBudget
+	}
+	if patch.ContextWarnPercent != nil {
+		next.ContextWarnPercent = *patch.ContextWarnPercent
+	}
+	if err := validateGuards(&next); err != nil {
+		return nil, err
 	}
 	if patch.MaxChain != nil {
 		if *patch.MaxChain < 1 {
@@ -1200,6 +1220,15 @@ func (h *Hub) pump(rs *roomState) {
 			continue
 		}
 		rs.queue = slices.Delete(rs.queue, i, i+1)
+		if why := rs.budgetHold(p); why != "" && t.Reason != "part" && t.Reason != "review" {
+			if t.Reason == "discussion" {
+				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
+			}
+			h.holdTurn(rs, p, why)
+			skipped = true
+			continue
+		}
+		p.BudgetHeld = ""
 		pr := h.buildTurn(rs, t)
 		if pr == nil {
 			skipped = true
@@ -1542,6 +1571,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	msg.Duration = time.Since(started).Milliseconds()
 	msg.Timing.TotalMs = msg.Duration
 	msg.Usage = res.Usage
+	p.InputAll += normalizedInput(p.Provider, res.Usage)
 	if res.SessionID != "" {
 		msg.SessionID = res.SessionID
 	}
@@ -1662,6 +1692,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		h.reportPersistenceError(rs, "메시지", err)
 	}
 	rs.broadcast("message", msg)
+	h.usageNotices(rs, p)
 	if msg.PendingMarkers > 0 {
 		h.addSystem(rs, fmt.Sprintf("@%s 턴 #%d이 오류로 끝나 답의 마커 %d개(요청·결정·첨부)를 처리하지 않음 · 답이 끝까지 쓰였다면 화면의 '마커 실행' 또는 rt apply_markers로 실행", p.ID, msg.Seq, msg.PendingMarkers))
 	}
