@@ -59,7 +59,7 @@ Windows에서는 Hyper-V·WinNAT 등이 기본 포트 8787을 예약 범위로 �
 | Claude Code | `--tools Read,Grep,Glob,Agent,Task,WebSearch,WebFetch` 유지. 직접 셸·편집 도구는 제공하지 않는다. | `acceptEdits` + `Bash,PowerShell` 허용 유지 | `--tools ""`로 내장 도구 제외 |
 | Antigravity | `--mode plan` 유지. 편집·셸 실행 허용 여부는 CLI가 판단한다. | `--mode accept-edits` 유지 | scratch에서 `--mode plan` |
 
-Claude에는 실행별 `--settings '{"sandbox":{"enabled":false}}'`를 전달하고, Antigravity에는 `--sandbox`를 전달하지 않는다. OpenCode는 기존 도구 권한 정책을 유지하며 OS 샌드박스를 추가하지 않는다. CLI의 관리자 정책이나 외부 실행 환경이 별도로 강제하는 제한을 roundtable이 해제하지는 못한다.
+Claude에는 실행별 `--settings '{"sandbox":{"enabled":false}}'`를 전달하고, Antigravity에는 `--sandbox`를 전달하지 않는다. OpenCode는 기존 도구 권한 정책(작업 폴더 안 파일 도구만 허용)을 유지하되, 쓰기 모드에서는 다른 공급사처럼 빌드·시험을 돌리도록 v2 `shell` 도구를 허용한다(2026-10-27). OpenCode 셸은 OS 샌드박스가 아니며 읽기·채팅 모드에서는 계속 막는다. CLI의 관리자 정책이나 외부 실행 환경이 별도로 강제하는 제한을 roundtable이 해제하지는 못한다.
 
 Codex 샌드박스를 다시 켜려면 기존 옵션을 **명시**한다. `-codex-windows-sandbox elevated` 또는 `unelevated`는 Windows 실행 방식을 선택하면서 read·chat을 `read-only`, write를 `workspace-write`로 되돌린다. 비우면 `windows.sandbox`를 덮어쓰지 않고 `sandbox_mode="danger-full-access"`로 실행한다. 따라서 종전 실행 명령에 이 옵션이 남아 있으면 계속 샌드박스를 사용한다. 이 옵션은 `CLI에서 열기`에도 적용된다. 설정 의미는 [Codex 공식 문서](https://learn.chatgpt.com/docs/sandboxing)와 [Claude 공식 문서](https://code.claude.com/docs/en/sandboxing)를 참고한다.
 

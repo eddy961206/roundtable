@@ -37,8 +37,10 @@ type openCodePermission struct {
 }
 
 // V2 appends custom-agent permissions after global rules. Unknown tools remain
-// denied. Shell/subagents are deliberately unavailable: v2 shell is not an OS
-// sandbox. Only the selected workspace's file tools are enabled in read/write.
+// denied and subagents stay unavailable. File tools are limited to the selected
+// workspace. Write mode also allows the v2 "shell" tool, which is not an OS
+// sandbox: the user accepted unsandboxed shell for write seats so every
+// provider can build and test (Claude 2026-10-19, OpenCode 2026-10-27).
 func openCodePolicy(o RunOptions) (string, error) {
 	if o.Mode != ModeChat && o.Mode != ModeRead && o.Mode != ModeWrite {
 		return "", fmt.Errorf("OpenCode 권한 모드가 올바르지 않아: %s", o.Mode)
@@ -49,7 +51,7 @@ func openCodePolicy(o RunOptions) (string, error) {
 			rules = append(rules, openCodePermission{action, "*", "allow"})
 		}
 		if o.Mode == ModeWrite {
-			rules = append(rules, openCodePermission{"edit", "*", "allow"})
+			rules = append(rules, openCodePermission{"edit", "*", "allow"}, openCodePermission{"shell", "*", "allow"})
 		}
 		for _, action := range []string{"read", "edit"} {
 			for _, pattern := range []string{"../*", "/*", "?:/*", "*.env", "*.env.*"} {
