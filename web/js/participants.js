@@ -543,6 +543,11 @@ function renderGuardBadges(card, p) {
     b.title = "문맥이 모델 한도의 " + pct + "%입니다(경보 " + warnPct + "%). 작업이 바뀌면 세션 초기화나 새 세션(포크)을 고려하세요.";
     box.appendChild(b);
   }
+  if (p.hold_until && p.hold_until > Date.now()) {
+    const b = el("span", "badge guard danger", "한도 보류 ~" + new Date(p.hold_until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+    b.title = "공급사 한도 오류로 이 시각까지 새 턴을 보류합니다. 원인: " + (p.hold_reason || "") + ". 이 좌석을 대상으로 지정해 보내면 바로 다시 시도합니다.";
+    box.appendChild(b);
+  }
   if (p.budget_held) {
     const b = el("span", "badge guard danger", "입력 상한 · 턴 보류");
     b.title = p.budget_held + ". 방 설정에서 상한을 올리거나 0으로 지우면 다음 턴에 남은 메시지가 전달됩니다.";

@@ -911,6 +911,11 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 	if other := h.workspaceRival(rs); other != nil {
 		return nil, rivalError(other)
 	}
+	if p := rs.room.participant(target); target != "" && p.HoldUntil != 0 {
+		// Addressing a held seat directly is the explicit retry.
+		p.HoldUntil, p.HoldReason = 0, ""
+		h.addSystem(rs, fmt.Sprintf("@%s 대상 지정 메시지로 한도 보류를 풀고 바로 다시 시도함", p.ID))
+	}
 	attachments, err := h.resolveAttachments(rs, attachmentIDs)
 	if err != nil {
 		return nil, err
@@ -1220,6 +1225,10 @@ func (h *Hub) pump(rs *roomState) {
 				discussionBlocked = true
 			}
 			i++
+			continue
+		}
+		if seatHeld(p) {
+			i++ // a limit hold; its timer pumps again when the hold ends
 			continue
 		}
 		// Part and review turns run in their own worktree, not the room folder.
@@ -1701,6 +1710,11 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	}
 	rs.broadcast("message", msg)
 	h.usageNotices(rs, p)
+	if msg.Status == "error" && err != nil && !interrupted {
+		if hold, until, reason, estimated := classifyLimit(msg.Error, time.Now()); hold {
+			h.holdSeat(rs, p, until, reason, estimated)
+		}
+	}
 	if msg.PendingMarkers > 0 {
 		h.addSystem(rs, fmt.Sprintf("@%s 턴 #%d이 오류로 끝나 답의 마커 %d개(요청·결정·첨부)를 처리하지 않음 · 답이 끝까지 쓰였다면 화면의 '마커 실행' 또는 rt apply_markers로 실행", p.ID, msg.Seq, msg.PendingMarkers))
 	}

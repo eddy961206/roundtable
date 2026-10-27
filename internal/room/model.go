@@ -32,6 +32,10 @@ type Participant struct {
 	InputWarned   int     `json:"input_warned,omitempty"`
 	ContextWarned bool    `json:"context_warned,omitempty"`
 	BudgetHeld    string  `json:"budget_held,omitempty"`
+	// A provider limit error holds the seat's new turns until HoldUntil (ms);
+	// HoldReason is the error that caused it (limit_hold.go).
+	HoldUntil  int64  `json:"hold_until,omitempty"`
+	HoldReason string `json:"hold_reason,omitempty"`
 }
 
 // ForkSource is the base seat session a seat starts from. The copy is made on

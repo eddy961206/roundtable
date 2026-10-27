@@ -58,7 +58,7 @@ func (s *Server) tools() []tool {
 	fork := object(map[string]schema{"room": id, "seat": id}, "room", "seat")
 	participant := object(map[string]schema{"provider": text, "model": str, "effort": str, "label": str, "role": str, "fork_from": fork}, "provider")
 	all := []tool{
-		{Name: "rt_list_rooms", Description: fmt.Sprintf("최근 갱신순 방 id·제목·모드·실행 여부와 좌석(id·이름·공급사·모델·enabled) 조회. 삭제된 좌석은 빠지고 enabled:false는 꺼진 좌석. limit 기본 %d, 최대 %d", defaultListRooms, maxListRooms), InputSchema: object(map[string]schema{"limit": integer(1, &roomLimit)})},
+		{Name: "rt_list_rooms", Description: fmt.Sprintf("최근 갱신순 방 id·제목·모드·실행 여부와 좌석(id·이름·공급사·모델·enabled) 조회. 좌석의 held_until(ms)·held_reason은 한도 오류로 그 시각까지 새 턴이 보류됨, budget_held는 입력 예산 상한으로 보류됨을 뜻함. 삭제된 좌석은 빠지고 enabled:false는 꺼진 좌석. limit 기본 %d, 최대 %d", defaultListRooms, maxListRooms), InputSchema: object(map[string]schema{"limit": integer(1, &roomLimit)})},
 		{Name: "rt_create_room", Description: "새 방 생성. 결과는 방 id와 좌석 목록(id·이름·공급사·모델·enabled). 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용. fork_from {room, seat}을 주면 그 좌석의 세션(공통 문서를 읽힌 기반 세션)을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않음. 포크 좌석은 공급사·모델이 기반 좌석과 같아야 함(생략 시 기반 좌석 값). 작업 폴더·모드는 달라도 됨(다른 worktree면 첫 턴에 두 폴더를 알려 줌). 포크마다 문맥이 따로라 작성·검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않음. agy는 포크 미지원. OpenCode 좌석은 read 모드에서 셸이 없고 작업 폴더 밖을 읽지 못하므로, 시험을 직접 돌리는 검수는 write 모드에 검수 대상 폴더를 작업 폴더로 준다", InputSchema: object(map[string]schema{
 			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
 			"participants": {Type: "array", Items: &participant, MinItems: 1},

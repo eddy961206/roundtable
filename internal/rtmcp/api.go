@@ -61,6 +61,10 @@ type seat struct {
 	Role     string `json:"role"`
 	Enabled  bool   `json:"enabled"`
 	Removed  bool   `json:"removed"`
+	// Usage guards the server reports per seat (room/budget.go, limit_hold.go).
+	HoldUntil  int64  `json:"hold_until"`
+	HoldReason string `json:"hold_reason"`
+	BudgetHeld string `json:"budget_held"`
 }
 
 type apiMessage struct {
@@ -121,6 +125,11 @@ type listSeat struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model,omitempty"`
 	Enabled  bool   `json:"enabled"`
+	// held_until (ms) and held_reason: a provider limit holds this seat's new
+	// turns; budget_held: an input budget does.
+	HeldUntil  int64  `json:"held_until,omitempty"`
+	HeldReason string `json:"held_reason,omitempty"`
+	BudgetHeld string `json:"budget_held,omitempty"`
 }
 
 // listRooms keeps the server's newest-first order. Removed seats are left out:
@@ -149,7 +158,7 @@ func (s *Server) listRooms(ctx context.Context, limit int) (any, error) {
 		seats := []listSeat{}
 		for _, sp := range p.Room.Participants {
 			if !sp.Removed {
-				seats = append(seats, listSeat{ID: sp.ID, Label: sp.Label, Provider: sp.Provider, Model: sp.Model, Enabled: sp.Enabled})
+				seats = append(seats, listSeat{ID: sp.ID, Label: sp.Label, Provider: sp.Provider, Model: sp.Model, Enabled: sp.Enabled, HeldUntil: sp.HoldUntil, HeldReason: sp.HoldReason, BudgetHeld: sp.BudgetHeld})
 			}
 		}
 		rows = append(rows, map[string]any{"id": room.ID, "title": p.Room.Title, "mode": p.Room.Mode, "participants": seats, "active": room.Active})
