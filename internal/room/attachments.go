@@ -267,6 +267,10 @@ func (h *Hub) addTurnImages(rs *roomState, p *Participant, history []*Message, o
 		if r == "discussion" || r == "review" {
 			canRequest = false
 		}
+		if r == "handoff" { // markers are not run in a handoff turn
+			opts.Prompt += "\n(이미지 첨부 안내: 첨부된 이미지를 직접 확인하고 필요한 내용을 인계 요약에 적으세요.)"
+			return
+		}
 	}
 	switch {
 	case canAttach && canRequest:

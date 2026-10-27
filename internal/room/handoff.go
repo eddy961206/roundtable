@@ -12,14 +12,25 @@ import (
 // started from a base session forks the base again unless fresh is set.
 // 2026-10-28 A/B: -43% input on the following review+fix turns with the same
 // defects found and fixed (docs/토큰효율_측정_20261028.md).
+//
+// State rules, kept few on purpose (Argon review of 11effa1):
+//   - A handoff starts only on a quiet seat: no running or queued turn, no
+//     unfinished part, no discussion, no hold, and not already handed off.
+//     Anything else is refused with the reason instead of waiting in the queue.
+//   - The request is the turn's own instruction, not a room message, so a
+//     failed handoff leaves nothing behind for the next turn.
+//   - The handoff turn takes no steer, requests or markers.
+//   - HistoryFrom stays set until a later turn is delivered; until then every
+//     turn starts a new session from the summary (and the messages still
+//     unseen at the switch), whatever partial session a failed turn left.
 
-const handoffRequest = "이 세션을 정리하고 새 세션으로 넘기려 해. 다음 세션이 이 대화 없이 이어서 일할 수 있게 인계 요약을 써 줘. " +
+const handoffRequest = "이번 턴은 인계 요약 턴이야. 이 세션을 정리하고 새 세션으로 넘기려 해. 다음 세션이 이 대화 없이 이어서 일할 수 있게 인계 요약을 써 줘. " +
 	"들어갈 것: 확인한 동작과 근거 위치(파일:줄·커밋), 결정한 것, 남은 위험·미해결, 진행 중인 작업 상태(브랜치·커밋·바꾼 파일), 다음에 할 일. " +
-	"새로 조사하지 말고 지금까지 확인한 것으로 쓰고, 확인하지 못한 것은 그렇다고 적어. 원문을 되풀이하지 말고 2,000자 이내로."
+	"새로 조사하지 말고 지금까지 확인한 것으로 쓰고, 확인하지 못한 것은 그렇다고 적어. 이 턴의 [[...]] 마커는 처리하지 않으니 쓰지 마. 원문을 되풀이하지 말고 2,000자 이내로."
 
 // Handoff asks seat for a handoff summary; when that turn is done the seat's
-// next turn starts a new session. The request is a user message addressed to
-// the seat; the returned copy carries its seq for waiting.
+// next turn starts a new session. It returns the system notice that announces
+// the request; its seq is the after_seq to wait on.
 func (h *Hub) Handoff(roomID, seat, note string, fresh bool) (*Message, error) {
 	note = strings.TrimSpace(note)
 	if strings.ContainsAny(note, "\r\n") || len([]rune(note)) > 300 {
@@ -35,15 +46,11 @@ func (h *Hub) Handoff(roomID, seat, note string, fresh bool) (*Message, error) {
 		return nil, fmt.Errorf("방 없음: %s", roomID)
 	}
 	p := rs.room.participant(seat)
-	switch {
-	case p == nil || p.Removed || !p.Enabled:
+	if p == nil || p.Removed || !p.Enabled {
 		return nil, fmt.Errorf("활성 좌석 없음: %s", seat)
-	case rs.runningFor(seat) != nil:
-		return nil, fmt.Errorf("@%s 턴이 실행 중 · 그 턴이 끝난 뒤 인계해(rt wait)", seat)
-	case p.SessionID == "":
-		return nil, fmt.Errorf("@%s는 이어 쓰는 세션이 없어 인계할 것이 없음 · 다음 턴은 이미 새 세션으로 시작함", seat)
-	case rs.activePart(seat) != nil:
-		return nil, fmt.Errorf("@%s는 작업 계획의 파트를 맡고 있어 파트 세션을 따로 씀 · 파트가 끝난 뒤 인계해", seat)
+	}
+	if why := rs.handoffBlocked(h, p, fresh); why != "" {
+		return nil, fmt.Errorf("@%s 인계 거절: %s", seat, why)
 	}
 	if other := h.workspaceRival(rs); other != nil {
 		return nil, rivalError(other)
@@ -52,20 +59,51 @@ func (h *Hub) Handoff(roomID, seat, note string, fresh bool) (*Message, error) {
 	if note != "" {
 		text += "\n추가로 담을 것: " + note
 	}
-	m := rs.nextMessage("user", "user", text)
-	m.Target = seat
-	none := []string{}
-	m.Mentions = &none
-	if err := h.store.AppendMessage(roomID, m); err != nil {
-		rs.msgs = rs.msgs[:len(rs.msgs)-1]
-		return nil, h.reportPersistenceError(rs, "인계 요청", err)
+	m, err := h.addSystem(rs, fmt.Sprintf("@%s에게 인계 요약을 요청함 · 요약이 끝나면 다음 턴부터 새 세션을 씀", seat))
+	if err != nil {
+		return nil, err
 	}
-	rs.broadcast("message", m)
-	h.saveRoom(rs)
-	rs.enqueueFront(&Turn{ID: newID(), Agent: seat, Reason: "handoff", Group: m.ID, Cap: m.Seq, Fresh: fresh, Created: nowMs(), Status: "queued"})
+	rs.enqueueFront(&Turn{ID: newID(), Agent: seat, Reason: "handoff", Group: m.ID, Cap: m.Seq, Fresh: fresh, Created: nowMs(), Status: "queued", prompt: text})
 	h.pump(rs)
 	mc := *m
 	return &mc, nil
+}
+
+// handoffBlocked is why seat cannot hand off right now, "" when it can.
+// Caller holds h.mu.
+func (rs *roomState) handoffBlocked(h *Hub, p *Participant, fresh bool) string {
+	if rs.disc != nil {
+		return "토론 중 · 토론이 끝난 뒤 인계해"
+	}
+	for _, t := range rs.queue {
+		if t.Agent == p.ID {
+			if t.Status == "running" {
+				return "턴이 실행 중 · 그 턴이 끝난 뒤 인계해(rt wait)"
+			}
+			return "대기 중인 턴이 있음 · 그 턴들이 끝난 뒤 인계해"
+		}
+	}
+	switch {
+	case rs.runningFor(p.ID) != nil:
+		return "턴이 실행 중 · 그 턴이 끝난 뒤 인계해(rt wait)"
+	case p.HistoryFrom > 0:
+		return fmt.Sprintf("이미 인계 요약 #%d을 남겨 다음 턴이 새 세션으로 시작함", p.HistoryFrom)
+	case p.SessionID == "":
+		return "이어 쓰는 세션이 없어 인계할 것이 없음 · 다음 턴은 이미 새 세션으로 시작함"
+	case rs.seatPart(p.ID) != nil:
+		return "작업 계획의 파트를 맡고 있어 파트 세션을 따로 씀 · 파트가 병합·포기된 뒤 인계해"
+	case seatHeld(p):
+		return "한도 보류 중 · 보류가 풀린 뒤 인계해"
+	}
+	if why := rs.budgetHold(p); why != "" {
+		return why + " · 상한을 올린 뒤 인계해"
+	}
+	if p.Fork != nil && !fresh {
+		if _, ok := h.rooms[p.Fork.Room]; !ok {
+			return fmt.Sprintf("기반 방 %s이 없어 기반을 다시 포크할 수 없음 · fresh:true로 기반 없이 인계해", p.Fork.Room)
+		}
+	}
+	return ""
 }
 
 // finishHandoff switches the seat to a new session once its summary is done;
@@ -75,7 +113,9 @@ func (h *Hub) finishHandoff(rs *roomState, p *Participant, msg *Message, fresh b
 		h.addSystem(rs, fmt.Sprintf("@%s 인계 요약 #%d이 끝나지 않아 세션을 그대로 둠 · 다시 인계하거나 그대로 이어 써", p.ID, msg.Seq))
 		return
 	}
-	p.SessionID, p.ContextTokens, p.Brief, p.Unseen = "", 0, "", nil
+	// Unseen holes (replies still streaming at the switch) stay: the new
+	// session receives them with the summary.
+	p.SessionID, p.ContextTokens, p.Brief = "", 0, ""
 	p.HistoryFrom, p.ContextWarned = msg.Seq, false
 	start := "새 세션"
 	switch {

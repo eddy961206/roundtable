@@ -1300,26 +1300,27 @@ func (h *Hub) pump(rs *roomState) {
 
 // prepared contains a prompt rendered from live messages up to the turn's cap.
 type prepared struct {
-	started   time.Time
-	notices   []*Message
-	requests  []string
-	inputErr  error
-	forkCost  float64 // the base session's running cost; a fork's reported cost includes it
-	t         *Turn
-	p         *Participant
-	seen      int64
-	unseen    []int64
-	brief     string
-	stopGen   int
-	resetGen  int
-	prov      agent.Provider
-	msg       *Message
-	opts      agent.RunOptions
-	ctx       context.Context
-	cancel    context.CancelFunc
-	part      *Part // the turn runs in this part's worktree (D9, review)
-	reviewer  bool  // fresh reviewer session that must not be kept (D10)
-	bootstrap bool  // first part turn contains plan context only
+	started     time.Time
+	notices     []*Message
+	requests    []string
+	inputErr    error
+	forkCost    float64 // the base session's running cost; a fork's reported cost includes it
+	t           *Turn
+	p           *Participant
+	seen        int64
+	unseen      []int64
+	brief       string
+	stopGen     int
+	resetGen    int
+	prov        agent.Provider
+	msg         *Message
+	opts        agent.RunOptions
+	ctx         context.Context
+	cancel      context.CancelFunc
+	part        *Part // the turn runs in this part's worktree (D9, review)
+	reviewer    bool  // fresh reviewer session that must not be kept (D10)
+	handoffFrom int64 // HistoryFrom when the turn was built; a delivered turn clears it
+	bootstrap   bool  // first part turn contains plan context only
 }
 
 // buildTurn renders a prompt without reserving a participant. Caller holds h.mu.
@@ -1341,10 +1342,16 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	if t.Reason == "part" {
 		return nil // the part left working/fixing before its turn started
 	}
-	first := p.SessionID == ""
+	// After a handoff every turn starts a new session from the summary until
+	// one is delivered (handoff.go); a partial session a failed turn left is dropped.
+	first := p.SessionID == "" || p.HistoryFrom > 0
+	sessionID := p.SessionID
 	cap := rs.historyCap(t)
+	if p.HistoryFrom > 0 {
+		sessionID, cap = "", max(cap, p.HistoryFrom)
+	}
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
-	if len(hist) == 0 && t.Reason != "discussion" && len(rs.pendingNotices(p.ID, "")) == 0 {
+	if len(hist) == 0 && t.Reason != "discussion" && t.Reason != "handoff" && len(rs.pendingNotices(p.ID, "")) == 0 {
 		// No CLI call is needed to acknowledge own/filtered messages. Keep
 		// unfinished replies as holes for a later cap to deliver exactly once.
 		p.LastSeen, p.Unseen = seen, unseen
@@ -1361,9 +1368,12 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
-	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
+	if t.Reason == "handoff" {
+		prompt += "\n\n" + t.prompt
+	}
+	opts := agent.RunOptions{Prompt: prompt, SessionID: sessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
 	h.addTurnImages(rs, p, hist, &opts, t.Reason)
-	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
+	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, handoffFrom: p.HistoryFrom}
 	if forked {
 		pr.opts.ForkSession = p.Fork.Session
 		if p.Fork.Dir != sessionDir(rs.room) {
@@ -1402,7 +1412,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 	var hist []*Message
 	switch {
 	case part.SessionID == "":
-		prompt = BuildPartPrompt(rs.room.Work, part, p.Role, h.scratch)
+		prompt = BuildPartPrompt(rs.room.Work, part, p.Role, h.scratch, p.Provider)
 		if t.prompt != "" {
 			prompt += "\n\n" + t.prompt
 		}
@@ -1489,7 +1499,7 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), rs.room.turnTimeout())
 	var steer chan string
-	if prov.CanSteer() && t.Reason != "review" {
+	if prov.CanSteer() && t.Reason != "review" && t.Reason != "handoff" {
 		steer = make(chan string, 8)
 	}
 	t.Status = "running"
@@ -1678,6 +1688,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			pr.part.LastSeen, pr.part.Unseen = pr.seen, pr.unseen
 		} else if pr.resetGen == rs.resetGen {
 			p.LastSeen, p.Unseen, p.Brief = pr.seen, pr.unseen, pr.brief
+			if pr.handoffFrom > 0 && p.HistoryFrom == pr.handoffFrom {
+				p.HistoryFrom = 0 // the new session now holds the summary
+			}
 			if compacted { // the summary may have dropped the brief; send it again next turn
 				p.Brief = ""
 			}
@@ -1707,7 +1720,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		}
 	}
 	// A failed turn's markers wait for ApplyMarkers; count them so the room can say so.
-	if msg.Status == "error" && pr.part == nil && t.Reason != "discussion" && t.Reason != "review" {
+	if msg.Status == "error" && pr.part == nil && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" {
 		msg.PendingMarkers = markerLines(rawText)
 	}
 	// D11: malformed output is not applied; allow one persisted correction per step.
@@ -1727,7 +1740,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if err := h.store.AppendMessage(rs.room.ID, msg); err != nil {
 		msg.Status, msg.Error = "error", fmt.Sprintf("메시지 저장 실패: %v", err)
 	}
-	if err := h.finishMarkers(rs, pr, rawText, msg.Status == "done"); err != nil {
+	if err := h.finishMarkers(rs, pr, rawText, msg.Status == "done" && t.Reason != "handoff"); err != nil {
 		msg.Status, msg.Error = "error", fmt.Sprintf("첨부·요청 저장 실패: %v", err)
 	}
 	p.Turns++
@@ -1751,7 +1764,11 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	rs.broadcast("message", msg)
 	h.usageNotices(rs, p)
 	if t.Reason == "handoff" {
-		h.finishHandoff(rs, p, msg, t.Fresh)
+		if pr.resetGen == rs.resetGen {
+			h.finishHandoff(rs, p, msg, t.Fresh)
+		} else {
+			h.addSystem(rs, fmt.Sprintf("@%s 인계 중에 세션 초기화가 먼저 적용돼 인계 요약 #%d은 세션 전환에 쓰지 않음", p.ID, msg.Seq))
+		}
 	}
 	if msg.Status == "error" && err != nil && !interrupted {
 		if hold, until, reason, estimated := classifyLimit(msg.Error, time.Now()); hold {

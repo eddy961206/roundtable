@@ -192,7 +192,7 @@ func TestBuildPartPromptRoleAndVisualReview(t *testing.T) {
 	part := &Part{ID: "p1", Title: "UI 카드", Brief: "역할 카드 추가", Scope: []string{"web/js/"}, Worktree: "/tmp/wt", Branch: "rt/room/p1"}
 
 	scratch := filepath.Join(t.TempDir(), "scratch")
-	noRolePrompt := BuildPartPrompt(plan, part, "", scratch)
+	noRolePrompt := BuildPartPrompt(plan, part, "", scratch, "claude")
 	if strings.Contains(noRolePrompt, "당신의 역할:") {
 		t.Errorf("part prompt without role must omit role line:\n%s", noRolePrompt)
 	}
@@ -209,7 +209,7 @@ func TestBuildPartPromptRoleAndVisualReview(t *testing.T) {
 		}
 	}
 
-	customPrompt := BuildPartPrompt(plan, part, "큰 그림·UX를 먼저 깊게 본다.", scratch)
+	customPrompt := BuildPartPrompt(plan, part, "큰 그림·UX를 먼저 깊게 본다.", scratch, "claude")
 	for _, want := range []string{
 		"당신의 역할: 큰 그림·UX를 먼저 깊게 본다.",
 		"강점은 먼저 깊게 볼 우선순위일 뿐 다른 관점의 지적을 막지 않습니다.",

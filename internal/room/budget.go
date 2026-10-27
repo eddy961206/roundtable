@@ -15,7 +15,7 @@ const (
 	// Claude seats compact their session at CompactWindowTokens when a room
 	// sets it. 2026-10-28 A/B: a 150k window cut a review+fix turn's input by
 	// 38% with the same result, but took longer (docs/토큰효율_측정_20261028.md).
-	MinCompactWindow = 50_000
+	MinCompactWindow = 100_000 // the Claude CLI accepts 100000~1000000 and caps the window by model
 	MaxCompactWindow = 1_000_000
 )
 

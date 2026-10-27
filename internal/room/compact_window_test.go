@@ -7,7 +7,7 @@ import (
 
 func TestCompactWindowRoomSettingReachesRuns(t *testing.T) {
 	h, r, ps := controlledHub(t, "claude")
-	for _, bad := range []int{-1, 1000, 2_000_000} {
+	for _, bad := range []int{-1, 1000, 60_000, 2_000_000} {
 		if _, err := h.UpdateRoom(r.ID, RoomPatch{CompactWindowTokens: &bad}); err == nil || !strings.Contains(err.Error(), "compact_window_tokens") {
 			t.Fatalf("%d: %v", bad, err)
 		}

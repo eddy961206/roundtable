@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"roundtable/internal/agent"
@@ -232,6 +233,14 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 	}
 	if tc.HandoffFrom > 0 {
 		fmt.Fprintf(&b, "\n이 세션은 이전 세션이 남긴 인계 요약(#%d)부터 이어집니다. 그 앞의 대화 원문은 방 기록에 남아 있습니다. 요약에 없는 사실은 짐작하지 말고 파일·기록을 다시 확인하세요.\n", tc.HandoffFrom)
+		// The summary is kept out of the history so a long backlog cannot trim it.
+		for i, m := range history {
+			if m.Seq == tc.HandoffFrom {
+				fmt.Fprintf(&b, "\n=== 인계 요약 #%d ===\n%s\n=== 인계 요약 끝 ===\n", m.Seq, strings.TrimSpace(m.Text))
+				history = slices.Delete(slices.Clone(history), i, i+1)
+				break
+			}
+		}
 	}
 	if tc.FirstTurn {
 		b.WriteString("\n=== 지금까지의 대화 ===\n")
@@ -245,7 +254,7 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 }
 
 // BuildPartPrompt starts a part session from the plan alone; room history is never included (D9).
-func BuildPartPrompt(plan *WorkPlan, part *Part, role, scratch string) string {
+func BuildPartPrompt(plan *WorkPlan, part *Part, role, scratch, provider string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "작업 계획의 파트 %s \"%s\"를 맡았습니다.\n\n", part.ID, part.Title)
 	if r := oneLineRole(role); r != "" {
@@ -260,6 +269,7 @@ func BuildPartPrompt(plan *WorkPlan, part *Part, role, scratch string) string {
 	fmt.Fprintf(&b, "- 변경은 branch %s 에 커밋하세요. 커밋하지 않은 변경이나 추적하지 않는 파일이 남아 있으면 제출이 거부됩니다.\n", part.Branch)
 	fmt.Fprintf(&b, "- 파트를 끝냈으면 응답 끝 신호 블록에 %s 한 줄을 쓰세요. 그러면 다른 공급사 참가자가 diff를 리뷰합니다.\n", workDoneSignal)
 	b.WriteString("- 무엇을 바꿨는지 답변에 적으세요.\n")
+	b.WriteString(waitRule[provider])
 	b.WriteString("- UI·화면을 바꾸는 작업이라면 직접 화면을 캡처해 [[ATTACH:캡처.png]]로 올리거나, 이미지 판독·시각 검토에 강점이 있는 좌석에 [[REQUEST:@좌석ID]]로 시각 검토를 요청하세요.\n")
 	b.WriteString(markerBrief(agent.ModeWrite, scratch))
 	return b.String()
