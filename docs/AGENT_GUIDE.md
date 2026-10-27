@@ -41,6 +41,7 @@
 | `update_room --room [--title] [--note] [--workspace] [--mode]` | 방 메모(협업 규칙)를 바꾸거나, 지워진 worktree 대신 새 작업 폴더를 줄 때. |
 | `discuss --room --rounds N [--blind_first false]` | 여러 모델 의견을 라운드로 겨루게 할 때. 이미 같은 질문에 답했으면 `--blind_first false`. |
 | `requests --room` / `cancel_request --room --request` | 좌석 간 `[[REQUEST]]`의 상태를 보거나, 잘못 나간 요청을 취소할 때. |
+| `cancel_turn --room --seat` | 좌석의 실행 중인 턴 하나만 멈출 때(중복 턴 등). 좌석은 켜진 채로 남아 요청을 계속 받는다. |
 | `apply_markers --room --seq N` | 오류로 끝난 답(`pending_markers` 있음)이 끝까지 쓰였음을 확인한 뒤 그 답의 마커를 한 번 실행할 때. |
 | `decisions --room` / `update_decision --room --id --status active\|dropped` | 좌석이 남긴 결정 카드(`proposed`)를 확인하고 확정·거절할 때. AGREE는 검증이 아니다. |
 | `version` | 실행 중인 빌드가 공개 main보다 뒤처졌는지 볼 때. |
@@ -62,7 +63,7 @@
 | 좌석 켜기·끄기, 이름·모델·추론 수준·역할 | `PATCH /api/rooms/{방}` `{"participants":[{"id":"<좌석>","enabled":true}]}` | 모델·추론 수준은 실행 중에 바꿀 수 없다. 모델을 바꾸면 다음 턴은 새 세션이다. |
 | 토론 라운드·블라인드 기본값 | `PATCH /api/rooms/{방}` `{"discussion_rounds":2,"blind_first_default":false}` | |
 | 좌석 하나 중지 | `POST /api/rooms/{방}/participants/{좌석}/stop` | **좌석을 끈다(`enabled=false`).** 7절 참고. |
-| 턴 하나만 취소 | `DELETE /api/rooms/{방}/turns/{턴}` | 좌석은 켜진 채로 둔다. 실행 중인 답 메시지의 `turn_id`가 턴 id다. |
+| 턴 하나만 취소 | `rt cancel_turn --room --seat` 또는 `DELETE /api/rooms/{방}/turns/{턴}` | 좌석은 켜진 채로 둔다. 실행 중인 답 메시지의 `turn_id`가 턴 id다. |
 | 방 전체 중지 | `POST /api/rooms/{방}/stop` | 실행 중인 턴과 대기열을 모두 비운다. |
 | 좌석 제거 | `DELETE /api/rooms/{방}/participants/{좌석}` | 기록·사용량은 남고 다시 부를 수 없다. |
 | 방 세션 초기화 | `POST /api/rooms/{방}/reset` | 모든 좌석이 다음 턴에 새 세션으로 시작한다. |
@@ -227,7 +228,7 @@ roundtable rt post --room <방> --target <w1 좌석 id> --text - < task.md
 | 턴이 "작업 폴더가 없어 실행하지 않았어"로 실패 | 방의 worktree가 PR 병합 정리 등으로 지워졌다. | `rt update_room --room <방> --workspace <새 폴더>`. 방과 좌석 세션은 유지된다. 실행 중에는 바꿀 수 없다. |
 | HTTP 요청이 400 "UTF-8" 오류로 거절 | Windows `curl -d '{...}'`에 한글을 넣으면 콘솔 코드 페이지 바이트로 넘어간다. 서버는 UTF-8이 아닌 본문을 거절한다. | 본문을 UTF-8 파일로 저장하고 `curl --data-binary @파일`로 보낸다. `rt` 명령은 이 문제가 없다. |
 | 이어 쓰는 좌석의 턴이 연속으로 실패하거나, `rt usage`의 `max_context_tokens`가 모델 문맥 한도 근처 | 세션 문맥이 한도까지 커졌다. | 같은 좌석으로 재시도하지 않는다. 새 좌석(또는 새 방)으로 바꾸고, 필요한 상태만 지시에 요약해 준다. |
-| `[[REQUEST:@좌석]]`이 "비활성 또는 삭제된 좌석"·"일치하는 활성 좌석 없음"으로 거절 | 좌석 중지 API를 썼다. `POST .../participants/{좌석}/stop`은 턴만 멈추지 않고 그 좌석을 `enabled=false`로 끈다. | `PATCH /api/rooms/{방}` `{"participants":[{"id":"<좌석>","enabled":true}]}`로 다시 켠다. 그리고 멈춘 일을 새 메시지로 다시 보낸다(취소된 요청은 자동으로 다시 돌지 않는다). 턴만 멈추려면 `DELETE /api/rooms/{방}/turns/{턴}`을 쓴다. |
+| `[[REQUEST:@좌석]]`이 "비활성 또는 삭제된 좌석"·"일치하는 활성 좌석 없음"으로 거절 | 좌석 중지 API를 썼다. `POST .../participants/{좌석}/stop`은 턴만 멈추지 않고 그 좌석을 `enabled=false`로 끈다. | `PATCH /api/rooms/{방}` `{"participants":[{"id":"<좌석>","enabled":true}]}`로 다시 켠다. 그리고 멈춘 일을 새 메시지로 다시 보낸다(취소된 요청은 자동으로 다시 돌지 않는다). 턴만 멈추려면 `rt cancel_turn --room --seat`(또는 `DELETE /api/rooms/{방}/turns/{턴}`)을 쓴다. |
 | 사람 메시지가 "활성 대상 없음"으로 거절 | `--target` 좌석이 꺼져 있다. | 위와 같이 좌석을 켠다. |
 | "연쇄 한도(N)에 도달해 멈췄어" 시스템 메시지 | 작성·검수 왕복이 `max_chain`을 넘었다. | 의도한 왕복이면 `PATCH {"max_chain":8}` 뒤 멈춘 좌석에게 직접 보낸다. 의도하지 않았으면 메모의 왕복 규칙을 확인한다. |
 | 포크 첫 턴이 "기반 좌석 …가 실행 중이라" 실패 | 기반 턴이 끝나지 않았다. | 기반 턴이 끝난 뒤 다시 보낸다. |

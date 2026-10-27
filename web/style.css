@@ -739,7 +739,9 @@ kbd {
 .participant-edit .participant-id { margin-top: 10px; }
 .pcard .status-line.idle { background: transparent; border: none; padding: 0; }
 .pcard .top .steer-btn { min-height: 28px !important; }
-.pcard .stop-participant { min-height: 32px; padding: 4px 10px; align-self: flex-start; font-size: 12px; }
+.pcard .stop-actions { display: flex; flex-wrap: wrap; gap: 6px; align-self: flex-start; }
+.pcard .stop-actions[hidden], .pcard .stop-actions button[hidden] { display: none; }
+.pcard .stop-participant, .pcard .cancel-turn { min-height: 32px; padding: 4px 10px; font-size: 12px; }
 /* Timeline */
 .timeline-stage {
   flex: 1;

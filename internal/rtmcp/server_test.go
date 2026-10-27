@@ -235,7 +235,7 @@ func TestReadOnly(t *testing.T) {
 		}
 		call(t, s, name, args)
 	}
-	for _, name := range []string{"rt_create_room", "rt_post", "rt_discuss", "rt_cancel_request", "rt_update_decision", "rt_apply_markers"} {
+	for _, name := range []string{"rt_create_room", "rt_post", "rt_discuss", "rt_cancel_request", "rt_update_decision", "rt_apply_markers", "rt_cancel_turn"} {
 		if _, err := s.call(context.Background(), name, json.RawMessage(`{}`)); err == nil {
 			t.Fatalf("write exposed: %s", name)
 		}
@@ -565,7 +565,7 @@ func TestStdioProtocol(t *testing.T) {
 	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고") || !strings.Contains(text, "resume_after_seq를 after_seq로") || !strings.Contains(text, "사람에게 확인받는다") {
 		t.Fatal(initialized["instructions"])
 	}
-	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 14 {
+	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 15 {
 		t.Fatal(byID["list"])
 	}
 	content := byID["3"]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)
@@ -594,5 +594,39 @@ func TestApplyMarkersPostsSeq(t *testing.T) {
 	}
 	if _, err := s.call(context.Background(), "rt_apply_markers", json.RawMessage(`{"room":"r1"}`)); err == nil {
 		t.Fatal("seq is required")
+	}
+}
+
+// 2026-10-27: stopping a duplicate turn through participants/{id}/stop also
+// turned the seat off, so a later [[REQUEST]] to it was refused. rt_cancel_turn
+// cancels only the seat's running turn.
+func TestCancelTurnKeepsSeat(t *testing.T) {
+	var calls []string
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/rooms/r1":
+			io.WriteString(w, snapshotBody(`[]`, `[{"id":"t0","agent":"s1","status":"queued"},{"id":"t1","agent":"s1","status":"running"},{"id":"t2","agent":"s2","status":"running"}]`))
+		case "DELETE /api/rooms/r1/turns/t1":
+			io.WriteString(w, `{}`)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}, false)
+	got := call(t, s, "rt_cancel_turn", `{"room":"r1","seat":"s1"}`)
+	if got["cancelled"] != "t1" || got["seat_enabled"] != true {
+		t.Fatal(got)
+	}
+	for _, c := range calls {
+		if strings.Contains(c, "/stop") || strings.Contains(c, "participants") {
+			t.Fatalf("seat stop called: %v", calls)
+		}
+	}
+	calls = nil
+	s2 := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, snapshotBody(`[]`, `[{"id":"t0","agent":"s1","status":"queued"}]`))
+	}, false)
+	if _, err := s2.call(context.Background(), "rt_cancel_turn", json.RawMessage(`{"room":"r1","seat":"s1"}`)); err == nil || !strings.Contains(err.Error(), "실행 중") {
+		t.Fatalf("no running turn must be an error: %v", err)
 	}
 }

@@ -440,7 +440,26 @@ function buildParticipantCardSkeleton(p, info) {
   const stLine = el("div", "status-line");
   card.appendChild(stLine);
   card.appendChild(el("div", "resp-times muted"));
-  const stop = el("button", "danger stop-participant", "작업 중단");
+  // Two different stops: one running turn only (the seat stays on and keeps
+  // receiving requests), or the seat's whole work plus turning the seat off.
+  const actions = el("div", "stop-actions");
+  const cancelTurn = el("button", "cancel-turn", "현재 턴만 취소");
+  cancelTurn.type = "button";
+  cancelTurn.onclick = async () => {
+    const run = state.queue.find((t) => t.agent === p.id && t.status === "running");
+    if (!run) return;
+    cancelTurn.disabled = true;
+    try {
+      await api("DELETE", "/api/rooms/" + state.roomId + "/turns/" + run.id);
+      announce(participantLabel(p.id) + "의 현재 턴을 취소했습니다. 참여는 켜져 있어 요청과 대기 턴을 계속 받습니다.");
+    } catch (err) {
+      alert("턴을 취소하지 못했습니다: " + err.message);
+    } finally {
+      cancelTurn.disabled = false;
+    }
+  };
+  actions.appendChild(cancelTurn);
+  const stop = el("button", "danger stop-participant", "작업 중단·참여 끄기");
   stop.type = "button";
   stop.onclick = async () => {
     const roomId = state.roomId;
@@ -467,7 +486,8 @@ function buildParticipantCardSkeleton(p, info) {
       }
     }
   };
-  card.appendChild(stop);
+  actions.appendChild(stop);
+  card.appendChild(actions);
 
   const stats = el("div", "stats");
   edit.appendChild(stats);
@@ -542,10 +562,14 @@ function updateParticipantCardInPlace(card, p, info) {
   const hasWork = p.status === "running" || p.status === "queued";
   if (!hasWork || p.enabled) delete stop.dataset.requested;
   stop.hidden = !hasWork;
-  stop.setAttribute("aria-label", participantLabel(p.id) + " 작업 중단");
-  stop.title = "이 참가자의 현재 작업과 대기열을 중단하고 참여를 끕니다.";
+  stop.setAttribute("aria-label", participantLabel(p.id) + " 작업 중단 및 참여 끄기");
+  stop.title = "이 참가자의 현재 작업과 대기열을 중단하고 참여를 끕니다. 꺼진 좌석으로 가는 요청은 거절됩니다.";
+  const cancelTurn = card.querySelector(".cancel-turn");
+  cancelTurn.hidden = p.status !== "running";
+  cancelTurn.setAttribute("aria-label", participantLabel(p.id) + " 현재 턴만 취소");
+  cancelTurn.title = "실행 중인 이 턴 하나만 취소합니다. 참여는 켜진 채로 남아 요청·멘션·대기 턴을 계속 받습니다.";
   stop.disabled = stop.dataset.pending === "true" || stop.dataset.requested === "true";
-  stop.textContent = stop.dataset.pending === "true" ? "중단 요청 중…" : stop.dataset.requested === "true" ? "중단 요청됨 · 참여 꺼짐" : "작업 중단";
+  stop.textContent = stop.dataset.pending === "true" ? "중단 요청 중…" : stop.dataset.requested === "true" ? "중단 요청됨 · 참여 꺼짐" : "작업 중단·참여 끄기";
 
   const sw = card.querySelector(".switch");
   if (sw) {
