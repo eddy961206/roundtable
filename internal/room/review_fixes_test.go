@@ -75,6 +75,44 @@ func TestLimitHoldRestoredAfterRestart(t *testing.T) {
 	}
 }
 
+// A restart clears an ended hold on disk too, and a live hold's timer belongs
+// to the registered room so it still ends the hold.
+func TestLimitHoldRestartClearsAndRearms(t *testing.T) {
+	h, r, _ := controlledHub(t, "codex", "claude")
+	h.mu.Lock()
+	rs := h.rooms[r.ID]
+	ended, live := rs.room.participant("codex"), rs.room.participant("claude")
+	ended.HoldUntil, ended.HoldReason = time.Now().Add(-time.Minute).UnixMilli(), "old"
+	live.HoldUntil, live.HoldReason = time.Now().Add(200*time.Millisecond).UnixMilli(), "429 soon"
+	h.saveRoom(rs)
+	h.mu.Unlock()
+	restarted, err := NewHub(h.store, h.reg, h.scratch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rooms, _, _, err := h.store.loadRooms(false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, saved := range rooms {
+		if p := saved.participant("codex"); saved.ID == r.ID && p.HoldUntil != 0 {
+			t.Fatalf("the ended hold stayed on disk: %d", p.HoldUntil)
+		}
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		restarted.mu.Lock()
+		p := restarted.rooms[r.ID].room.participant("claude")
+		done := p.HoldUntil == 0
+		restarted.mu.Unlock()
+		if done {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("a hold restored on start must end at its time")
+}
+
 func TestLimitHoldClearsWithEmptyQueue(t *testing.T) {
 	h, r, _ := controlledHub(t, "codex")
 	h.mu.Lock()
@@ -132,6 +170,13 @@ func TestClassifyLimitEdges(t *testing.T) {
 		{"사용 한도 초과(429): 3분 후 다시 시도", true, 3 * time.Minute},
 		{"rate limit; retry-after: 0", true, minLimitHold},
 		{"rate limit; retry after 99999999999999 hours", true, maxLimitHold},
+		// A word after the number is not its unit, a retry count is not a wait
+		// and a number after a full duration is not more seconds.
+		{"429 Too Many Requests: retry-after: 30\nmessage: slow down", true, 30 * time.Second},
+		{"rate limit: retry-after: 30 model busy", true, 30 * time.Second},
+		{"rate limit (retry 1 failed): try again in 2m", true, 2 * time.Minute},
+		{"rate limited, try again in 2 minutes 429", true, 2 * time.Minute},
+		{"rate limited, retry after 1 hour 30 minutes", true, 90 * time.Minute},
 	} {
 		hold, until, _, _ := classifyLimit(tc.text, now)
 		if hold != tc.hold || (hold && !until.Equal(now.Add(tc.after))) {

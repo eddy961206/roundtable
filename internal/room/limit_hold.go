@@ -25,8 +25,8 @@ var (
 	// context, token or turn limits do not lift with time.
 	limitRe = regexp.MustCompile(`(?i)((http|status|code|error|api)\W{0,12}429\b|\b429\W{0,12}(too many|rate|limit|quota)|rate[ _-]?limit|too many requests|(usage|request|free|daily|weekly|monthly|plan|api)[ _-]?limit|quota|resource[ _-]?exhausted|사용 ?한도|요청 ?한도)`)
 	// Where a retry time is named: "try again in 2m30s", "retry after 1.5s",
-	// "retry-after: 30" (seconds), "3분 후 다시".
-	retryEnRe      = regexp.MustCompile(`(?i)(?:try again|retry)(?:[-_ ]?(?:after|in))?[:=]?\s*([0-9][0-9a-z.\s]*)`)
+	// "retry-after: 30" (seconds), "3분 후 다시". "retry 1 failed" is a count.
+	retryEnRe      = regexp.MustCompile(`(?i)(?:try again|retry)(?:[-_ ]?(?:after|in)\s*[:=]?|\s*[:=])\s*([0-9][0-9a-z.\s]*)`)
 	retryKoRe      = regexp.MustCompile(`([0-9][0-9.\s]*(?:시간|분|초)(?:\s*[0-9.]+\s*(?:시간|분|초))*)\s*(?:뒤|후)`)
 	durationPartRe = regexp.MustCompile(`(?i)^\s*([0-9]+(?:\.[0-9]+)?)\s*(ms|milliseconds?|millis|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|시간|분|초)?`)
 )
@@ -41,9 +41,17 @@ func parseWait(s string) (time.Duration, bool) {
 			break
 		}
 		n, _ := strconv.ParseFloat(s[m[2]:m[3]], 64)
-		unit := ""
+		unit, end := "", m[1]
 		if m[4] >= 0 {
 			unit = strings.ToLower(s[m[4]:m[5]])
+			// "30 model" or "30\nmessage": a letter right after an English unit
+			// means it was the start of a word, so the number stands alone.
+			if next := m[5]; next < len(s) && isASCIILetter(s[next]) && !strings.ContainsAny(unit, "시간분초") {
+				unit, end = "", m[3]
+			}
+		}
+		if unit == "" && found {
+			break // "2 minutes 429": the bare number is not part of the duration
 		}
 		mult := 1.0 // a bare number is seconds, as in Retry-After
 		switch {
@@ -56,7 +64,7 @@ func parseWait(s string) (time.Duration, bool) {
 		}
 		total += n * mult
 		found = true
-		s = s[m[1]:]
+		s = s[end:]
 		if unit == "" {
 			break // a bare number ends the duration
 		}
@@ -69,6 +77,8 @@ func parseWait(s string) (time.Duration, bool) {
 	}
 	return time.Duration(total * float64(time.Second)), true
 }
+
+func isASCIILetter(c byte) bool { return 'a' <= c|0x20 && c|0x20 <= 'z' }
 
 // classifyLimit tells whether an error is a provider limit and until when the
 // seat should wait; estimated means the error named no time.
@@ -132,28 +142,26 @@ func (h *Hub) releaseHolds(rs *roomState) {
 	}
 }
 
-// restoreHolds runs on start: ended holds are cleared, live ones get their
-// timer back (timers do not survive a restart). Caller holds h.mu or owns rs.
-func (h *Hub) restoreHolds(rs *roomState) {
+// restoreHolds runs on start once rs is registered: ended holds are cleared,
+// live ones get their timer back (timers do not survive a restart). It reports
+// whether the room changed and must be saved. Caller holds h.mu.
+func (h *Hub) restoreHolds(rs *roomState) bool {
+	changed := false
 	for _, p := range rs.room.Participants {
 		switch {
 		case p.HoldUntil == 0:
 		case nowMs() >= p.HoldUntil:
 			p.HoldUntil, p.HoldReason = 0, ""
+			changed = true
 		default:
 			h.armHold(rs, time.UnixMilli(p.HoldUntil))
 		}
 	}
+	return changed
 }
 
-// seatHeld clears an ended hold and tells whether the seat must still wait.
+// seatHeld tells whether the seat must still wait; pump has already released
+// ended holds.
 func seatHeld(p *Participant) bool {
-	if p.HoldUntil == 0 {
-		return false
-	}
-	if nowMs() < p.HoldUntil {
-		return true
-	}
-	p.HoldUntil, p.HoldReason = 0, ""
-	return false
+	return p.HoldUntil != 0 && nowMs() < p.HoldUntil
 }

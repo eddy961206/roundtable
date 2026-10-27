@@ -129,7 +129,6 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		}
 		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
 		backfillInput(rs)
-		h.restoreHolds(rs)
 		rs.requests, err = store.loadRequests(r.ID)
 		if err != nil {
 			return nil, err
@@ -176,11 +175,14 @@ func (h *Hub) resumeRecoveredWork() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, rs := range h.rooms {
+		// Hold timers are armed only now that every room is registered and
+		// h.mu is held, so a timer that fires early finds its room.
+		held := h.restoreHolds(rs)
 		// Rooms awaiting cleanup resume their queue when that worker finishes.
 		if len(h.worktreeCleanupTargets(rs)) == 0 {
 			h.advanceQueue(rs)
 		}
-		if rs.room.Work != nil {
+		if held || rs.room.Work != nil {
 			if err := h.store.SaveRoom(rs.room); err != nil {
 				return err
 			}
@@ -1204,6 +1206,7 @@ func (h *Hub) pump(rs *roomState) {
 		rs.refreshParticipantStates()
 		return
 	}
+	h.releaseHolds(rs) // one place clears, announces and saves ended holds
 	discussionBlocked := false
 	for _, run := range rs.running {
 		if run.turn.Reason == "discussion" && run.stopGen == rs.stopGen {
