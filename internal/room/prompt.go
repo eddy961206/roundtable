@@ -151,9 +151,20 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 	default:
 		b.WriteString("- 도구 실행이나 파일 수정 없이 대화로만 답하세요.\n")
 	}
+	if rule := waitRule[me.Provider]; rule != "" && r.Mode != agent.ModeChat {
+		b.WriteString(rule)
+	}
 	b.WriteString("- 대화에서 쓰인 언어로 답하세요. 채팅에 어울리게 간결하되, 판단에 필요한 근거는 생략하지 마세요.\n")
 	b.WriteString(markerBrief(r.Mode, scratch))
 	return b.String()
+}
+
+// waitRule keeps a seat from polling a running command once a second: every
+// poll is a model call that re-reads the whole context (2026-10-28 A/B,
+// docs/토큰효율_측정_20261028.md). Commands that finish sooner still return
+// at once, so a longer wait costs no time.
+var waitRule = map[string]string{
+	"codex": "- 시험·빌드처럼 오래 걸릴 수 있는 명령은 exec_command의 yield_time_ms를 30000으로 주세요(먼저 끝나면 바로 돌아옵니다). 그래도 실행 중이면 빈 write_stdin에 yield_time_ms 300000을 줘서 끝날 때까지 한 번에 기다리세요. 1초 간격으로 반복 확인하지 마세요.\n",
 }
 
 // forkMovedNote leads a forked first turn whose CLI directory differs from the base room's.
