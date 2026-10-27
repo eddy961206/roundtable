@@ -299,6 +299,10 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, err := s.hub.PostUser(r.PathValue("id"), body.Text, body.Target, body.Attachments...)
+	if errors.Is(err, room.ErrWorkspaceBusy) {
+		writeErr(w, 409, err)
+		return
+	}
 	if err != nil {
 		writeErr(w, 400, err)
 		return

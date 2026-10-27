@@ -908,6 +908,9 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 			return nil, fmt.Errorf("활성 대상 없음: %s", target)
 		}
 	}
+	if other := h.workspaceRival(rs); other != nil {
+		return nil, rivalError(other)
+	}
 	attachments, err := h.resolveAttachments(rs, attachmentIDs)
 	if err != nil {
 		return nil, err
@@ -1217,6 +1220,11 @@ func (h *Hub) pump(rs *roomState) {
 				discussionBlocked = true
 			}
 			i++
+			continue
+		}
+		// Part and review turns run in their own worktree, not the room folder.
+		if t.Reason != "part" && t.Reason != "review" && h.workspaceRival(rs) != nil {
+			i++ // waits; pumpPeers starts it when the other room is done
 			continue
 		}
 		rs.queue = slices.Delete(rs.queue, i, i+1)
@@ -1719,6 +1727,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	}
 	previousStatus, previousText := p.Status, p.StatusText
 	h.pump(rs)
+	h.pumpPeers(rs)
 	h.saveRoom(rs)
 	if p.Status == previousStatus && p.StatusText == previousText {
 		// The state helper already publishes transitions. Publish unchanged
