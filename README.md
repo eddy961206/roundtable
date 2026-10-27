@@ -73,7 +73,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 - Codex: `codex mcp add roundtable -- roundtable mcp --url http://127.0.0.1:8787`
 - agy: `agy mcp add roundtable roundtable mcp --url http://127.0.0.1:8787`
 
-기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_decisions`, `rt_update_decision`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·요청·결정 카드 조회 6개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
+기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_decisions`, `rt_update_decision`, `rt_update_room`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·요청·결정 카드 조회 6개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 
@@ -92,6 +92,8 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 `rt_discuss`의 `blind_first`를 생략하면 방 설정을 따른다. 좌석들이 이미 같은 질문에 답한 뒤라면 블라인드 1라운드는 독립 답을 다시 받느라 호출을 좌석 수(N)만큼 더 쓴다. 이때는 `blind_first:false`로 순차 1라운드가 기존 답을 보고 시작하게 한다.
 
 `rt_decisions`는 결정 카드 목록을 반환하며 API 오류를 빈 목록으로 바꾸지 않는다. 좌석이 마커로 남긴 카드는 `proposed`이고 안내문에 들어가지 않는다. `rt_update_decision`(`room`, `id`, 선택 `status`·`text`·`evidence`·`dissent`·`unverified`)은 기존 `PATCH /api/rooms/{id}/decisions/{did}`를 감싼다. `status:"active"`는 확정, `"dropped"`는 거절, `"superseded"`는 대체됨이다. 생략한 항목은 바뀌지 않고, 바꿀 항목이 하나도 없으면 HTTP를 부르지 않고 거절한다. 카드를 `proposed`로 되돌릴 수는 없다. 쓰기 도구라 `--read-only`에서는 노출하지 않는다.
+
+`rt_update_room`(`room`, 선택 `title`·`note`·`workspace`·`mode`)은 기존 `PATCH /api/rooms/{id}`를 감싼다. 작업 폴더(git worktree)가 PR 병합 정리로 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 `workspace`를 새 폴더로 바꾼다. 바꿀 항목이 없으면 HTTP를 부르지 않고 거절한다. 작업 폴더가 없는 방의 턴은 공급사를 띄우기 전에 "작업 폴더가 없어 실행하지 않았어"로 실패한다.
 
 #### MCP 없이 셸로 쓰기: `roundtable rt`
 

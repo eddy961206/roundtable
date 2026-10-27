@@ -58,7 +58,7 @@ func (s *Server) tools() []tool {
 	participant := object(map[string]schema{"provider": text, "model": str, "effort": str, "label": str, "role": str, "fork_from": fork}, "provider")
 	all := []tool{
 		{Name: "rt_list_rooms", Description: fmt.Sprintf("최근 갱신순 방 id·제목·모드·실행 여부와 좌석(id·이름·공급사·모델·enabled) 조회. 삭제된 좌석은 빠지고 enabled:false는 꺼진 좌석. limit 기본 %d, 최대 %d", defaultListRooms, maxListRooms), InputSchema: object(map[string]schema{"limit": integer(1, &roomLimit)})},
-		{Name: "rt_create_room", Description: "새 방 생성. 결과는 방 id와 좌석 목록(id·이름·공급사·모델·enabled). 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용. fork_from {room, seat}을 주면 그 좌석의 세션(공통 문서를 읽힌 기반 세션)을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않음. 포크 좌석은 공급사·모델이 기반 좌석과 같아야 함(생략 시 기반 좌석 값). 작업 폴더·모드는 달라도 됨(다른 worktree면 첫 턴에 두 폴더를 알려 줌). 포크마다 문맥이 따로라 작성·검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않음. agy는 포크 미지원", InputSchema: object(map[string]schema{
+		{Name: "rt_create_room", Description: "새 방 생성. 결과는 방 id와 좌석 목록(id·이름·공급사·모델·enabled). 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용. fork_from {room, seat}을 주면 그 좌석의 세션(공통 문서를 읽힌 기반 세션)을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않음. 포크 좌석은 공급사·모델이 기반 좌석과 같아야 함(생략 시 기반 좌석 값). 작업 폴더·모드는 달라도 됨(다른 worktree면 첫 턴에 두 폴더를 알려 줌). 포크마다 문맥이 따로라 작성·검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않음. agy는 포크 미지원. OpenCode 좌석은 read 모드에서 셸이 없고 작업 폴더 밖을 읽지 못하므로, 시험을 직접 돌리는 검수는 write 모드에 검수 대상 폴더를 작업 폴더로 준다", InputSchema: object(map[string]schema{
 			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
 			"participants": {Type: "array", Items: &participant, MinItems: 1},
 		}, "title", "workspace", "mode", "participants")},
@@ -78,6 +78,9 @@ func (s *Server) tools() []tool {
 		{Name: "rt_requests", Description: "참가자 간 요청 목록과 상태 조회", InputSchema: object(map[string]schema{"room": id}, "room")},
 		{Name: "rt_cancel_request", Description: "참가자 간 요청 취소", InputSchema: object(map[string]schema{"room": id, "request": id}, "room", "request")},
 		{Name: "rt_decisions", Description: "결정 카드 목록 조회. status: proposed(좌석이 제안, 확정 대기)·active(안내문의 현재 결정)·superseded·dropped", InputSchema: object(map[string]schema{"room": id}, "room")},
+		{Name: "rt_update_room", Description: "방 설정 수정. 생략한 항목은 그대로이며 하나 이상 필요. 작업 폴더(git worktree)가 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 workspace를 새 폴더로 바꾼다. 실행 중인 턴에는 다음 턴부터 적용", InputSchema: object(map[string]schema{
+			"room": id, "title": text, "note": str, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
+		}, "room")},
 		{Name: "rt_update_decision", Description: "결정 카드 수정·상태 변경. 좌석이 [[DECISION]]으로 남긴 proposed 카드는 status active로 확정, dropped로 거절. 생략한 항목은 그대로이며 하나 이상 필요", InputSchema: object(map[string]schema{
 			"room": id, "id": id, "status": {Type: "string", Enum: []string{"active", "superseded", "dropped"}},
 			"text": text, "evidence": str, "dissent": str, "unverified": str,
@@ -288,6 +291,19 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 			result = []json.RawMessage{}
 		}
 		return map[string]any{"decisions": result}, nil
+	case "rt_update_room":
+		body := map[string]any{}
+		for key, v := range value.(map[string]any) {
+			if key != "room" {
+				body[key] = v
+			}
+		}
+		if len(body) == 0 {
+			return nil, fmt.Errorf("바꿀 항목(title·note·workspace·mode)이 하나 이상 필요함")
+		}
+		var result json.RawMessage
+		err := s.api(ctx, "PATCH", base, body, &result)
+		return result, err
 	case "rt_update_decision":
 		// The validated input minus the path ids is the PATCH body; omitted
 		// fields stay unchanged on the server.
