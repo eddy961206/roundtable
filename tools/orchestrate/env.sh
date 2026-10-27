@@ -41,3 +41,19 @@ verify_pushed() {
     || { echo "cannot read the remote head of $2; nothing posted" >&2; return 1; }
   [ "$rh" = "$lh" ] || { echo "remote head of $2 is ${rh:-missing}, local is $lh; nothing posted" >&2; return 1; }
 }
+# pick_seat <room> <label regex>: the seat a request is posted to. A post without a target
+# reaches every enabled seat, so in a room with a writer and a reviewer both start a turn
+# (the reviewer re-reads its whole session only to say it will wait). TARGET=<seat id> wins;
+# a room with one enabled seat uses it; otherwise exactly one enabled seat label must match.
+pick_seat() {
+  if [ -n "$TARGET" ]; then echo "$TARGET"; return; fi
+  curl -sf "$ORCH_RT_URL/api/rooms/$1?limit=1" | py -c "
+import json, re, sys
+r = json.load(sys.stdin); r = r.get('room', r)
+seats = [p for p in r['participants'] if p.get('enabled')]
+hit = seats if len(seats) == 1 else [p for p in seats if re.search(sys.argv[1], p.get('label', ''), re.I)]
+if len(hit) != 1:
+    sys.exit('room %s: no single enabled seat matches /%s/ (%s); set TARGET=<seat id>'
+             % (r['id'], sys.argv[1], ', '.join(p['id'] + '=' + p.get('label', '') for p in seats)))
+print(hit[0]['id'])" "$2"
+}

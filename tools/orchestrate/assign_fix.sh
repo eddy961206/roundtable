@@ -4,6 +4,7 @@
 # room together with the shared writer rules; prints room:seq for rtwait.sh.
 # Fails before posting if the room's workspace folder is gone, or if another running
 # room occupies the branch's worktree (worktree_claims.py check).
+# Only the writer seat gets it (pick_seat: label writer/작성, or TARGET=<seat id>).
 # Needs ORCH_REPO and ORCH_WRITER_RULES (a rules file, see templates/).
 . "$(dirname "$0")/env.sh"
 set -o pipefail
@@ -20,6 +21,7 @@ print(w if os.path.isdir(w) else 'MISSING:'+w)") || { echo "cannot read room $ro
 case $ws in MISSING:*) echo "room $room workspace gone (${ws#MISSING:}); repoint with rt update_room first" >&2; exit 1;; esac
 # Refuse while another running room works in the branch's worktree.
 py "$ORCH_DIR/worktree_claims.py" check --branch "$br" --room "$room" || exit 1
+seat=$(pick_seat "$room" 'writer|작성') || exit 1
 
 review="$(state_dir)/rv${rid}_pr${pr}.md"
 "$ORCH_TEA" api "repos/$ORCH_REPO/pulls/$pr/reviews" | py -c "
@@ -31,4 +33,4 @@ open(out,'w',encoding='utf-8').write(r[0]['body'])" "$rid" "$review" || exit 1
 
 { echo "상대 개발자가 PR #$pr(브랜치 \`$br\`)에 리뷰 $rid를 남겼어(아래 원문). 네 worktree의 그 브랜치에서 고쳐 줘. 지적마다 반례 시험을 먼저 써서 현재 head에서 실패하는 것을 확인한 뒤 고쳐. 막지 않는 항목도 작으면 같이 처리하고, 미루는 것은 작업 기록에 이유와 함께 남겨. 전체 검사 뒤 같은 브랜치에 로컬 커밋만 해. 끝나면 지적별 결과 표와 새 head를 적어. $extra"
   echo; cat "$ORCH_WRITER_RULES"; echo; echo "--- 리뷰 $rid 원문 ---"; cat "$review"; } \
- | rt post --room "$room" --text - | py -c "import json,sys;print(sys.argv[1]+':'+str(json.load(sys.stdin)['seq']))" "$room"
+ | rt post --room "$room" --target "$seat" --text - | py -c "import json,sys;print(sys.argv[1]+':'+str(json.load(sys.stdin)['seq']))" "$room"

@@ -104,6 +104,7 @@ tools/orchestrate/assign_fix.sh <PR 번호> <리뷰 id> <작성 방> <branch> ["
 ```
 
 - 먼저 방의 작업 폴더(workspace)가 있는지 확인한다. 없으면 게시하지 않고 `rt update_room`으로 폴더를 바꾸라고 알린다.
+- 작성 좌석에게만 보낸다. 켜진 좌석이 하나면 그 좌석, 여럿이면 이름에 `writer`·`작성`이 든 좌석 하나다. 맞는 좌석이 하나가 아니면 보내지 않고 `TARGET=<좌석 id>`를 요구한다. 대상을 빼면 같은 방의 검수 좌석도 턴을 시작해 "작성이 끝나면 검수하겠다"는 답에 세션 전체를 다시 읽는다(2026-10-28 실측: 한 번에 입력 13만~34만 토큰).
 - Gitea에서 리뷰 원문을 가져와 `$ORCH_STATE/rv<리뷰id>_pr<번호>.md`에 저장한다. 고정 지시 + `ORCH_WRITER_RULES` + 리뷰 원문을 작성 방에 보내고 `방:seq`를 출력한다. 이 값을 `rtwait.sh`에 넘긴다.
 - 관측 한계: 리뷰 본문만 보낸다. 줄 단위 리뷰 댓글(`pulls/<n>/reviews/<id>/comments`)은 포함하지 않는다. 작업 폴더의 존재만 확인하며 그 폴더가 해당 branch에 있는지는 확인하지 않는다.
 
@@ -112,6 +113,8 @@ tools/orchestrate/assign_fix.sh <PR 번호> <리뷰 id> <작성 방> <branch> ["
 ```bash
 NOREBASE=1 PRIME=<기반 문맥.md> tools/orchestrate/queue_review.sh <label> <worktree> <작성 방> <검수 방> "<검수 초점>"
 ```
+
+- 검수 방에서 이름에 `reviewer`·`검수`가 든 좌석 하나에게만 보낸다(규칙은 `assign_fix.sh`와 같고 `TARGET=<좌석 id>`가 우선).
 
 - `<worktree>`는 폴더 경로 또는 `ORCH_WORKTREES` 아래 이름이다.
 - 작성 방의 마지막 답 끝부분을 출력하고, worktree를 fetch한 뒤 `origin/$ORCH_BASE`로 rebase한다. `NOREBASE=1`이면 rebase하지 않는다. 다른 열린 PR 위에 쌓인 branch에 쓴다.

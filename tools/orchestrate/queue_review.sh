@@ -4,6 +4,7 @@
 # (ORCH_REVIEW_TEMPLATE) in the review room and prints "queued <label> room:seq".
 # <worktree> is a directory, or a name under ORCH_WORKTREES. Refused while another running
 # room (other than the review room) occupies it (worktree_claims.py check).
+# Only the reviewer seat gets it (pick_seat: label reviewer/검수, or TARGET=<seat id>).
 # NOREBASE=1    keep the branch where it is (stacked on another open PR).
 # PRIME=<file>  text sent before the request (e.g. the shared-context primer).
 # ORCH_CONFLICT_HOOK  command run inside the worktree with the conflicted files as
@@ -19,6 +20,7 @@ if [ -d "$wt" ]; then W=$wt; else need ORCH_WORKTREES; W=$ORCH_WORKTREES/$wt; fi
 [ -d "$W" ] || die "no worktree: $W"
 # Refuse (before rebasing) while another running room, e.g. the writer, works in W.
 py "$ORCH_DIR/worktree_claims.py" check --worktree "$W" --room "$ar" || exit 1
+seat=$(pick_seat "$ar" 'reviewer|검수') || exit 1
 
 rt read --room "$wr" --after_seq 0 --max_chars 2000 \
  | py -c "import json,sys;m=json.load(sys.stdin)['messages'];print('writer last:', (m[-1]['text'] if m else '')[-300:])" || exit 1
@@ -43,4 +45,4 @@ br=$(git branch --show-current)
 { [ -n "$PRIME" ] && { cat "$PRIME"; echo; }
   echo "다음 검수 건: **$label** — worktree \`$(winpath "$W")\`(브랜치 $br). $focus 판정 줄은 '판정($label): 승인/수정 필요'로 써."
   echo; cat "$ORCH_REVIEW_TEMPLATE"; } \
- | rt post --room "$ar" --text - | py -c "import json,sys;print('queued',sys.argv[1],sys.argv[2]+':'+str(json.load(sys.stdin)['seq']))" "$label" "$ar"
+ | rt post --room "$ar" --target "$seat" --text - | py -c "import json,sys;print('queued',sys.argv[1],sys.argv[2]+':'+str(json.load(sys.stdin)['seq']))" "$label" "$ar"
