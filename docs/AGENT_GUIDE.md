@@ -8,7 +8,7 @@
 ## 1. 먼저 알아야 할 다섯 가지
 
 1. **방의 모든 좌석은 자기 차례마다 토큰을 쓴다.** 방 하나에 작업 하나만 넣는다. 끝난 방에는 더 보내지 않는다.
-2. **오케스트레이터는 말을 옮기지 않는다.** 작성 좌석과 검수 좌석이 같은 방에서 `[[REQUEST:@좌석]]`로 직접 주고받게 하고, 오케스트레이터는 판정 줄과 head만 읽는다.
+2. **오케스트레이터는 말을 옮기지 않는다.** 작성 좌석과 검수 좌석이 같은 방에서 `[[REQUEST:@좌석]]`로 직접 주고받게 하고, 오케스트레이터는 판정 줄과 head만 읽는다(`rt wait --summary true`). 다른 방의 답을 넘겨야 하면 읽고 다시 쓰지 말고 `rt forward`로 원문을 옮긴다.
 3. **기다릴 때는 폴링하지 않는다.** `rt post`(대기 없이)로 받은 `seq`를 `rt wait --rooms <방>:<seq>`에 준다.
 4. **`timed_out`은 취소가 아니다.** 같은 메시지를 다시 보내지 말고 `resume_after_seq`로 이어 읽는다.
 5. **서버는 `install` 다음 `restart`로만 바꾼다.** 다른 세션이 같은 서버를 쓴다. 프로세스를 직접 죽이지 않는다.
@@ -33,12 +33,13 @@
 | 명령 | 언제 쓰나 |
 |---|---|
 | `list_rooms [--limit N]` | 방 id·좌석 id·`enabled`를 찾을 때. 좌석은 이름이 아니라 id로 부른다. |
-| `create_room --title --workspace --mode --participants '<JSON>'` | 작업 하나에 방 하나를 만들 때. `participants[]`는 `provider`·`model`·`effort`·`label`·`role`·`fork_from`. 결과의 좌석 id를 적어 둔다. |
+| `create_room --title --workspace --mode --participants '<JSON>' [--turn_timeout_minutes N]` | 작업 하나에 방 하나를 만들 때. `participants[]`는 `provider`·`model`·`effort`·`label`·`role`·`fork_from`. 결과의 좌석 id를 적어 둔다. 긴 작성 턴이 예상되면 턴 시간 상한(5~720분, 기본 45)을 늘린다. |
 | `post --room --text [--target <좌석>] [--wait_seconds N]` | 지시를 보낼 때. 여러 방이면 `--wait_seconds` 없이 보내고 `seq`를 모은다. |
 | `read --room [--after_seq N] [--max_chars N]` | 답 원문을 읽을 때. `after_seq`보다 큰 seq만 나온다. 생략하면 최신부터 20000자다. |
-| `wait --rooms <방>:<seq>,... [--timeout_seconds N]` | 여러 방 중 먼저 끝난 방을 기다릴 때. 서버 SSE로 깨어나 폴링이 없다. |
+| `wait --rooms <방>:<seq>,... [--timeout_seconds N] [--summary true]` | 여러 방 중 먼저 끝난 방을 기다릴 때. 서버 SSE로 깨어나 폴링이 없다. `--summary true`면 좌석 답마다 판정 줄(`판정`·`결론`·`verdict` 뒤 `:`)과 마커·신호 줄만 받고 `chars`로 원래 길이를 본다. |
+| `forward --room <받는 방> --from_room <방> --seq N [--target <좌석>] [--note "한 줄"]` | 다른 방의 답(검수 결과 등)을 원문 그대로 넘길 때. 받는 좌석 이력에 출처(방·#seq·작성자)가 붙고, 원문 속 @멘션·마커는 실행되지 않는다. |
 | `usage --rooms <방>,...` | 좌석·방별 토큰(`input`=`cached`+`uncached`, `output`, `max_context_tokens`, `turns`, `errors`)을 볼 때. `messages.jsonl`을 직접 파싱하지 않는다. |
-| `update_room --room [--title] [--note] [--workspace] [--mode]` | 방 메모(협업 규칙)를 바꾸거나, 지워진 worktree 대신 새 작업 폴더를 줄 때. |
+| `update_room --room [--title] [--note] [--workspace] [--mode] [--seat_input_budget N] [--room_input_budget N] [--input_warn_tokens N] [--context_warn_percent N] [--turn_timeout_minutes N]` | 방 메모(협업 규칙)를 바꾸거나, 지워진 worktree 대신 새 작업 폴더를 줄 때. 좌석·방 누적 입력 상한(0=없음), 누적 입력 경고 간격(0=1천만, -1=끔), 문맥 경보 비율(0=70, -1=끔)도 여기서 정한다. |
 | `discuss --room --rounds N [--blind_first false]` | 여러 모델 의견을 라운드로 겨루게 할 때. 이미 같은 질문에 답했으면 `--blind_first false`. |
 | `requests --room` / `cancel_request --room --request` | 좌석 간 `[[REQUEST]]`의 상태를 보거나, 잘못 나간 요청을 취소할 때. |
 | `cancel_turn --room --seat` | 좌석의 실행 중인 턴 하나만 멈출 때(중복 턴 등). 좌석은 켜진 채로 남아 요청을 계속 받는다. |
@@ -223,7 +224,11 @@ roundtable rt post --room <방> --target <w1 좌석 id> --text - < task.md
 
 | 증상 | 원인 | 대처 |
 |---|---|---|
-| OpenCode 좌석 답이 오류이고 `provider.free-limit`, 상태 429 | 무료 모델의 사용 한도 도달 | 같은 좌석으로 재시도하지 않는다. 한도가 풀릴 때까지 쓰지 않거나, 다른 모델 좌석으로 바꾼다(PATCH `participants[].model` 또는 새 좌석). |
+| 좌석 답이 한도 오류(429, rate/usage/free limit, quota)로 끝나고 "한도 오류로 …까지 이 좌석의 새 턴을 보류함" 안내 | 공급사 한도 도달. 서버가 그 좌석만 재시도 시각(오류에 없으면 10분 추정)까지 보류한다. `list_rooms` 좌석의 `held_until`(ms)·`held_reason`에 보인다. | 기다리면 시각이 지난 뒤 대기 턴이 저절로 돈다. 바로 다시 해 보려면 그 좌석을 `--target`으로 지정해 보낸다(보류가 풀림). 무료 한도면 다른 모델 좌석으로 바꾼다. |
+| "턴 보류: 좌석(방) 누적 입력 …이 예산 상한 …에 도달" 안내 | 방의 `seat_input_budget`·`room_input_budget`에 닿았다. 그 좌석(방이면 전 좌석)의 새 턴을 시작하지 않는다. 메시지는 남아 있다. | 의도한 상한이면 새 좌석·포크로 바꾸거나 일을 줄인다. 계속하려면 `update_room --seat_input_budget <더 큰 값 또는 0>`. 다음 턴에 남은 메시지가 함께 간다. |
+| 답이 `error`이고 `error_kind: turn_timeout`, "턴 시간 상한 N분을 넘어 중단됨" | 턴이 방의 시간 상한(기본 45분)을 넘었다. 사용자가 누른 취소(`cancelled` "중단됨")와 다르다. 출력이 있었으면 받은 메시지는 전달된 것으로 기록된다. | 답 원문을 읽고 어디까지 했는지 확인한다. 이어서 할 일만 다시 보낸다. 긴 작업이면 `update_room --turn_timeout_minutes 120`처럼 늘린 뒤 보낸다(5~720분). |
+| "이 방 누적 입력이 …을 넘음"·"문맥이 모델 한도의 n%에 도달" 안내 | 한 세션을 오래 이어 써서 턴마다 입력이 커졌다. | 작업이 바뀌는 지점이면 좌석에게 결정·남은 일을 정리하게 한 뒤 세션을 새로 시작한다(기반 포크 또는 새 좌석). 경고만 하며 턴은 막지 않는다. |
+| `rt post`·`rt forward`가 409 "작업 폴더 사용 중: 방 …이 같은 작업 폴더 …에서 실행 중" | 같은 폴더를 쓰는 다른 방(둘 중 하나라도 write)이 실행 중이다. 작성 중인 worktree를 다른 방이 동시에 검수·수정하지 못하게 막는다. | 그 방의 턴이 끝난 뒤(`rt wait`) 다시 보낸다. 이미 대기열에 들어간 턴은 그 방이 끝나면 저절로 시작한다. 상위 폴더(`_worktrees` 등)를 쓰는 방은 비교하지 않으니 `tools/orchestrate/worktree_claims.py`로 등록한다. |
 | agy 답 본문은 끝까지 있는데 턴이 `error`(스트림 유휴 시간 초과)이고, 답 안의 `[[REQUEST]]`가 실행되지 않음 | 서버는 오류로 끝난 답의 마커를 스스로 실행하지 않는다(답이 잘렸을 수 있음). | 답을 읽고 끝까지 쓰였으면 `apply_markers --room --seq N`으로 실행한다. 잘렸으면 그 좌석에 다시 시도를 보낸다. |
 | 턴이 "작업 폴더가 없어 실행하지 않았어"로 실패 | 방의 worktree가 PR 병합 정리 등으로 지워졌다. | `rt update_room --room <방> --workspace <새 폴더>`. 방과 좌석 세션은 유지된다. 실행 중에는 바꿀 수 없다. |
 | HTTP 요청이 400 "UTF-8" 오류로 거절 | Windows `curl -d '{...}'`에 한글을 넣으면 콘솔 코드 페이지 바이트로 넘어간다. 서버는 UTF-8이 아닌 본문을 거절한다. | 본문을 UTF-8 파일로 저장하고 `curl --data-binary @파일`로 보낸다. `rt` 명령은 이 문제가 없다. |

@@ -22,11 +22,12 @@ Roundtable은 서로 다른 공급사의 AI CLI가 한 방에서 대화·리뷰�
 
 ## 핵심 규칙
 1. 작업 하나에 방 하나를 쓴다. 다른 작업을 같은 방에 넣지 않는다. 끝난 방에는 더 보내지 않는다.
-2. 오케스트레이터는 말을 옮기지 않는다. 좌석끼리 `[[REQUEST:@좌석]]`으로 주고받게 하고, 판정 줄과 head만 읽는다.
+2. 오케스트레이터는 말을 옮기지 않는다. 좌석끼리 `[[REQUEST:@좌석]]`으로 주고받게 하고, 판정 줄과 head만 읽는다(`rt wait --summary true`). 다른 방 답은 `rt forward --room <받는 방> --from_room <방> --seq N --target <좌석>`으로 원문 그대로 넘긴다.
 3. 좌석은 이름이 아니라 id(`list_rooms`·`create_room` 결과의 `participants[].id`)로 부른다. `enabled:false` 좌석은 부를 수 없다.
 4. `timed_out:true`는 실행 취소가 아니다. 다시 보내지 말고 결과의 `resume_after_seq`로 `rt read --after_seq`를 실행한다.
 5. 서버 교체는 사람이 허락한 경우에만, `install` 다음 `restart`로만 한다.
 6. 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 명령은 사람에게 확인받는다.
+7. 409 "작업 폴더 사용 중"은 같은 폴더의 다른 방이 끝난 뒤 다시 보낸다. 한도 오류 보류(`held_until`)·입력 예산 보류(`budget_held`) 안내가 나오면 같은 좌석으로 곧장 재시도하지 말고 안내의 다음 행동을 따른다.
 
 ## 기본 흐름
 1. `roundtable rt list_rooms --limit 5` — 방과 좌석 id 확인. 알맞은 방이 없으면 `create_room`(같은 프로젝트의 여러 작업이면 안내서의 기반 세션 포크).

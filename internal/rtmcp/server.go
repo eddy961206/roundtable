@@ -25,7 +25,8 @@ const protocolVersion = "2024-11-05"
 const instructions = "Roundtable: 서로 다른 공급사의 AI CLI 좌석이 한 방에서 일하는 로컬 서버의 HTTP API.\n" +
 	"- 작업 하나에 방 하나를 쓴다. 작성 좌석과 다른 공급사의 검수 좌석을 같은 방에 두고 [[REQUEST:@좌석ID]]로 직접 주고받게 한다. 오케스트레이터는 검수 원문을 옮기지 말고 판정 줄과 head만 읽는다. 끝난 방에는 더 보내지 않는다.\n" +
 	"- 좌석은 이름이 아니라 id로 부른다. target 없이 보낸 메시지는 켜진 좌석 전원을 부른다.\n" +
-	"- 여러 방은 wait_seconds 없이 rt_post하고 받은 seq로 rt_wait(rooms=방:seq,...)를 부른다. 폴링하지 않는다.\n" +
+	"- 여러 방은 wait_seconds 없이 rt_post하고 받은 seq로 rt_wait(rooms=방:seq,...)를 부른다. 폴링하지 않는다. 판정만 필요하면 rt_wait summary:true. 다른 방의 답은 rt_forward로 원문 그대로 넘긴다(읽고 다시 쓰지 않는다).\n" +
+	"- 409 작업 폴더 사용 중은 같은 폴더의 다른 방이 끝난 뒤 다시 보낸다. 좌석의 held_until(한도 오류)·budget_held(입력 예산) 보류 안내가 있으면 같은 좌석으로 곧장 재시도하지 않는다.\n" +
 	"- rt_post의 timed_out은 대기만 종료하며 실행 중인 턴을 취소하지 않는다. timed_out이면 같은 메시지를 다시 보내지 말고 결과의 resume_after_seq를 after_seq로 주어 rt_read로 이어 읽는다(live:true면 기존 답의 seq가 보낸 seq보다 작아 보낸 seq로는 그 답이 빠진다).\n" +
 	"- 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.\n" +
 	"- 좌석 추가·max_chain·좌석 켜기는 HTTP 전용이다. 기능 색인·전달 규칙·공급사별 능력·실패 대처는 Roundtable 저장소의 docs/AGENT_GUIDE.md(https://github.com/eddy961206/roundtable/blob/main/docs/AGENT_GUIDE.md)를 읽는다."
