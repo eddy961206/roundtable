@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"roundtable/internal/server"
@@ -106,9 +107,20 @@ func stopWhenIdle(base string, timeout time.Duration) (*server.ShutdownResult, e
 // overwrite a running executable but allows renaming it, so an existing file is
 // renamed to <dest>.old-<ms> first; processes started from it keep running.
 func runInstall(args []string) int {
+	const installUsage = "사용법: roundtable install <대상 exe 경로>...\n이 실행 파일을 각 대상에 복사한다. 대상이 실행 중이면 이름을 <대상>.old-<시각>으로 바꾼 뒤 복사한다."
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "사용법: roundtable install <대상 exe 경로>...")
+		fmt.Fprintln(os.Stderr, installUsage)
 		return 2
+	}
+	for _, a := range args {
+		switch {
+		case a == "-h" || a == "-help" || a == "--help" || a == "help":
+			fmt.Println(installUsage)
+			return 0
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "알 수 없는 옵션: %s\n%s\n", a, installUsage)
+			return 2
+		}
 	}
 	self, err := os.Executable()
 	if err != nil {

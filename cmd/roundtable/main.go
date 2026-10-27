@@ -29,25 +29,59 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "mcp":
-			os.Exit(runMCP(os.Args[2:]))
-		case "rt":
-			os.Exit(runRT(os.Args[2:]))
-		case agyhook.Marker:
-			os.Exit(runAgyStatusline(os.Args[2:]))
-		case "agy-hook":
-			os.Exit(runAgyHook(os.Args[2:]))
-		case "gitea-mcp":
-			os.Exit(runGiteaMCP(os.Args[2:]))
-		case "restart":
-			os.Exit(runRestart(os.Args[2:]))
-		case "install":
-			os.Exit(runInstall(os.Args[2:]))
+	code, startServer, out := dispatch(os.Args[1:])
+	if out != "" {
+		if code == 0 {
+			fmt.Print(out)
+		} else {
+			fmt.Fprint(os.Stderr, out)
 		}
 	}
-	serve(0)
+	if startServer {
+		serve(0)
+		return
+	}
+	os.Exit(code)
+}
+
+const usage = `사용법:
+  roundtable [-addr 127.0.0.1:8787] [-data 폴더] [기타 서버 플래그]   서버 실행
+  roundtable rt <명령> [--인자 값]...     외부 에이전트용 CLI (roundtable rt 로 목록)
+  roundtable mcp --url <주소>             MCP 서버(stdio)
+  roundtable install <대상 exe>...        이 빌드로 실행 파일 교체(실행 중인 파일은 이름만 바꿈)
+  roundtable restart --url <주소>         실행 중인 서버가 유휴가 되면 같은 인자로 다시 띄움
+  roundtable agy-hook install|uninstall   Antigravity 한도 표시 훅
+  roundtable gitea-mcp ...                읽기 전용 Gitea MCP
+`
+
+// dispatch picks the subcommand. Anything that is not a subcommand or a flag is
+// refused: a typo must not start a server on the default port.
+func dispatch(args []string) (code int, startServer bool, out string) {
+	if len(args) == 0 {
+		return 0, true, ""
+	}
+	switch args[0] {
+	case "help", "-h", "-help", "--help":
+		return 0, false, usage
+	case "mcp":
+		return runMCP(args[1:]), false, ""
+	case "rt":
+		return runRT(args[1:]), false, ""
+	case agyhook.Marker:
+		return runAgyStatusline(args[1:]), false, ""
+	case "agy-hook":
+		return runAgyHook(args[1:]), false, ""
+	case "gitea-mcp":
+		return runGiteaMCP(args[1:]), false, ""
+	case "restart":
+		return runRestart(args[1:]), false, ""
+	case "install":
+		return runInstall(args[1:]), false, ""
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return 0, true, ""
+	}
+	return 2, false, "알 수 없는 하위 명령: " + args[0] + "\n\n" + usage
 }
 
 // serve runs the server from the flags in os.Args. listenWait retries an
