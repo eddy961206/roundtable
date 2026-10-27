@@ -1283,6 +1283,10 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
 	if forked {
 		pr.opts.ForkSession = p.Fork.Session
+		if p.Fork.Dir != sessionDir(rs.room) {
+			// CLIs fork across directories; the copied context still names the base folder.
+			pr.opts.Prompt = forkMovedNote(p.Fork.Dir, sessionDir(rs.room)) + pr.opts.Prompt
+		}
 		pr.forkCost, pr.inputErr = h.forkBaseCost(p.Fork)
 	}
 	return pr

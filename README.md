@@ -36,7 +36,18 @@ go build -o roundtable.exe ./cmd/roundtable
 
 브라우저가 `http://127.0.0.1:8787` 로 열린다. "새 방"에서 작업 폴더와 권한 모드를 정하고 질문을 던진다.
 
+Windows에서는 Hyper-V·WinNAT 등이 기본 포트 8787을 예약 범위로 잡는 경우가 있다(이 경우 bind가 거부된다). 서버는 그 예약 범위를 찾아 오류에 적는다. 그때는 `-addr 127.0.0.1:18787`처럼 범위 밖 포트를 쓰고 `rt`·MCP의 `--url`도 같은 포트로 준다. 예약 범위는 `netsh interface ipv4 show excludedportrange protocol=tcp`로 확인한다.
+
 옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy` `-opencode`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`, `-codex-windows-sandbox`(`elevated` | `unelevated`).
+
+### 새 빌드로 교체하기
+
+실행 중인 서버를 멈추지 않고 새 빌드로 바꾸려면 새로 빌드한 실행 파일로 아래 두 명령을 차례로 실행한다.
+
+1. `<새 빌드>.exe install <서버 exe 경로> [<다른 사본 경로>...]`: 대상마다 기존 파일을 `<대상>.old-<시각>`으로 이름만 바꾸고 새 파일을 복사한다. Windows는 실행 중인 exe를 덮어쓰지 못하지만 이름은 바꿀 수 있다. 그 파일로 이미 떠 있는 프로세스(예: agy가 사용자 MCP 설정으로 띄운 `roundtable gitea-mcp`)는 이름이 바뀐 이전 사본으로 계속 돌고, 다음 시작부터 새 파일을 쓴다. 지우지 못한 이전 사본은 출력에 남는다.
+2. `<서버 exe 경로> restart --url http://127.0.0.1:<포트> [--timeout 30m]`: 실행 중인 서버에 `POST /api/shutdown {"when_idle":true}`를 보낸다. 서버는 모든 방에 실행·대기 중인 턴과 작업 계획 단계가 없는 순간에 새 요청을 거절하고 종료한다(유휴 확인과 종료가 한 잠금 안에서 일어나 그 사이의 요청이 끼어들지 않는다). 그러면 `restart`를 실행한 프로세스가 이전 서버의 인자와 작업 폴더로 같은 주소에 서버를 띄운다. 시간 안에 유휴가 되지 않으면 이전 서버는 그대로 두고 오류로 끝난다. 강제 종료는 기존처럼 Ctrl+C다.
+
+`restart`를 실행한 셸이 새 서버 프로세스가 되므로, 서버를 원래 띄우던 방식(백그라운드 셸, 서비스 등)으로 실행한다.
 
 ### 실행 권한
 
@@ -62,13 +73,17 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 - Codex: `codex mcp add roundtable -- roundtable mcp --url http://127.0.0.1:8787`
 - agy: `agy mcp add roundtable roundtable mcp --url http://127.0.0.1:8787`
 
-기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_decisions`, `rt_update_decision`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·요청·결정 카드 조회 4개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
+기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_decisions`, `rt_update_decision`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·요청·결정 카드 조회 6개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 
 `timed_out:true`는 대기 시간 초과이며 실행 취소가 아니다. 긴 대기를 쓸 때는 MCP 클라이언트의 도구 제한 시간도 그보다 길게 설정해야 한다. MCP의 `notifications/cancelled`는 해당 요청의 HTTP 조회와 대기만 취소한다. 클라이언트가 stdin을 닫으면 진행 중인 MCP 요청을 모두 취소하고 MCP 서버를 종료한다. 방에서 실행 중인 에이전트 턴은 취소하지 않는다. 대기 중에도 `ping`과 다른 도구 호출을 처리하며, 응답은 요청 id로 구분한다. MCP `initialize`의 instructions에는 두 규칙을 싣는다. `timed_out`이면 다시 보내지 말고 `rt_read`로 이어 읽는다. 이때 `after_seq`에는 `timed_out:true` 결과에만 붙는 `resume_after_seq`를 쓴다. 이 값은 보낸 seq와, 아직 `streaming`이거나 예산 밖으로 빠진 답 중 가장 작은 seq−1 가운데 작은 값이다. 빠진 답은 배열에 없어도 이 값에 들어간다. `live:true`면 기존 답의 seq가 보낸 seq보다 작으므로 보낸 seq를 그대로 쓰면 그 답이 빠진다. 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.
 
 `rt_list_rooms`는 최근 갱신순으로 `limit`개(기본 20, 최대 100)를 반환한다. 방마다 id·제목·모드·실행 여부와 좌석의 id·이름·공급사·모델·`enabled`만 담는다. 삭제된 좌석은 호출할 수 없으므로 빼고, 꺼진 좌석은 `enabled:false`로 남긴다. 좌석 역할 같은 나머지 정보는 방 화면에서 본다.
+
+`rt_wait`(`rooms`, 선택 `timeout_seconds` 1~3600·기본 600, `max_chars`)는 여러 방 중 하나 이상이 끝날 때까지 한 번의 호출로 기다린다. `rooms`는 `방ID:after_seq`를 쉼표로 이은 값이고, after_seq에는 `rt_post` 결과의 seq를 쓴다(생략하면 대기 시작 시점 이후의 답만 센다). 방이 끝났다는 것은 실행·대기 중인 턴이 없고 after_seq 뒤에 좌석 답이 있다는 뜻이다. 서버의 방 목록 SSE(`GET /api/stream`)로 깨어나므로 주기 조회가 없다. 결과 `ready`에는 끝난 방마다 `rt_read`와 같은 형식의 새 메시지가, `waiting`에는 남은 방이 다음 `rt_wait`의 `rooms` 값 그대로 들어간다. 시간이 지나면 `timed_out:true`다. 셸 도구의 실행 제한 시간이 더 짧으면 백그라운드로 실행한다.
+
+`rt_usage`(`rooms`)는 `GET /api/rooms/{id}/usage`를 방마다 불러 좌석별·방별 합계와 전체 합을 돌려준다. 공급사마다 다른 보고 방식을 맞춰 `input_tokens`(처리한 입력 전체) = `cached_tokens`(캐시 읽기) + `uncached_tokens`(나머지, 캐시 쓰기 포함)로 계산한다. Codex는 입력에 캐시가 포함되어 있고, Claude·agy·OpenCode는 캐시를 따로 보고한다. `output_tokens`, `cost_usd`(보고하는 공급사만), `max_context_tokens`(한 턴에서 가장 큰 단일 호출), `turns`·`errors`·`duration_ms`도 준다.
 
 `rt_create_room`은 방 id와 만든 좌석의 id·이름·공급사·모델·`enabled`를 반환한다. 좌석 id는 `rt_post`의 `target`과 다른 방 좌석의 `fork_from.seat`에 쓴다.
 
@@ -91,6 +106,8 @@ cat 긴_설명.md | roundtable rt post --room <방ID> --text -   # 값 - 는 std
 roundtable rt read --room <방ID> --after_seq 12
 roundtable rt update_decision --room <방ID> --id <결정ID> --status active   # 제안 카드 확정
 roundtable rt create_room --title "작업 1" --workspace <폴더> --mode write --participants '[{"provider":"codex","fork_from":{"room":"<기반방ID>","seat":"<기반좌석ID>"}}]'   # 기반 세션 포크
+roundtable rt wait --rooms <방A>:<seq>,<방B>:<seq> --timeout_seconds 3600   # 먼저 끝난 방의 새 답을 받음
+roundtable rt usage --rooms <방A>,<방B>                                       # 방별·좌석별 토큰 합계
 ```
 
 결과는 stdout에 한 줄 JSON으로 나온다. 실패하면 사유를 stderr에 쓰고, 검증·실행 실패는 종료 코드 1, 명령 형식 오류는 2를 돌려준다. 정수는 `--rounds 2`, 참·거짓은 `--blind_first false`, 배열은 JSON(`--participants '[{"provider":"agy"}]'`)으로 쓴다. 다른 서버는 `roundtable rt --url http://127.0.0.1:8791 ...`로 지정한다(loopback만 허용). 에이전트에게 사용법을 알려 줄 때는 [skills/roundtable/SKILL.md](skills/roundtable/SKILL.md)를 스킬로 설치하거나 지침에 붙인다.
@@ -104,6 +121,10 @@ roundtable rt create_room --title "작업 1" --workspace <폴더> --mode write -
 3. 특정 한 명에게 지시할 때는 이름으로 된 대상 칩이나 **이름 넣기**를 쓴다. 같은 이름은 화면에서 번호로 구별한다. 내부 ID와 정확한 모델 ID는 **상세**에서 확인한다. 이름을 바꿔도 내부 ID는 유지된다.
 
 참가자를 제거해도 이전 답변과 누적 사용량은 남는다. 모델·추론 수준 변경은 실행 중에는 거절하며, 변경된 참가자의 다음 턴은 새 CLI 세션으로 시작한다. 공급사 한도는 계정 단위이므로 참가자 수만큼 늘어나지 않는다.
+
+### 공통 문맥을 한 번만 읽히기: 기반 세션 포크
+
+같은 프로젝트의 작업을 여러 방에 나눠 맡길 때는 공통 문서를 **기반 방**의 좌석에 한 번만 읽힌다. 작업 방의 좌석은 `participant_specs[].fork_from`(`{"room","seat"}`)으로 그 세션을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않는다. 포크마다 세션이 따로라 작성 좌석과 검수 좌석을 같은 기반에서 각각 포크해도 문맥이 섞이지 않는다. 공급사·모델은 기반 좌석과 같아야 하고 agy는 지원하지 않는다. 작업 폴더는 달라도 된다. 작업마다 다른 git worktree를 쓰면 기반 방은 저장소 본체에 두고 작업 방은 각자의 worktree를 작업 폴더로 준다. 폴더가 다르면 포크 첫 턴에 두 폴더를 알려 준다. 계약은 [docs/기반문맥_포크_계약.md](docs/기반문맥_포크_계약.md), 실측은 [docs/기반문맥_포크_측정_20261027.md](docs/기반문맥_포크_측정_20261027.md)에 있다. 지금은 HTTP API·`rt`·MCP에서만 지정할 수 있다.
 
 ### OpenCode API와 구독 모델
 
@@ -169,10 +190,6 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 `~/.roundtable/rooms/<id>/` 에 `room.json`(설정·참가자·세션 ID·누적 사용량), `messages.jsonl`, `events.jsonl`(작업 기록)이 쌓인다. 에이전트가 읽은 파일 내용은 작업 기록에 남는다. **비밀이 든 폴더는 작업 폴더로 주지 마라.**
 
 화면은 최근 100개부터 불러오며 한 번에 최대 200개 메시지를 유지한다. 이전 기록은 페이지로 이동한다. 작업 기록은 처음 펼칠 때 최근 200개 이벤트와 필요한 서브에이전트 문맥을 디스크에서 읽는다. 브라우저는 최대 8개 답변의 기록을 캐시하며, 열린 기록에는 새 이벤트를 계속 추가한다. 이전 기록을 요청하면 전체 기록을 불러오므로 답변 하나의 캐시는 200개를 넘을 수 있다. 전체 기록 다운로드와 대화 내보내기는 유지한다. 서버의 메시지 본문과 디스크 기록은 여전히 누적되므로 무기한 보관에 대한 용량 제한은 별도로 필요하다. 서버는 작업 기록 전체를 상시 메모리에 보관하지 않는다.
-
-### 공통 문맥을 한 번만 읽히기: 기반 세션 포크
-
-같은 프로젝트의 작업을 여러 방에 나눠 맡길 때는 공통 문서를 **기반 방**의 좌석에 한 번만 읽힌다. 작업 방의 좌석은 `participant_specs[].fork_from`(`{"room","seat"}`)으로 그 세션을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않는다. 포크마다 세션이 따로라 작성 좌석과 검수 좌석을 같은 기반에서 각각 포크해도 문맥이 섞이지 않는다. 공급사·모델·CLI 실행 폴더가 기반 좌석과 같아야 하고, agy는 지원하지 않는다. 계약은 [docs/기반문맥_포크_계약.md](docs/기반문맥_포크_계약.md), 실측은 [docs/기반문맥_포크_측정_20261027.md](docs/기반문맥_포크_측정_20261027.md)에 있다. 지금은 HTTP API·`rt`·MCP에서만 지정할 수 있다.
 
 스트리밍·작업 기록 조회·화면 갱신의 성능 측정과 재현 방법은 [2026-10-21 성능 측정](docs/성능최적화_측정_20261021.md)과 [tools/perf](tools/perf/README.md)에 정리했다.
 

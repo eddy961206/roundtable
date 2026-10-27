@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -41,8 +40,18 @@ func main() {
 			os.Exit(runAgyHook(os.Args[2:]))
 		case "gitea-mcp":
 			os.Exit(runGiteaMCP(os.Args[2:]))
+		case "restart":
+			os.Exit(runRestart(os.Args[2:]))
+		case "install":
+			os.Exit(runInstall(os.Args[2:]))
 		}
 	}
+	serve(0)
+}
+
+// serve runs the server from the flags in os.Args. listenWait retries an
+// address that is still in use, for a restart whose old process is exiting.
+func serve(listenWait time.Duration) {
 	home, _ := os.UserHomeDir()
 	addr := flag.String("addr", "127.0.0.1:8787", "listen address")
 	data := flag.String("data", filepath.Join(home, ".roundtable"), "data directory")
@@ -63,7 +72,7 @@ func main() {
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	// Reserve the address before startup recovery can mutate persisted rooms.
-	ln, err := net.Listen("tcp", *addr)
+	ln, err := listen(*addr, listenWait)
 	if err != nil {
 		logger.Fatalf("listen %s: %v", *addr, err)
 	}
@@ -120,7 +129,10 @@ func main() {
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-srv.Stopped(): // POST /api/shutdown already closed the hub when idle
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := hub.Shutdown(shutdownCtx); err != nil {

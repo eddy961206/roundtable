@@ -201,3 +201,100 @@ func medianMs(values []int64) int64 {
 	}
 	return values[mid-1] + (values[mid]-values[mid-1])/2
 }
+
+// UsageTotals normalizes token usage across providers. Input is every input
+// token the model processed; Cached is the part read from the prompt cache and
+// Uncached the rest (cache writes count as uncached).
+type UsageTotals struct {
+	Turns      int     `json:"turns"`
+	Errors     int     `json:"errors"`
+	Input      float64 `json:"input_tokens"`
+	Cached     float64 `json:"cached_tokens"`
+	Uncached   float64 `json:"uncached_tokens"`
+	Output     float64 `json:"output_tokens"`
+	CostUSD    float64 `json:"cost_usd"`
+	MaxContext int     `json:"max_context_tokens"` // largest single model call of a turn
+	DurationMs int64   `json:"duration_ms"`
+}
+
+type SeatUsage struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Effort   string `json:"effort"`
+	Removed  bool   `json:"removed,omitempty"`
+	UsageTotals
+	ContextTokens int `json:"context_tokens"` // the seat's latest call
+	ContextWindow int `json:"context_window"`
+}
+
+type RoomUsage struct {
+	Room   string      `json:"room"`
+	Title  string      `json:"title"`
+	Totals UsageTotals `json:"totals"`
+	Seats  []SeatUsage `json:"seats"`
+}
+
+// add counts one finished agent reply. Codex input_tokens already includes its
+// cached part; Claude, agy and OpenCode report input without the cache.
+func (t *UsageTotals) add(provider string, m *Message) {
+	t.Turns++
+	if m.Status == "error" {
+		t.Errors++
+	}
+	t.DurationMs += m.Duration
+	cached := usageNumber(m.Usage, "cached_input_tokens") + usageNumber(m.Usage, "cache_read_input_tokens") + usageNumber(m.Usage, "cache_read_tokens")
+	input := usageNumber(m.Usage, "input_tokens")
+	if provider != "codex" {
+		input += usageNumber(m.Usage, "cache_creation_input_tokens") + cached
+	}
+	t.Input += input
+	t.Cached += cached
+	t.Uncached += input - cached
+	t.Output += usageNumber(m.Usage, "output_tokens")
+	t.CostUSD += usageNumber(m.Usage, "total_cost_usd")
+	t.MaxContext = max(t.MaxContext, int(usageNumber(m.Usage, "context_tokens")))
+}
+
+func (t *UsageTotals) merge(o UsageTotals) {
+	t.Turns += o.Turns
+	t.Errors += o.Errors
+	t.Input += o.Input
+	t.Cached += o.Cached
+	t.Uncached += o.Uncached
+	t.Output += o.Output
+	t.CostUSD += o.CostUSD
+	t.MaxContext = max(t.MaxContext, o.MaxContext)
+	t.DurationMs += o.DurationMs
+}
+
+// RoomUsage sums the room's finished agent replies per seat, removed seats included.
+func (h *Hub) RoomUsage(id string) (*RoomUsage, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	rs, ok := h.rooms[id]
+	if !ok {
+		return nil, fmt.Errorf("방 없음: %s", id)
+	}
+	out := &RoomUsage{Room: id, Title: rs.room.Title, Seats: []SeatUsage{}}
+	index := map[string]int{}
+	for _, p := range rs.room.Participants {
+		index[p.ID] = len(out.Seats)
+		out.Seats = append(out.Seats, SeatUsage{ID: p.ID, Label: p.Label, Provider: p.Provider, Model: p.Model, Effort: p.Effort, Removed: p.Removed, ContextTokens: p.ContextTokens, ContextWindow: p.ContextWindow})
+	}
+	for _, m := range rs.msgs {
+		if m.Kind != "agent" || m.Status == "streaming" {
+			continue
+		}
+		i, seat := index[m.Author]
+		if !seat {
+			return nil, fmt.Errorf("방 %s 답변 %s의 좌석 %s가 참가자 기록에 없음", id, m.ID, m.Author)
+		}
+		out.Seats[i].add(out.Seats[i].Provider, m)
+	}
+	for _, s := range out.Seats {
+		out.Totals.merge(s.UsageTotals)
+	}
+	return out, nil
+}

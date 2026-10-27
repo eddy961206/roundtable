@@ -29,3 +29,13 @@ func (s *Server) refreshVersions(w http.ResponseWriter, r *http.Request) {
 	}
 	s.providers(w, r)
 }
+
+func (s *Server) roomUsage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	usage, err := s.hub.RoomUsage(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, 404, err)
+		return
+	}
+	writeJSON(w, 200, usage)
+}

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // The same schema describes tools/list and validates tools/call. Only the
@@ -24,6 +25,7 @@ type schema struct {
 	MinLength            int               `json:"minLength,omitempty"`
 	MinItems             int               `json:"minItems,omitempty"`
 	Pattern              string            `json:"pattern,omitempty"`
+	hint                 string            // the validation message for Pattern
 }
 
 type tool struct {
@@ -44,7 +46,10 @@ func integer(minimum int64, maximum *int64) schema {
 }
 
 func (s *Server) tools() []tool {
-	id := schema{Type: "string", MinLength: 1, Pattern: regexpID.String()}
+	id := schema{Type: "string", MinLength: 1, Pattern: regexpID.String(), hint: "id는 영문·숫자·밑줄·하이픈만 허용"}
+	waitList := schema{Type: "string", MinLength: 1, Pattern: waitRooms.String(), hint: "rooms는 방ID 또는 방ID:after_seq를 쉼표로 이은 값"}
+	usageList := schema{Type: "string", MinLength: 1, Pattern: roomList.String(), hint: "rooms는 방ID를 쉼표로 이은 값"}
+	waitLimit := int64(3600)
 	text := schema{Type: "string", MinLength: 1}
 	str := schema{Type: "string"}
 	limit := int64(600)
@@ -53,7 +58,7 @@ func (s *Server) tools() []tool {
 	participant := object(map[string]schema{"provider": text, "model": str, "effort": str, "label": str, "role": str, "fork_from": fork}, "provider")
 	all := []tool{
 		{Name: "rt_list_rooms", Description: fmt.Sprintf("최근 갱신순 방 id·제목·모드·실행 여부와 좌석(id·이름·공급사·모델·enabled) 조회. 삭제된 좌석은 빠지고 enabled:false는 꺼진 좌석. limit 기본 %d, 최대 %d", defaultListRooms, maxListRooms), InputSchema: object(map[string]schema{"limit": integer(1, &roomLimit)})},
-		{Name: "rt_create_room", Description: "새 방 생성. 결과는 방 id와 좌석 목록(id·이름·공급사·모델·enabled). 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용. fork_from {room, seat}을 주면 그 좌석의 세션(공통 문서를 읽힌 기반 세션)을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않음. 포크 좌석은 공급사·모델이 기반 좌석과 같아야 하고(생략 시 기반 좌석 값), 방의 작업 폴더도 같아야 함. 포크마다 문맥이 따로라 작성·검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않음. agy는 포크 미지원", InputSchema: object(map[string]schema{
+		{Name: "rt_create_room", Description: "새 방 생성. 결과는 방 id와 좌석 목록(id·이름·공급사·모델·enabled). 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용. fork_from {room, seat}을 주면 그 좌석의 세션(공통 문서를 읽힌 기반 세션)을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않음. 포크 좌석은 공급사·모델이 기반 좌석과 같아야 함(생략 시 기반 좌석 값). 작업 폴더·모드는 달라도 됨(다른 worktree면 첫 턴에 두 폴더를 알려 줌). 포크마다 문맥이 따로라 작성·검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않음. agy는 포크 미지원", InputSchema: object(map[string]schema{
 			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
 			"participants": {Type: "array", Items: &participant, MinItems: 1},
 		}, "title", "workspace", "mode", "participants")},
@@ -63,6 +68,10 @@ func (s *Server) tools() []tool {
 		{Name: "rt_read", Description: "메시지를 오래된 순으로 조회. after_seq가 있으면 그보다 큰 seq만, 생략하면 최신 메시지까지. max_chars(기본 20000, 본문 합계의 Unicode 문자 수)는 최신 메시지부터 채움: 경계 메시지는 앞을 줄여 truncated, 담지 못한 오래된 메시지는 빼고 omitted_messages(개수)·first_seq(담긴 첫 seq)로 알림. reply_to는 그 답이 응답한 메시지의 seq", InputSchema: object(map[string]schema{
 			"room": id, "after_seq": integer(0, nil), "max_chars": integer(1, nil),
 		}, "room")},
+		{Name: "rt_wait", Description: "여러 방 중 하나 이상이 끝날 때까지 대기. rooms는 \"방ID:after_seq,방ID:after_seq\"(after_seq는 rt_post 결과의 seq; 생략하면 대기 시작 시점 이후 답만 셈). 방이 끝났다는 뜻은 실행·대기 중인 턴이 없고 after_seq 뒤에 좌석 답이 있다는 것. 결과 ready[]는 끝난 방마다 rt_read와 같은 형식(after_seq 뒤 메시지, 방마다 max_chars 예산, next_seq), waiting은 남은 방을 다음 rt_wait의 rooms로 그대로 쓸 수 있는 값. timeout_seconds(1~3600, 기본 600)가 지나면 timed_out:true. 폴링 없이 서버 SSE로 깨어남. 긴 대기는 셸 백그라운드 실행을 권장", InputSchema: object(map[string]schema{
+			"rooms": waitList, "timeout_seconds": integer(1, &waitLimit), "max_chars": integer(1, nil),
+		}, "rooms")},
+		{Name: "rt_usage", Description: "방별 토큰 사용량 합계와 좌석별 내역. rooms는 쉼표로 이은 방ID. 공급사별 차이를 맞춘 값: input_tokens(처리한 입력 전체)=cached_tokens(캐시 읽기)+uncached_tokens(나머지, 캐시 쓰기 포함), output_tokens, cost_usd(보고하는 공급사만), max_context_tokens(턴의 가장 큰 단일 호출), turns·errors·duration_ms. totals는 지정한 방 전체 합", InputSchema: object(map[string]schema{"rooms": usageList}, "rooms")},
 		{Name: "rt_discuss", Description: "토론 시작. blind_first 생략 시 방의 기본 설정 사용. 좌석들이 이미 같은 질문에 답했다면 블라인드 1라운드는 독립 답을 다시 받느라 호출을 좌석 수(N)만큼 더 쓰므로 blind_first:false를 고려", InputSchema: object(map[string]schema{
 			"room": id, "rounds": integer(1, nil), "blind_first": {Type: "boolean"},
 		}, "room", "rounds")},
@@ -76,7 +85,7 @@ func (s *Server) tools() []tool {
 	}
 	out := make([]tool, 0, len(all))
 	for _, t := range all {
-		read := slices.Contains([]string{"rt_list_rooms", "rt_read", "rt_requests", "rt_decisions"}, t.Name)
+		read := slices.Contains([]string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_requests", "rt_decisions"}, t.Name)
 		if s.readOnly && !read {
 			continue
 		}
@@ -127,7 +136,7 @@ func (s schema) validate(value any, path string) error {
 			return bad("허용 값: " + strings.Join(s.Enum, ", "))
 		}
 		if s.Pattern != "" && !regexp.MustCompile(s.Pattern).MatchString(v) {
-			return bad("id는 영문·숫자·밑줄·하이픈만 허용")
+			return bad(s.hint)
 		}
 	case "integer":
 		n, ok := value.(json.Number)
@@ -160,6 +169,8 @@ type participantInput struct {
 
 type arguments struct {
 	Room         string             `json:"room"`
+	Rooms        string             `json:"rooms"`
+	Timeout      int                `json:"timeout_seconds"`
 	Limit        int                `json:"limit"`
 	Title        string             `json:"title"`
 	Workspace    string             `json:"workspace"`
@@ -240,6 +251,13 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 		return s.post(ctx, a)
 	case "rt_read":
 		return s.read(ctx, a.Room, a.AfterSeq, a.MaxChars)
+	case "rt_wait":
+		if a.Timeout == 0 {
+			a.Timeout = 600
+		}
+		return s.wait(ctx, a.Rooms, time.Duration(a.Timeout)*time.Second, a.MaxChars)
+	case "rt_usage":
+		return s.usage(ctx, a.Rooms)
 	case "rt_discuss":
 		body := map[string]any{"rounds": a.Rounds}
 		if a.BlindFirst != nil {

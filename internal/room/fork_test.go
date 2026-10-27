@@ -90,7 +90,6 @@ func TestForkSeatValidation(t *testing.T) {
 		{"missing seat", agent.ModeChat, "", forkSpec("claude", base.ID, "nope"), "좌석 nope가 없음"},
 		{"provider", agent.ModeChat, "", forkSpec("codex", base.ID, "claude"), "공급자는 claude"},
 		{"model", agent.ModeChat, "", ParticipantSpec{Provider: "claude", Model: other, ForkFrom: &ForkRef{Room: base.ID, Seat: "claude"}}, "모델은 기반 좌석과 같은"},
-		{"directory", agent.ModeRead, t.TempDir(), forkSpec("claude", base.ID, "claude"), "작업 폴더가 같아야"},
 	}
 	for _, c := range cases {
 		if err := create(c.mode, c.workspace, c.spec); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -130,4 +129,28 @@ func TestForkFailsWhileBaseSeatRuns(t *testing.T) {
 	}
 	finishCall(running, "끝")
 	waitIdle(t, h, base.ID)
+}
+
+// Claude, Codex and OpenCode fork across directories (checked 2026-10-27); a
+// fork in another folder is told where the copied context was read.
+func TestForkIntoAnotherDirectoryNamesBothFolders(t *testing.T) {
+	h, base, ps := controlledHub(t, "claude")
+	postQueueMessage(t, h, base.ID, "읽어", "claude")
+	finishCall(nextCall(t, ps[0]), "준비됨")
+	waitIdle(t, h, base.ID)
+	dir := t.TempDir()
+	task, err := h.CreateRoom(RoomSpec{Title: "작업", Mode: agent.ModeWrite, Workspace: dir, ParticipantSpecs: []ParticipantSpec{forkSpec("claude", base.ID, "claude")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Participants[0].Fork.Dir != "" {
+		t.Fatalf("a chat base records no folder: %+v", task.Participants[0].Fork)
+	}
+	postQueueMessage(t, h, task.ID, "작업", task.Participants[0].ID)
+	call := nextCall(t, ps[0])
+	if call.opts.ForkSession != "claude-session" || !strings.Contains(call.opts.Prompt, "채팅 모드(작업 폴더 없음)였고, 지금 작업 폴더는 "+task.Workspace) {
+		t.Fatalf("moved fork prompt:\n%s", call.opts.Prompt)
+	}
+	finishCall(call, "끝")
+	waitIdle(t, h, task.ID)
 }

@@ -33,6 +33,7 @@ type ForkSource struct {
 	Room    string `json:"room"`
 	Seat    string `json:"seat"`
 	Session string `json:"session"`
+	Dir     string `json:"dir"` // the base room's CLI directory (sessionDir); "" is chat
 }
 
 // Totals accumulates token usage of one participant.

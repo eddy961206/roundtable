@@ -21,14 +21,15 @@ import (
 )
 
 type Server struct {
-	hub *room.Hub
-	reg *agent.Registry
-	web fs.FS
-	mux *http.ServeMux
+	hub     *room.Hub
+	reg     *agent.Registry
+	web     fs.FS
+	mux     *http.ServeMux
+	stopped chan struct{} // closed once POST /api/shutdown closed the hub
 }
 
 func New(hub *room.Hub, reg *agent.Registry, web fs.FS) *Server {
-	s := &Server{hub: hub, reg: reg, web: web, mux: http.NewServeMux()}
+	s := &Server{hub: hub, reg: reg, web: web, mux: http.NewServeMux(), stopped: make(chan struct{})}
 	s.routes()
 	if reg != nil {
 		go func() { _ = reg.RefreshVersions(context.Background()) }()
@@ -83,6 +84,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/rooms", s.listRooms)
 	s.mux.HandleFunc("POST /api/rooms", s.createRoom)
 	s.mux.HandleFunc("GET /api/rooms/{id}", s.getRoom)
+	s.mux.HandleFunc("GET /api/rooms/{id}/usage", s.roomUsage)
+	s.mux.HandleFunc("POST /api/shutdown", s.shutdown)
 	s.mux.HandleFunc("PATCH /api/rooms/{id}", s.patchRoom)
 	s.mux.HandleFunc("POST /api/rooms/{id}/participants", s.addParticipants)
 	s.mux.HandleFunc("DELETE /api/rooms/{id}/participants/{participant}", s.removeParticipant)

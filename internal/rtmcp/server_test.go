@@ -212,11 +212,11 @@ func TestReadOnly(t *testing.T) {
 			t.Fatal(tool)
 		}
 	}
-	want := []string{"rt_list_rooms", "rt_read", "rt_requests", "rt_decisions"}
+	want := []string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_requests", "rt_decisions"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatal(names)
 	}
-	for _, name := range want {
+	for _, name := range []string{"rt_list_rooms", "rt_read", "rt_requests", "rt_decisions"} { // rt_wait and rt_usage: wait_rooms_test.go
 		args := `{"room":"r1"}`
 		if name == "rt_list_rooms" {
 			args = `{}`
@@ -547,7 +547,7 @@ func TestStdioProtocol(t *testing.T) {
 	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고") || !strings.Contains(text, "resume_after_seq를 after_seq로") || !strings.Contains(text, "사람에게 확인받는다") {
 		t.Fatal(initialized["instructions"])
 	}
-	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 9 {
+	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 11 {
 		t.Fatal(byID["list"])
 	}
 	content := byID["3"]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)

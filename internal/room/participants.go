@@ -29,7 +29,7 @@ type ForkRef struct {
 }
 
 // sessionDir is where a room's CLIs run (agent workDir): "" is the server
-// scratch shared by chat rooms. Claude finds a session only from its own directory.
+// scratch shared by chat rooms.
 func sessionDir(r *Room) string {
 	if r.Mode == agent.ModeChat {
 		return ""
@@ -75,7 +75,6 @@ type preparedParticipant struct {
 	available            bool
 	contextWindow        int
 	fork                 *ForkSource
-	forkDir              string // sessionDir of the base room
 }
 
 // Provider discovery can spawn a CLI and must happen outside the hub mutex.
@@ -85,9 +84,10 @@ func (h *Hub) prepareParticipant(spec ParticipantSpec) (preparedParticipant, err
 	h.mu.Lock()
 	closing := h.closing
 	var base *Participant
+	var baseDir string
 	var baseErr error
 	if spec.ForkFrom != nil {
-		base, out.forkDir, baseErr = h.forkBaseLocked(*spec.ForkFrom)
+		base, baseDir, baseErr = h.forkBaseLocked(*spec.ForkFrom)
 	}
 	h.mu.Unlock()
 	if closing {
@@ -118,7 +118,7 @@ func (h *Hub) prepareParticipant(spec ParticipantSpec) (preparedParticipant, err
 		if spec.Effort == nil {
 			spec.Effort = &base.Effort // base is a copy taken under h.mu
 		}
-		out.fork = &ForkSource{Room: spec.ForkFrom.Room, Seat: base.ID, Session: base.SessionID}
+		out.fork = &ForkSource{Room: spec.ForkFrom.Room, Seat: base.ID, Session: base.SessionID, Dir: baseDir}
 	}
 	if spec.Count == 0 {
 		spec.Count = 1
@@ -143,7 +143,7 @@ func (h *Hub) prepareParticipant(spec ParticipantSpec) (preparedParticipant, err
 	if err := validateModel(prov.ID(), spec.Model, effort, choices); err != nil {
 		return out, err
 	}
-	return preparedParticipant{spec: spec, label: prov.Label(), model: spec.Model, effort: effort, available: prov.Available(), contextWindow: prov.ContextWindow(spec.Model), fork: out.fork, forkDir: out.forkDir}, nil
+	return preparedParticipant{spec: spec, label: prov.Label(), model: spec.Model, effort: effort, available: prov.Available(), contextWindow: prov.ContextWindow(spec.Model), fork: out.fork}, nil
 }
 
 // forkBaseLocked finds a base seat whose finished session can be copied. Caller holds h.mu.
@@ -176,9 +176,6 @@ func newParticipants(r *Room, prepared preparedParticipant) ([]*Participant, err
 	}
 	if active+spec.Count > MaxParticipants {
 		return nil, fmt.Errorf("참가자는 방마다 최대 %d명까지 추가할 수 있음", MaxParticipants)
-	}
-	if prepared.fork != nil && sessionDir(r) != prepared.forkDir {
-		return nil, fmt.Errorf("기반 방과 작업 폴더가 같아야 포크할 수 있음(채팅 모드는 채팅 모드끼리)")
 	}
 	var seats []*Participant
 	for i := 0; i < spec.Count; i++ {

@@ -153,6 +153,17 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 	return b.String()
 }
 
+// forkMovedNote leads a forked first turn whose CLI directory differs from the base room's.
+func forkMovedNote(base, current string) string {
+	name := func(dir string) string {
+		if dir == "" {
+			return "채팅 모드(작업 폴더 없음)"
+		}
+		return dir
+	}
+	return fmt.Sprintf("(기반 세션의 작업 폴더는 %s였고, 지금 작업 폴더는 %s입니다. 기반 세션에서 읽은 파일 경로는 지금 작업 폴더 기준으로 다시 해석하고, 내용이 다를 수 있는 파일은 다시 확인하세요.)\n", name(base), name(current))
+}
+
 // briefKey identifies a standing brief so an unchanged one is not re-sent.
 func briefKey(brief string) string {
 	sum := sha256.Sum256([]byte(brief))
