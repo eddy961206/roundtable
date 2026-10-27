@@ -76,6 +76,7 @@ type apiMessage struct {
 	Text        string           `json:"text"`
 	Role        string           `json:"role"`
 	Error       string           `json:"error"`
+	ErrorKind   string           `json:"error_kind"`
 	Live        bool             `json:"live"`
 	TurnID      string           `json:"turn_id"`
 	Target      string           `json:"target"`
@@ -187,6 +188,7 @@ type readMessage struct {
 	Requests    []string         `json:"requests,omitempty"`
 	Decisions   []string         `json:"decisions,omitempty"`
 	Error       string           `json:"error,omitempty"`
+	ErrorKind   string           `json:"error_kind,omitempty"` // turn_timeout | review_format
 	Truncated   bool             `json:"truncated,omitempty"`
 	Summarized  bool             `json:"summarized,omitempty"` // rt_wait summary: text holds only verdict and marker lines
 	Chars       int              `json:"chars,omitempty"`      // the summarized answer's original length in characters
@@ -263,7 +265,7 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 				result.OmittedMessages++
 				continue
 			}
-			rm := readMessage{Seq: m.Seq, Author: m.Author, Name: names[m.Author], Kind: m.Kind, Role: m.Role, Status: m.Status, Text: m.Text, Target: m.Target, Requests: m.Requests, Decisions: m.Decisions, Error: m.Error}
+			rm := readMessage{Seq: m.Seq, Author: m.Author, Name: names[m.Author], Kind: m.Kind, Role: m.Role, Status: m.Status, Text: m.Text, Target: m.Target, Requests: m.Requests, Decisions: m.Decisions, Error: m.Error, ErrorKind: m.ErrorKind}
 			for _, a := range m.Attachments {
 				rm.Attachments = append(rm.Attachments, readAttachment{ID: a.ID, Name: a.Name})
 			}

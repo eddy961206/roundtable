@@ -276,6 +276,7 @@
     <div class="row">
       <label>연쇄 호출 한도 <input name="max_chain" type="number" min="1" max="20" value="4"></label>
       <label>기본 토론 라운드 <input name="discussion_rounds" type="number" min="1" max="10" value="3"></label>
+      <label title="한 턴이 이 시간을 넘으면 '턴 시간 상한 초과' 오류로 끝냅니다. 5~720분, 0은 기본 45분">턴 시간 상한(분) <input name="turn_timeout_minutes" type="number" min="0" max="720" placeholder="0 = 45"></label>
       <label class="inline"><input type="checkbox" name="persona"> 에이전트끼리 가벼운 티격태격 허용</label>
       <label class="inline" title="1라운드는 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개합니다"><input type="checkbox" name="blind_first_default"> 토론 1라운드 블라인드</label>
     </div>

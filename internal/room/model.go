@@ -78,7 +78,8 @@ type Room struct {
 	SeatInputBudget    int64     `json:"seat_input_budget,omitempty"`
 	RoomInputBudget    int64     `json:"room_input_budget,omitempty"`
 	ContextWarnPercent int       `json:"context_warn_percent,omitempty"`
-	Work               *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
+	TurnTimeoutMinutes int       `json:"turn_timeout_minutes,omitempty"` // 0: DefaultTurnTimeoutMinutes
+	Work               *WorkPlan `json:"-"`                              // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {

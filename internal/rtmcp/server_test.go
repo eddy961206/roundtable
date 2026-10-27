@@ -647,3 +647,13 @@ func TestForwardPostsSourceAndTarget(t *testing.T) {
 		t.Fatal("from_room is required")
 	}
 }
+
+func TestReadCarriesErrorKind(t *testing.T) {
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, snapshotBody(`[{"id":"m1","seq":1,"author":"s1","kind":"agent","status":"error","text":"half","error":"턴 시간 상한 45분을 넘어 중단됨","error_kind":"turn_timeout"}]`, `[]`))
+	}, true)
+	m := call(t, s, "rt_read", `{"room":"r1"}`)["messages"].([]any)[0].(map[string]any)
+	if m["error_kind"] != "turn_timeout" || m["status"] != "error" {
+		t.Fatal(m)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -21,7 +22,6 @@ const (
 	MaxParticipants = 32
 	defaultMaxChain = 4
 	defaultRounds   = 3
-	turnTimeout     = 45 * time.Minute
 )
 
 // Hub owns every room, runs agent turns and fans events out to SSE clients.
@@ -215,6 +215,8 @@ type RoomSpec struct {
 	Persona          bool              `json:"persona"`
 	// BlindFirstDefault is nil when omitted; new rooms then start discussions blind.
 	BlindFirstDefault *bool `json:"blind_first_default"`
+	// TurnTimeoutMinutes is the longest a turn may run; 0 is the default (turn_timeout.go).
+	TurnTimeoutMinutes int `json:"turn_timeout_minutes"`
 }
 
 func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
@@ -223,6 +225,9 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	}
 	if spec.Mode == "" {
 		spec.Mode = agent.ModeRead
+	}
+	if err := validateTurnTimeout(spec.TurnTimeoutMinutes); err != nil {
+		return nil, err
 	}
 	if err := validateMode(spec.Mode, spec.Workspace); err != nil {
 		return nil, err
@@ -234,7 +239,7 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 		}
 		spec.Workspace = absolute
 	}
-	r := &Room{ID: newID(), Title: spec.Title, CreatedAt: nowMs(), UpdatedAt: nowMs(), Workspace: spec.Workspace, Mode: spec.Mode, Note: spec.Note, MaxChain: spec.MaxChain, DiscussionRounds: spec.DiscussionRounds, Persona: spec.Persona, BlindFirstDefault: true}
+	r := &Room{ID: newID(), Title: spec.Title, CreatedAt: nowMs(), UpdatedAt: nowMs(), Workspace: spec.Workspace, Mode: spec.Mode, Note: spec.Note, MaxChain: spec.MaxChain, DiscussionRounds: spec.DiscussionRounds, Persona: spec.Persona, BlindFirstDefault: true, TurnTimeoutMinutes: spec.TurnTimeoutMinutes}
 	if spec.BlindFirstDefault != nil {
 		r.BlindFirstDefault = *spec.BlindFirstDefault
 	}
@@ -421,6 +426,7 @@ type RoomPatch struct {
 	SeatInputBudget    *int64             `json:"seat_input_budget,omitempty"`
 	RoomInputBudget    *int64             `json:"room_input_budget,omitempty"`
 	ContextWarnPercent *int               `json:"context_warn_percent,omitempty"`
+	TurnTimeoutMinutes *int               `json:"turn_timeout_minutes,omitempty"`
 	Participants       []ParticipantPatch `json:"participants,omitempty"`
 }
 
@@ -485,6 +491,12 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	}
 	if patch.ContextWarnPercent != nil {
 		next.ContextWarnPercent = *patch.ContextWarnPercent
+	}
+	if patch.TurnTimeoutMinutes != nil {
+		if err := validateTurnTimeout(*patch.TurnTimeoutMinutes); err != nil {
+			return nil, err
+		}
+		next.TurnTimeoutMinutes = *patch.TurnTimeoutMinutes
 	}
 	if err := validateGuards(&next); err != nil {
 		return nil, err
@@ -1335,7 +1347,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
-	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
+	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp}
 	h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts}
 	if forked {
@@ -1400,7 +1412,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 		view.Mode = agent.ModeWrite
 		prompt = BuildPrompt(&view, p, hist, tc)
 	}
-	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
+	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp}
 	h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, bootstrap: bootstrap}
 }
@@ -1417,7 +1429,7 @@ func (h *Hub) buildReviewTurn(rs *roomState, t *Turn, p *Participant, prov agent
 		return nil
 	}
 	reviewer := p.ID == part.Reviewer
-	opts := agent.RunOptions{Prompt: t.prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: turnTimeout, MCP: h.mcp}
+	opts := agent.RunOptions{Prompt: t.prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp}
 	if reviewer {
 		opts.SessionID, opts.Mode = "", agent.ModeRead
 	}
@@ -1461,7 +1473,7 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	if pr.opts.Mode == agent.ModeChat || msg.SessionDirectory == "" {
 		msg.SessionDirectory = pr.opts.ScratchDir
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), turnTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), rs.room.turnTimeout())
 	var steer chan string
 	if prov.CanSteer() && t.Reason != "review" {
 		steer = make(chan string, 8)
@@ -1588,7 +1600,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	interrupted := ctx.Err() != nil
+	// Running past the room's turn limit is a timeout error, not a user stop.
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	interrupted := ctx.Err() != nil && !timedOut
 	cancel()
 	if rs.deleted {
 		return
@@ -1627,6 +1641,8 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	switch {
 	case tracePersistenceError != nil:
 		msg.Status, msg.Error = "error", fmt.Sprintf("실행 기록 저장 실패: %v", tracePersistenceError)
+	case timedOut:
+		msg.Status, msg.Error, msg.ErrorKind = "error", timeoutError(rs.room), "turn_timeout"
 	case interrupted:
 		msg.Status, msg.Error = "cancelled", "중단됨"
 	case err != nil:

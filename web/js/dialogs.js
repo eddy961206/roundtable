@@ -411,6 +411,7 @@ export function openRoomDialog(room, initialPrompt = "") {
   f.note.value = room ? room.note : "";
   f.max_chain.value = room ? room.max_chain : 4;
   f.discussion_rounds.value = room ? room.discussion_rounds : 3;
+  f.turn_timeout_minutes.value = room ? room.turn_timeout_minutes || 0 : 0;
   f.persona.checked = room ? !!room.persona : false;
   f.blind_first_default.checked = room ? room.blind_first_default === true : true;
   // Usage guards apply to an existing room (PATCH); a new room starts with the defaults.
@@ -438,6 +439,7 @@ export async function onRoomSubmit(e) {
     note: f.note.value,
     max_chain: Number(f.max_chain.value),
     discussion_rounds: Number(f.discussion_rounds.value),
+    turn_timeout_minutes: Number(f.turn_timeout_minutes.value || 0),
     persona: f.persona.checked,
     blind_first_default: f.blind_first_default.checked,
   };

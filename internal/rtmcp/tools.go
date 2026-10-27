@@ -54,13 +54,14 @@ func (s *Server) tools() []tool {
 	str := schema{Type: "string"}
 	limit := int64(600)
 	maxPercent := int64(99)
+	maxTurnMinutes := int64(720)
 	roomLimit := int64(maxListRooms)
 	fork := object(map[string]schema{"room": id, "seat": id}, "room", "seat")
 	participant := object(map[string]schema{"provider": text, "model": str, "effort": str, "label": str, "role": str, "fork_from": fork}, "provider")
 	all := []tool{
 		{Name: "rt_list_rooms", Description: fmt.Sprintf("최근 갱신순 방 id·제목·모드·실행 여부와 좌석(id·이름·공급사·모델·enabled) 조회. 좌석의 held_until(ms)·held_reason은 한도 오류로 그 시각까지 새 턴이 보류됨, budget_held는 입력 예산 상한으로 보류됨을 뜻함. 삭제된 좌석은 빠지고 enabled:false는 꺼진 좌석. limit 기본 %d, 최대 %d", defaultListRooms, maxListRooms), InputSchema: object(map[string]schema{"limit": integer(1, &roomLimit)})},
 		{Name: "rt_create_room", Description: "새 방 생성. 결과는 방 id와 좌석 목록(id·이름·공급사·모델·enabled). 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용. fork_from {room, seat}을 주면 그 좌석의 세션(공통 문서를 읽힌 기반 세션)을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않음. 포크 좌석은 공급사·모델이 기반 좌석과 같아야 함(생략 시 기반 좌석 값). 작업 폴더·모드는 달라도 됨(다른 worktree면 첫 턴에 두 폴더를 알려 줌). 포크마다 문맥이 따로라 작성·검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않음. agy는 포크 미지원. OpenCode 좌석은 read 모드에서 셸이 없고 작업 폴더 밖을 읽지 못하므로, 시험을 직접 돌리는 검수는 write 모드에 검수 대상 폴더를 작업 폴더로 준다", InputSchema: object(map[string]schema{
-			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
+			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}}, "turn_timeout_minutes": integer(0, &maxTurnMinutes),
 			"participants": {Type: "array", Items: &participant, MinItems: 1},
 		}, "title", "workspace", "mode", "participants")},
 		{Name: "rt_post", Description: "메시지 전송. 결과의 seq는 보낸 메시지 번호. target은 좌석 id(rt_list_rooms의 participants[].id)이며 생략하면 방 규칙대로 전달. wait_seconds(0~600) 생략·0이면 기다리지 않음. 지정하면 이 메시지로 시작된 턴과 연쇄 호출 턴이 끝날 때까지 대기하고 답변도 반환. 실행 중인 대상에 끼워 넣은 입력(steering)이면 그 답의 seq가 보낸 seq보다 낮을 수 있음. 시간 초과(timed_out)는 실행 취소가 아니며, 그때 결과의 resume_after_seq를 rt_read의 after_seq로 써서 이어 읽음", InputSchema: object(map[string]schema{
@@ -87,7 +88,7 @@ func (s *Server) tools() []tool {
 		{Name: "rt_decisions", Description: "결정 카드 목록 조회. status: proposed(좌석이 제안, 확정 대기)·active(안내문의 현재 결정)·superseded·dropped", InputSchema: object(map[string]schema{"room": id}, "room")},
 		{Name: "rt_update_room", Description: "방 설정 수정. 생략한 항목은 그대로이며 하나 이상 필요. 작업 폴더(git worktree)가 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 workspace를 새 폴더로 바꾼다. 실행 중인 턴에는 다음 턴부터 적용. 사용량 경보·상한: input_warn_tokens(좌석 누적 입력 경고 간격, 0=기본 1천만, -1=끔), context_warn_percent(문맥 경보 비율, 0=기본 70, -1=끔), seat_input_budget·room_input_budget(누적 입력 상한 토큰, 0=없음; 넘으면 그 좌석·방의 새 턴을 시작하지 않고 시스템 안내로 이유를 남김, 메시지는 상한을 올린 뒤 다음 턴에 전달)", InputSchema: object(map[string]schema{
 			"room": id, "title": text, "note": str, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
-			"input_warn_tokens": integer(-1, nil), "seat_input_budget": integer(0, nil), "room_input_budget": integer(0, nil), "context_warn_percent": integer(-1, &maxPercent),
+			"turn_timeout_minutes": integer(0, &maxTurnMinutes), "input_warn_tokens": integer(-1, nil), "seat_input_budget": integer(0, nil), "room_input_budget": integer(0, nil), "context_warn_percent": integer(-1, &maxPercent),
 		}, "room")},
 		{Name: "rt_update_decision", Description: "결정 카드 수정·상태 변경. 좌석이 [[DECISION]]으로 남긴 proposed 카드는 status active로 확정, dropped로 거절. 생략한 항목은 그대로이며 하나 이상 필요", InputSchema: object(map[string]schema{
 			"room": id, "id": id, "status": {Type: "string", Enum: []string{"active", "superseded", "dropped"}},
@@ -179,28 +180,29 @@ type participantInput struct {
 }
 
 type arguments struct {
-	Room         string             `json:"room"`
-	Rooms        string             `json:"rooms"`
-	Timeout      int                `json:"timeout_seconds"`
-	Limit        int                `json:"limit"`
-	Title        string             `json:"title"`
-	Workspace    string             `json:"workspace"`
-	Mode         string             `json:"mode"`
-	Participants []participantInput `json:"participants"`
-	Text         string             `json:"text"`
-	Target       string             `json:"target"`
-	WaitSeconds  *int               `json:"wait_seconds"`
-	AfterSeq     int64              `json:"after_seq"`
-	Seq          int64              `json:"seq"`
-	MaxChars     int64              `json:"max_chars"`
-	Rounds       int                `json:"rounds"`
-	BlindFirst   *bool              `json:"blind_first"`
-	Request      string             `json:"request"`
-	Seat         string             `json:"seat"`
-	Summary      bool               `json:"summary"`
-	FromRoom     string             `json:"from_room"`
-	Note         string             `json:"note"`
-	ID           string             `json:"id"`
+	Room               string             `json:"room"`
+	Rooms              string             `json:"rooms"`
+	Timeout            int                `json:"timeout_seconds"`
+	Limit              int                `json:"limit"`
+	Title              string             `json:"title"`
+	Workspace          string             `json:"workspace"`
+	Mode               string             `json:"mode"`
+	Participants       []participantInput `json:"participants"`
+	Text               string             `json:"text"`
+	Target             string             `json:"target"`
+	WaitSeconds        *int               `json:"wait_seconds"`
+	AfterSeq           int64              `json:"after_seq"`
+	Seq                int64              `json:"seq"`
+	MaxChars           int64              `json:"max_chars"`
+	Rounds             int                `json:"rounds"`
+	BlindFirst         *bool              `json:"blind_first"`
+	Request            string             `json:"request"`
+	Seat               string             `json:"seat"`
+	Summary            bool               `json:"summary"`
+	FromRoom           string             `json:"from_room"`
+	TurnTimeoutMinutes int                `json:"turn_timeout_minutes"`
+	Note               string             `json:"note"`
+	ID                 string             `json:"id"`
 }
 
 const (
@@ -250,7 +252,7 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 			ID           string `json:"id"`
 			Participants []seat `json:"participants"`
 		}
-		err := s.api(ctx, "POST", "/api/rooms", map[string]any{"title": a.Title, "workspace": a.Workspace, "mode": a.Mode, "participant_specs": a.Participants}, &created)
+		err := s.api(ctx, "POST", "/api/rooms", map[string]any{"title": a.Title, "workspace": a.Workspace, "mode": a.Mode, "participant_specs": a.Participants, "turn_timeout_minutes": a.TurnTimeoutMinutes}, &created)
 		if err != nil {
 			return nil, err
 		}
