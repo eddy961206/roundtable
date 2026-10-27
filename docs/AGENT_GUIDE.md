@@ -37,7 +37,7 @@
 | `post --room --text [--target <좌석>] [--wait_seconds N]` | 지시를 보낼 때. 여러 방이면 `--wait_seconds` 없이 보내고 `seq`를 모은다. |
 | `read --room [--after_seq N] [--max_chars N]` | 답 원문을 읽을 때. `after_seq`보다 큰 seq만 나온다. 생략하면 최신부터 20000자다. |
 | `wait --rooms <방>:<seq>,... [--timeout_seconds N] [--summary true]` | 여러 방 중 먼저 끝난 방을 기다릴 때. 서버 SSE로 깨어나 폴링이 없다. `--summary true`면 좌석 답마다 판정 줄(`판정`·`결론`·`verdict` 뒤 `:`)과 마커·신호 줄만 받고 `chars`로 원래 길이를 본다. |
-| `forward --room <받는 방> --from_room <방> --seq N [--target <좌석>] [--note "한 줄"]` | 다른 방의 답(검수 결과 등)을 원문 그대로 넘길 때. 받는 좌석 이력에 출처(방·#seq·작성자)가 붙고, 원문 속 @멘션·마커는 실행되지 않는다. |
+| `forward --room <받는 방> --from_room <방> --seq N [--target <좌석>] [--note "한 줄"]` | 다른 방의 답(검수 결과 등)을 원문 그대로 넘길 때. 받는 좌석 이력에 출처(방·#seq·작성자)가 붙고, 원문 속 @멘션·마커는 실행되지 않는다. 받은 좌석이 원문을 답에 인용할 때는 ``` 코드 블록 안에 둔다. 코드 블록 밖에 다시 적은 `[[REQUEST]]`·`[[ATTACH]]`·`[[DECISION]]` 줄은 그 좌석 자신의 마커로 실행된다. |
 | `usage --rooms <방>,...` | 좌석·방별 토큰(`input`=`cached`+`uncached`, `output`, `max_context_tokens`, `turns`, `errors`)을 볼 때. `messages.jsonl`을 직접 파싱하지 않는다. |
 | `update_room --room [--title] [--note] [--workspace] [--mode] [--seat_input_budget N] [--room_input_budget N] [--input_warn_tokens N] [--context_warn_percent N] [--turn_timeout_minutes N]` | 방 메모(협업 규칙)를 바꾸거나, 지워진 worktree 대신 새 작업 폴더를 줄 때. 좌석·방 누적 입력 상한(0=없음), 누적 입력 경고 간격(0=1천만, -1=끔), 문맥 경보 비율(0=70, -1=끔)도 여기서 정한다. |
 | `discuss --room --rounds N [--blind_first false]` | 여러 모델 의견을 라운드로 겨루게 할 때. 이미 같은 질문에 답했으면 `--blind_first false`. |
@@ -93,7 +93,7 @@ roundtable 방과 Gitea PR을 오케스트레이터 한 명이 이어 붙일 때
 코드: `internal/room/hub.go`의 `PostUser`, `deltaForContext`, `chainMentions`, `internal/room/requests.go`의 `finishMarkers`.
 
 **누가 부름을 받나**
-- 사람·오케스트레이터 메시지에 `--target`이 있으면 그 좌석만 부른다. 없고 멘션도 없으면 **켜진 좌석 전원**을 부른다. `@좌석ID`·`@이름`·`@공급사`(예: `@codex`)·`@all`은 해당 좌석만 부른다. 코드 블록·인라인 코드 안의 `@`는 멘션이 아니다.
+- 사람·오케스트레이터 메시지에 `--target`이 있으면 그 좌석만 부른다. 없고 멘션도 없으면 **켜진 좌석 전원**을 부른다. `@좌석ID`·`@이름`·`@공급사`(예: `@codex`)·`@all`은 해당 좌석만 부른다. 코드 블록·인라인 코드 안의 `@`는 멘션이 아니다. ``` 코드 블록 안의 `[[...]]` 마커 줄도 실행하지 않는다.
 - 좌석의 답에 있는 일반 `@멘션`도 그 좌석을 부른다. 답 본문에 다른 좌석 이름을 `@`로 쓰지 말라고 메모에 적어 두면 의도하지 않은 호출을 막는다.
 
 **차례가 오면 무엇을 받나**

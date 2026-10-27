@@ -178,7 +178,11 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string, apply bool)
 	}
 	if apply {
 		lines, signalStart := trailingSignals(raw)
+		live := markerCandidates(strings.TrimSpace(raw))
 		for i, rawLine := range lines {
+			if !live[i] {
+				continue // quoted in a code block, or not a marker line
+			}
 			line := strings.TrimSpace(rawLine)
 			switch {
 			case strings.HasPrefix(line, "[[ATTACH"):
@@ -218,6 +222,9 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string, apply bool)
 					continue
 				}
 				to, why := rs.requestTarget(m[1])
+				if to != nil && to.ID == pr.p.ID {
+					why = "@" + to.ID + "는 이 좌석 자기 자신이라 요청할 수 없음"
+				}
 				if to == nil || to.ID == pr.p.ID {
 					reject("request", line, why+" · 다른 활성 좌석의 ID나 고유한 이름이 필요함")
 					continue
@@ -291,13 +298,33 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string, apply bool)
 // markerLines counts the lines finishMarkers would act on.
 func markerLines(text string) int {
 	n := 0
-	for _, line := range strings.Split(text, "\n") {
+	live := markerCandidates(text)
+	for i, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[[REQUEST") || strings.HasPrefix(trimmed, "[[ATTACH") || strings.HasPrefix(trimmed, "[[DECISION") {
+		if live[i] && (strings.HasPrefix(trimmed, "[[REQUEST") || strings.HasPrefix(trimmed, "[[ATTACH") || strings.HasPrefix(trimmed, "[[DECISION")) {
 			n++
 		}
 	}
 	return n
+}
+
+// markerCandidates tells, for each line of text, whether it starts with "[["
+// outside a ``` code block. A marker quoted in a code block is text, the same
+// rule ParseParticipantMentions applies to mentions (fenceRe).
+func markerCandidates(text string) []bool {
+	blank := func(r rune) rune {
+		if r == '\n' {
+			return r
+		}
+		return ' '
+	}
+	masked := fenceRe.ReplaceAllStringFunc(text, func(s string) string { return strings.Map(blank, s) })
+	lines := strings.Split(masked, "\n")
+	live := make([]bool, len(lines))
+	for i, line := range lines {
+		live[i] = strings.HasPrefix(strings.TrimSpace(line), "[[")
+	}
+	return live
 }
 
 // ApplyMarkers runs the markers of a failed turn whose answer was complete
