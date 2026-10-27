@@ -2,3 +2,4 @@ roundtable.exe
 *.exe
 /data/
 .cache/
+tools/orchestrate/local/
