@@ -11,7 +11,9 @@ for a in "$@"; do
   [[ $a =~ ^[^:,[:space:]]+:[0-9]+$ ]] || die "need room:after_seq (seq from rt post), got: $a"
 done
 rooms=$(IFS=,; echo "$*")
-rt wait --rooms "$rooms" --timeout_seconds "${ORCH_WAIT_TIMEOUT:-3600}" --max_chars "${ORCH_WAIT_MAX_CHARS:-4000}" \
+summary=()
+[ -n "$ORCH_WAIT_SUMMARY" ] && summary=(--summary true)
+rt wait --rooms "$rooms" --timeout_seconds "${ORCH_WAIT_TIMEOUT:-3600}" --max_chars "${ORCH_WAIT_MAX_CHARS:-4000}" "${summary[@]}" \
  | py -c "
 import json,sys
 tail=int(sys.argv[1])

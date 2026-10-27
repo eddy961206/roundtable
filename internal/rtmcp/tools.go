@@ -68,8 +68,8 @@ func (s *Server) tools() []tool {
 		{Name: "rt_read", Description: "메시지를 오래된 순으로 조회. after_seq가 있으면 그보다 큰 seq만, 생략하면 최신 메시지까지. max_chars(기본 20000, 본문 합계의 Unicode 문자 수)는 최신 메시지부터 채움: 경계 메시지는 앞을 줄여 truncated, 담지 못한 오래된 메시지는 빼고 omitted_messages(개수)·first_seq(담긴 첫 seq)로 알림. reply_to는 그 답이 응답한 메시지의 seq", InputSchema: object(map[string]schema{
 			"room": id, "after_seq": integer(0, nil), "max_chars": integer(1, nil),
 		}, "room")},
-		{Name: "rt_wait", Description: "여러 방 중 하나 이상이 끝날 때까지 대기. rooms는 \"방ID:after_seq,방ID:after_seq\"(after_seq는 rt_post 결과의 seq; 생략하면 대기 시작 시점 이후 답만 셈). 방이 끝났다는 뜻은 실행·대기 중인 턴이 없고 after_seq 뒤에 좌석 답이 있다는 것. 결과 ready[]는 끝난 방마다 rt_read와 같은 형식(after_seq 뒤 메시지, 방마다 max_chars 예산, next_seq), waiting은 남은 방을 다음 rt_wait의 rooms로 그대로 쓸 수 있는 값. timeout_seconds(1~3600, 기본 600)가 지나면 timed_out:true. 폴링 없이 서버 SSE로 깨어남. 긴 대기는 셸 백그라운드 실행을 권장", InputSchema: object(map[string]schema{
-			"rooms": waitList, "timeout_seconds": integer(1, &waitLimit), "max_chars": integer(1, nil),
+		{Name: "rt_wait", Description: "여러 방 중 하나 이상이 끝날 때까지 대기. rooms는 \"방ID:after_seq,방ID:after_seq\"(after_seq는 rt_post 결과의 seq; 생략하면 대기 시작 시점 이후 답만 셈). 방이 끝났다는 뜻은 실행·대기 중인 턴이 없고 after_seq 뒤에 좌석 답이 있다는 것. 결과 ready[]는 끝난 방마다 rt_read와 같은 형식(after_seq 뒤 메시지, 방마다 max_chars 예산, next_seq), waiting은 남은 방을 다음 rt_wait의 rooms로 그대로 쓸 수 있는 값. timeout_seconds(1~3600, 기본 600)가 지나면 timed_out:true. 폴링 없이 서버 SSE로 깨어남. 긴 대기는 셸 백그라운드 실행을 권장. summary:true면 좌석 답마다 판정 줄(판정·결론·verdict)과 마커·신호 줄([[...]], WORK:DONE)만 text에 남기고 summarized:true·chars(원래 글자 수)를 붙임. 원문이 필요하면 rt_read", InputSchema: object(map[string]schema{
+			"rooms": waitList, "timeout_seconds": integer(1, &waitLimit), "max_chars": integer(1, nil), "summary": {Type: "boolean"},
 		}, "rooms")},
 		{Name: "rt_usage", Description: "방별 토큰 사용량 합계와 좌석별 내역. rooms는 쉼표로 이은 방ID. 공급사별 차이를 맞춘 값: input_tokens(처리한 입력 전체)=cached_tokens(캐시 읽기)+uncached_tokens(나머지, 캐시 쓰기 포함), output_tokens, cost_usd(보고하는 공급사만), max_context_tokens(턴의 가장 큰 단일 호출), turns·errors·duration_ms. totals는 지정한 방 전체 합", InputSchema: object(map[string]schema{"rooms": usageList}, "rooms")},
 		{Name: "rt_version", Description: "실행 중인 Roundtable 빌드와 공개 브랜치 비교(GET /api/version). state: behind면 update_available:true이고 behind_by·commits(최근 5개, 최신순)가 새 커밋. up_to_date·ahead·diverged·unknown_revision(원격에 없는 로컬 커밋)·local_build(빌드에 커밋 정보 없음)·pending·off·error. running.modified는 커밋하지 않은 변경이 있던 빌드. checked_at은 마지막 확인 시각(ms). 서버가 주기적으로 확인한 값을 읽기만 하며 GitHub를 직접 부르지 않음", InputSchema: object(map[string]schema{})},
@@ -192,6 +192,7 @@ type arguments struct {
 	BlindFirst   *bool              `json:"blind_first"`
 	Request      string             `json:"request"`
 	Seat         string             `json:"seat"`
+	Summary      bool               `json:"summary"`
 	ID           string             `json:"id"`
 }
 
@@ -263,7 +264,14 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if a.Timeout == 0 {
 			a.Timeout = 600
 		}
-		return s.wait(ctx, a.Rooms, time.Duration(a.Timeout)*time.Second, a.MaxChars)
+		if a.Summary && a.MaxChars < summaryBudget {
+			a.MaxChars = summaryBudget // read whole answers so no verdict line is cut before summarizing
+		}
+		res, err := s.wait(ctx, a.Rooms, time.Duration(a.Timeout)*time.Second, a.MaxChars)
+		if err == nil && a.Summary {
+			summarize(res.Ready)
+		}
+		return res, err
 	case "rt_usage":
 		return s.usage(ctx, a.Rooms)
 	case "rt_version":

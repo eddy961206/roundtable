@@ -179,6 +179,8 @@ type readMessage struct {
 	Decisions   []string         `json:"decisions,omitempty"`
 	Error       string           `json:"error,omitempty"`
 	Truncated   bool             `json:"truncated,omitempty"`
+	Summarized  bool             `json:"summarized,omitempty"` // rt_wait summary: text holds only verdict and marker lines
+	Chars       int              `json:"chars,omitempty"`      // the summarized answer's original length in characters
 }
 
 // omitted_chars counts what was cut from the messages held. omitted_messages
