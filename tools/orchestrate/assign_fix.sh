@@ -2,7 +2,8 @@
 # usage: assign_fix.sh <pr#> <review_id> <room> <branch> ["extra instruction"]
 # Posts one reviewer review (fetched from Gitea, saved under $ORCH_STATE) to the writer
 # room together with the shared writer rules; prints room:seq for rtwait.sh.
-# Fails before posting if the room's workspace folder is gone.
+# Fails before posting if the room's workspace folder is gone, or if another running
+# room occupies the branch's worktree (worktree_claims.py check).
 # Needs ORCH_REPO and ORCH_WRITER_RULES (a rules file, see templates/).
 . "$(dirname "$0")/env.sh"
 set -o pipefail
@@ -17,6 +18,8 @@ import json,sys,os
 r=json.load(sys.stdin); r=r.get('room',r); w=r['workspace']
 print(w if os.path.isdir(w) else 'MISSING:'+w)") || { echo "cannot read room $room from $ORCH_RT_URL" >&2; exit 1; }
 case $ws in MISSING:*) echo "room $room workspace gone (${ws#MISSING:}); repoint with rt update_room first" >&2; exit 1;; esac
+# Refuse while another running room works in the branch's worktree.
+py "$ORCH_DIR/worktree_claims.py" check --branch "$br" --room "$room" || exit 1
 
 review="$(state_dir)/rv${rid}_pr${pr}.md"
 "$ORCH_TEA" api "repos/$ORCH_REPO/pulls/$pr/reviews" | py -c "

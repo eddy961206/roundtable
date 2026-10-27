@@ -224,6 +224,8 @@ go test ./...
 - `internal/server` — JSON API + SSE + 정적 UI.
 - `web/` — 단일 페이지 UI. 설계 기준은 [디자인 브리프](docs/디자인_브리프.md).
 
+여러 세션이 동시에 고칠 때는 [동시 작업 규칙](CONTRIBUTING.md)을 따른다. 세션마다 worktree·브랜치를 쓰고, main에는 시험 통과 뒤 fast-forward로만 올리며, 서버 교체는 `install`과 `restart`로만 한다.
+
 web 화면은 `web/js/` 아래 ES 모듈이다. 모듈을 고친 뒤에는 `python tools/modcheck.py web/js`로 다른 모듈의 이름을 import 없이 쓰는 곳이 없는지(0건) 확인한다.
 
 ## 어떻게 만들었나

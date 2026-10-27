@@ -27,5 +27,7 @@ die() { echo "$*" >&2; exit 2; }
 # need VAR... fails with exit 2 when a required setting is empty.
 need() { local v; for v in "$@"; do [ -n "${!v}" ] || die "$v is not set (environment or $ORCH_ENV)"; done; }
 state_dir() { mkdir -p "$ORCH_STATE" && echo "$ORCH_STATE"; }
+# Python helpers (orchlib.py) see the same resolved values.
+export $(compgen -v ORCH_)
 # winpath prints a path the way a model on this host reads it (Windows form under Git Bash).
 winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else echo "$1"; fi; }

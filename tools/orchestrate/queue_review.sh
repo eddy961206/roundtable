@@ -2,7 +2,8 @@
 # usage: queue_review.sh <label> <worktree> <writer-room> <review-room> "<focus>"
 # Rebases the worktree's branch onto origin/$ORCH_BASE, then queues a review request
 # (ORCH_REVIEW_TEMPLATE) in the review room and prints "queued <label> room:seq".
-# <worktree> is a directory, or a name under ORCH_WORKTREES.
+# <worktree> is a directory, or a name under ORCH_WORKTREES. Refused while another running
+# room (other than the review room) occupies it (worktree_claims.py check).
 # NOREBASE=1    keep the branch where it is (stacked on another open PR).
 # PRIME=<file>  text sent before the request (e.g. the shared-context primer).
 # ORCH_CONFLICT_HOOK  command run inside the worktree with the conflicted files as
@@ -16,6 +17,8 @@ need ORCH_REVIEW_TEMPLATE
 [ -z "$PRIME" ] || [ -f "$PRIME" ] || die "PRIME file not found: $PRIME"
 if [ -d "$wt" ]; then W=$wt; else need ORCH_WORKTREES; W=$ORCH_WORKTREES/$wt; fi
 [ -d "$W" ] || die "no worktree: $W"
+# Refuse (before rebasing) while another running room, e.g. the writer, works in W.
+py "$ORCH_DIR/worktree_claims.py" check --worktree "$W" --room "$ar" || exit 1
 
 rt read --room "$wr" --after_seq 0 --max_chars 2000 \
  | py -c "import json,sys;m=json.load(sys.stdin)['messages'];print('writer last:', (m[-1]['text'] if m else '')[-300:])" || exit 1
