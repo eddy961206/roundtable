@@ -1,5 +1,5 @@
 // Work plan header, part board, cross-review tables and the diff drawer.
-import { $, announce, el, fmtTime } from "./util.js";
+import { $, announce, askConfirm, el, fmtTime, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { authorProvider, openSeq, participantLabel, seatClass, state } from "./state.js";
@@ -162,7 +162,7 @@ async function patchMergeMode(nextMode, btn) {
     renderWork();
     announce("병합 모드를 " + (nextMode === "auto" ? "자동(auto)" : "확인(confirm)") + "으로 변경했습니다.");
   } catch (err) {
-    if (state.roomId === roomId && openSeq === sequence) alert(err.message);
+    if (state.roomId === roomId && openSeq === sequence) showAlert(err.message);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -355,7 +355,7 @@ async function partAction(part, action, btn) {
       hooks.openRoom(roomId, true);
       return;
     }
-    alert(err.message);
+    showAlert(err.message);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -659,8 +659,8 @@ export function renderWork() {
       const btnResolve = el("button", "primary", "사람 판정");
       btnResolve.type = "button";
       btnResolve.title = "미해결 " + unresolved + "건을 넘기고 병합 대기열로 보냅니다";
-      btnResolve.onclick = () => {
-        if (!confirm("미해결 " + unresolved + "건을 넘기고 병합 대기열로 보냅니다")) return;
+      btnResolve.onclick = async () => {
+        if (!(await askConfirm("미해결 " + unresolved + "건을 넘기고 병합 대기열로 보냅니다", { okText: "보내기" }))) return;
         partAction(part, "resolve", btnResolve);
       };
       actions.appendChild(btnResolve);

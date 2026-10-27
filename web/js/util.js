@@ -70,3 +70,38 @@ export function announce(msg) {
     box.textContent = msg;
   }, 20);
 }
+
+// In-page stand-ins for window.confirm/alert. Embedded browsers such as app panes can suppress
+// native dialogs (confirm returns false at once), which silently cancelled deletes and hid errors.
+function messageDialog(message, okText, cancelText, danger) {
+  return new Promise((resolve) => {
+    const dlg = el("dialog", "dlg-message");
+    dlg.setAttribute("aria-label", cancelText ? "확인" : "알림");
+    const form = el("form");
+    form.method = "dialog";
+    const text = el("p", "dlg-message-text", message);
+    const menu = el("menu");
+    let cancel = null;
+    if (cancelText) {
+      cancel = el("button", "", cancelText);
+      cancel.value = "cancel";
+      menu.appendChild(cancel);
+    }
+    const ok = el("button", danger ? "danger" : "primary", okText);
+    ok.value = "ok";
+    menu.appendChild(ok);
+    form.append(text, menu);
+    dlg.appendChild(form);
+    dlg.addEventListener("close", () => {
+      dlg.remove();
+      resolve(dlg.returnValue === "ok");
+    });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    // Destructive questions start on cancel so a stray Enter does not confirm them.
+    (danger && cancel ? cancel : ok).focus();
+  });
+}
+
+export const askConfirm = (message, { okText = "확인", danger = false } = {}) => messageDialog(message, okText, "취소", danger);
+export const showAlert = (message) => messageDialog(String(message ?? ""), "확인", "", false);

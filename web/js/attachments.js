@@ -1,5 +1,5 @@
 // Image attachments (draft chips, upload, message thumbnails, lightbox) and agent requests.
-import { $, ALLOWED_IMAGE_MIMES, announce, el, fmtBytes, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS } from "./util.js";
+import { $, ALLOWED_IMAGE_MIMES, announce, el, fmtBytes, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { authorProvider, openSeq, participantLabel, seatClass, state } from "./state.js";
@@ -343,7 +343,7 @@ async function cancelRequest(reqId, btn) {
     }
     announce("요청이 취소되었습니다.");
   } catch (e) {
-    if (state.roomId === roomId && openSeq === sequence) alert(e.message);
+    if (state.roomId === roomId && openSeq === sequence) showAlert(e.message);
   } finally {
     if (btn) btn.disabled = false;
   }

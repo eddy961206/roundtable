@@ -1,5 +1,5 @@
 // Composer: steering target chips, hints, @mention popup and send.
-import { $, announce, el } from "./util.js";
+import { $, announce, el, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { activeParticipants, modelLabel, openSeq, participant, participantLabel, state } from "./state.js";
 import { encodedMentions } from "./markdown.js";
@@ -307,7 +307,7 @@ export async function send() {
     }
   } catch (e) {
     if (state.roomId !== roomId || openSeq !== sequence) return;
-    alert(e.message);
+    showAlert(e.message);
     if (!input.value) {
       input.value = rawInput;
     } else if (input.value !== rawInput) {

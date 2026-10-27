@@ -1,6 +1,6 @@
 // Decision cards: the right-panel "결정" section, the add/edit dialog and the
 // compact cards under the message that recorded them.
-import { $, announce, el, fmtTime } from "./util.js";
+import { $, announce, el, fmtTime, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { openSeq, participantLabel, state } from "./state.js";
@@ -197,7 +197,7 @@ async function patchDecision(id, patch, btn) {
         : "결정이 " + decisionStatusLabel(status) + " 상태로 표시됩니다."
     );
   } catch (e) {
-    if (state.roomId === roomId && openSeq === sequence) alert(e.message);
+    if (state.roomId === roomId && openSeq === sequence) showAlert(e.message);
   } finally {
     if (btn) btn.disabled = false;
   }

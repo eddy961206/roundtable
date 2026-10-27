@@ -1,5 +1,5 @@
 // Entry point: boot, background timers and UI event wiring.
-import { $, $$, announce, esc, fmtElapsed } from "./util.js";
+import { $, $$, announce, askConfirm, esc, fmtElapsed, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { activeParticipants, openSeq, state } from "./state.js";
@@ -201,7 +201,7 @@ function bindUI() {
       $("#dlg-participant").close();
       announce(spec.count + "명 참가자 추가됨");
     } catch (err) {
-      if (state.roomId === roomId && openSeq === sequence && participantDialogSequence === dialogSequence) alert(err.message);
+      if (state.roomId === roomId && openSeq === sequence && participantDialogSequence === dialogSequence) showAlert(err.message);
     } finally {
       if (participantDialogSequence === dialogSequence) button.disabled = false;
     }
@@ -348,7 +348,7 @@ function bindUI() {
     api("POST", "/api/rooms/" + state.roomId + "/discussion", {
       rounds: Number($("#rounds").value) || 3,
       blind_first: $("#chk-blind-first").checked,
-    }).catch((e) => alert(e.message));
+    }).catch((e) => showAlert(e.message));
   // The toggle is the room's blind_first_default; the room event re-renders it.
   $("#chk-blind-first").onchange = (e) => {
     const box = e.target;
@@ -357,21 +357,21 @@ function bindUI() {
     api("PATCH", "/api/rooms/" + state.roomId, { blind_first_default: box.checked })
       .catch((err) => {
         box.checked = !box.checked;
-        alert(err.message);
+        showAlert(err.message);
       })
       .finally(() => {
         box.disabled = false;
       });
   };
   $("#btn-stop").onclick = () =>
-    state.roomId && api("POST", "/api/rooms/" + state.roomId + "/stop").catch((e) => alert(e.message));
-  $("#btn-reset").onclick = () => {
+    state.roomId && api("POST", "/api/rooms/" + state.roomId + "/stop").catch((e) => showAlert(e.message));
+  $("#btn-reset").onclick = async () => {
     closeMoreMenu();
     if (
       state.roomId &&
-      confirm("각 에이전트의 CLI 세션을 버릴까요? 다음 턴부터 대화 전체를 새로 읽습니다.")
+      (await askConfirm("각 에이전트의 CLI 세션을 버릴까요? 다음 턴부터 대화 전체를 새로 읽습니다."))
     ) {
-      api("POST", "/api/rooms/" + state.roomId + "/reset").catch((e) => alert(e.message));
+      api("POST", "/api/rooms/" + state.roomId + "/reset").catch((e) => showAlert(e.message));
     }
   };
   $("#btn-export").onclick = () => closeMoreMenu();
@@ -406,7 +406,7 @@ function bindUI() {
   $("#btn-delete").onclick = async () => {
     closeMoreMenu();
     if (!state.roomId) return;
-    try { await deleteRoom(state.roomId); } catch (err) { alert("방을 삭제하지 못했습니다: " + err.message); }
+    try { await deleteRoom(state.roomId); } catch (err) { showAlert("방을 삭제하지 못했습니다: " + err.message); }
   };
 
   // Global keyboard shortcuts
@@ -415,7 +415,7 @@ function bindUI() {
     if ((e.ctrlKey || e.metaKey) && e.key === ".") {
       if (state.roomId) {
         e.preventDefault();
-        api("POST", "/api/rooms/" + state.roomId + "/stop").catch((err) => alert(err.message));
+        api("POST", "/api/rooms/" + state.roomId + "/stop").catch((err) => showAlert(err.message));
         announce("모두 중지 요청됨");
       }
       return;

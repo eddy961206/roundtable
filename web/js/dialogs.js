@@ -1,5 +1,5 @@
 // Dialogs: new room / room settings with seat specs, and the work plan form.
-import { $, $$, announce, el, LABEL } from "./util.js";
+import { $, $$, announce, el, LABEL, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { activeParticipants, openSeq, participantLabel, state } from "./state.js";
 import { updateHint } from "./composer.js";
@@ -463,7 +463,7 @@ export async function onRoomSubmit(e) {
     }
     $("#dlg-room").close();
   } catch (err) {
-    alert(err.message);
+    showAlert(err.message);
   } finally {
     submit.disabled = false;
   }

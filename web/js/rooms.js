@@ -1,5 +1,5 @@
 // Room list in the sidebar (with the per-room context menu) and the open room's header (with inline rename).
-import { $, $$, announce, el } from "./util.js";
+import { $, $$, announce, askConfirm, el, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { activeParticipants, state } from "./state.js";
@@ -68,7 +68,7 @@ export async function renameRoom(id, title) {
 export async function deleteRoom(id) {
   const target = state.rooms.find((r) => r.id === id) || (state.room && state.room.id === id ? state.room : null);
   const name = target ? target.title : id;
-  if (!confirm("'" + name + "' 방과 대화 기록을 영구 삭제할까요? 되돌릴 수 없습니다.")) return false;
+  if (!(await askConfirm("'" + name + "' 방과 대화 기록을 영구 삭제할까요? 되돌릴 수 없습니다.", { okText: "삭제", danger: true }))) return false;
   await api("DELETE", "/api/rooms/" + id);
   if (state.roomId === id) hooks.closeRoom("");
   announce("'" + name + "' 방을 삭제했습니다.");
@@ -147,7 +147,7 @@ function buildRoomMenu(r) {
     ["내보내기 (Markdown)", () => { closeRoomMenu(); exportRoom(r.id); }],
     ["삭제…", async () => {
       closeRoomMenu();
-      try { await deleteRoom(r.id); } catch (err) { alert("방을 삭제하지 못했습니다: " + err.message); }
+      try { await deleteRoom(r.id); } catch (err) { showAlert("방을 삭제하지 못했습니다: " + err.message); }
     }],
   ];
   for (const [text, action] of items) {
@@ -195,7 +195,7 @@ function buildRenameRow(r) {
     } catch (err) {
       input.disabled = false;
       input.focus();
-      alert("방 이름을 바꾸지 못했습니다: " + err.message);
+      showAlert("방 이름을 바꾸지 못했습니다: " + err.message);
     } finally {
       busy = false;
     }
@@ -372,7 +372,7 @@ export function bindRoomTitleEdit() {
       renderRoomHead(); // the heading is skipped while editing, so paint the new title now
       btn.focus();
     } catch (err) {
-      alert("방 이름을 바꾸지 못했습니다: " + err.message);
+      showAlert("방 이름을 바꾸지 못했습니다: " + err.message);
       input.disabled = false; // a disabled input cannot take focus back
       input.focus();
     } finally {

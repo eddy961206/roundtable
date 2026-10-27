@@ -1,5 +1,5 @@
 // Right panel: participant cards, model catalog, session actions, queue and discussion bar.
-import { $, announce, el, esc, fmtElapsed, fmtK } from "./util.js";
+import { $, announce, askConfirm, el, esc, fmtElapsed, fmtK, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { activeParticipants, modelLabel, openSeq, participant, participantLabel, seatClass, seatTimes, state } from "./state.js";
 import { closeDrawers } from "./layout.js";
@@ -161,7 +161,7 @@ export async function refreshProviderCatalog(button, afterRefresh) {
     await catalogLoading;
     afterRefresh();
     if (state.room) renderParticipants();
-  } catch (err) { alert("모델 목록을 불러오지 못했습니다: " + err.message); }
+  } catch (err) { showAlert("모델 목록을 불러오지 못했습니다: " + err.message); }
   finally { button.disabled = false; }
 }
 
@@ -206,7 +206,7 @@ export function buildSessionActions(participantId, messageId = "") {
           button.textContent = "열기 요청됨";
         }
       } catch (e) {
-        if (state.roomId === roomId && openSeq === sequence) alert(e.message);
+        if (state.roomId === roomId && openSeq === sequence) showAlert(e.message);
       }
       finally {
         delete button.dataset.busy;
@@ -227,14 +227,14 @@ function buildHandoffButton(roomId, participantId) {
   button.type = "button";
   button.dataset.action = "handoff";
   button.onclick = async () => {
-    if (!confirm("이 좌석이 지금 세션에서 인계 요약을 쓰고, 다음 턴부터 그 요약과 이후 메시지만 든 새 세션으로 바뀝니다. 대화 원문은 방에 남습니다. 진행할까요?")) return;
+    if (!(await askConfirm("이 좌석이 지금 세션에서 인계 요약을 쓰고, 다음 턴부터 그 요약과 이후 메시지만 든 새 세션으로 바뀝니다. 대화 원문은 방에 남습니다. 진행할까요?", { okText: "인계" }))) return;
     button.disabled = true;
     button.dataset.busy = "true";
     try {
       await api("POST", "/api/rooms/" + roomId + "/participants/" + participantId + "/handoff", {});
       if (state.roomId === roomId) announce("인계 요약을 요청했습니다. 요약이 끝나면 다음 턴부터 새 세션을 씁니다.");
     } catch (e) {
-      if (state.roomId === roomId) alert(e.message);
+      if (state.roomId === roomId) showAlert(e.message);
     } finally {
       delete button.dataset.busy;
       button.disabled = button.parentElement?.dataset.available !== "true";
@@ -405,7 +405,7 @@ function buildParticipantCardSkeleton(p, info) {
   const remove = el("button", "danger ghost remove-participant", "참가자 제거");
   remove.type = "button";
   remove.onclick = async () => {
-    if (!confirm(participantLabel(p.id) + " 참가자를 제거할까요? 이전 대화와 사용량은 보존됩니다.")) return;
+    if (!(await askConfirm(participantLabel(p.id) + " 참가자를 제거할까요? 이전 대화와 사용량은 보존됩니다.", { okText: "제거", danger: true }))) return;
     const roomId = state.roomId;
     const sequence = openSeq;
     try {
@@ -416,7 +416,7 @@ function buildParticipantCardSkeleton(p, info) {
       renderParticipants();
       updateHint();
     } catch (e) {
-      if (state.roomId === roomId && openSeq === sequence) alert(e.message);
+      if (state.roomId === roomId && openSeq === sequence) showAlert(e.message);
     }
   };
   edit.appendChild(remove);
@@ -479,7 +479,7 @@ function buildParticipantCardSkeleton(p, info) {
       await api("DELETE", "/api/rooms/" + state.roomId + "/turns/" + run.id);
       announce(participantLabel(p.id) + "의 현재 턴을 취소했습니다. 참여는 켜져 있어 요청과 대기 턴을 계속 받습니다.");
     } catch (err) {
-      alert("턴을 취소하지 못했습니다: " + err.message);
+      showAlert("턴을 취소하지 못했습니다: " + err.message);
     } finally {
       cancelTurn.disabled = false;
     }
@@ -502,7 +502,7 @@ function buildParticipantCardSkeleton(p, info) {
       renderRoomHead(); renderParticipants(); updateHint(); scheduleRoomList();
       announce(participantLabel(p.id) + "의 작업 중단을 요청하고 참여를 껐습니다. 다시 참여하려면 참가자를 켜세요.");
     } catch (err) {
-      if (state.roomId === roomId && openSeq === sequence) alert("작업을 중단하지 못했습니다: " + err.message);
+      if (state.roomId === roomId && openSeq === sequence) showAlert("작업을 중단하지 못했습니다: " + err.message);
     } finally {
       delete stop.dataset.pending;
       if (state.roomId === roomId && openSeq === sequence) {
@@ -734,7 +734,7 @@ async function patchParticipant(id, patch) {
   try {
     await api("PATCH", "/api/rooms/" + state.roomId, { participants: [{ id, ...patch }] });
   } catch (e) {
-    alert(e.message);
+    showAlert(e.message);
   }
 }
 
@@ -766,7 +766,7 @@ export function renderQueue() {
     b.type = "button";
     b.setAttribute("aria-label", participantLabel(t.agent) + " 턴 " + (t.status === "running" ? "중단" : "취소"));
     b.onclick = () =>
-      api("DELETE", "/api/rooms/" + state.roomId + "/turns/" + t.id).catch((e) => alert(e.message));
+      api("DELETE", "/api/rooms/" + state.roomId + "/turns/" + t.id).catch((e) => showAlert(e.message));
     li.appendChild(b);
     ul.appendChild(li);
   }

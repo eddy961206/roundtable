@@ -1,5 +1,5 @@
 // Timeline: windowed message list, scroll pinning, history paging and message rendering.
-import { $, announce, avatarContent, DOM_CAP_STEP, el, esc, fmtDur, fmtElapsed, fmtK, fmtTime, STREAM_THROTTLE_MS } from "./util.js";
+import { $, announce, askConfirm, avatarContent, DOM_CAP_STEP, el, esc, fmtDur, fmtElapsed, fmtK, fmtTime, showAlert, STREAM_THROTTLE_MS } from "./util.js";
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { activeParticipants, authorProvider, modelLabel, openSeq, participant, participantLabel, seatClass, state } from "./state.js";
@@ -496,13 +496,13 @@ function findPrevUserMessage(msgId) {
 
 async function applyMarkers(m, btn) {
   if (!state.roomId) return;
-  if (!confirm("#" + m.seq + " 답이 끝까지 쓰였나요? 답 끝의 마커 " + m.pending_markers + "개(요청·결정·첨부)를 실행합니다.")) return;
+  if (!(await askConfirm("#" + m.seq + " 답이 끝까지 쓰였나요? 답 끝의 마커 " + m.pending_markers + "개(요청·결정·첨부)를 실행합니다.", { okText: "실행" }))) return;
   btn.disabled = true;
   try {
     const res = await api("POST", "/api/rooms/" + state.roomId + "/markers", { seq: m.seq });
     announce("#" + m.seq + " 마커 실행" + (res.error ? " (일부 실패: " + res.error + ")" : ""));
   } catch (e) {
-    alert(e.message);
+    showAlert(e.message);
     btn.disabled = false;
   }
 }
@@ -512,7 +512,7 @@ async function retryTurn(msgId, btn) {
   if (!m || !state.roomId) return;
   const prevUser = findPrevUserMessage(msgId);
   if (!prevUser || !prevUser.text) {
-    alert("재요청할 직전 사용자 메시지를 찾지 못했습니다.");
+    showAlert("재요청할 직전 사용자 메시지를 찾지 못했습니다.");
     return;
   }
   if (btn) btn.disabled = true;
@@ -523,7 +523,7 @@ async function retryTurn(msgId, btn) {
     });
     announce(participantLabel(m.author) + "에게 직전 메시지로 다시 시도 요청함");
   } catch (e) {
-    alert(e.message);
+    showAlert(e.message);
   } finally {
     if (btn) btn.disabled = false;
   }

@@ -2949,3 +2949,7 @@ dialog.dlg-stats { width: min(1100px, 96vw); }
 .pcard .guard-badges[hidden] { display: none; }
 .badge.guard.warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn); }
 .badge.guard.danger { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); }
+
+/* In-page confirm/alert (util.js askConfirm/showAlert) */
+dialog.dlg-message { width: min(440px, 94vw); }
+.dlg-message-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
