@@ -565,7 +565,7 @@ func TestStdioProtocol(t *testing.T) {
 	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고") || !strings.Contains(text, "resume_after_seq를 after_seq로") || !strings.Contains(text, "사람에게 확인받는다") {
 		t.Fatal(initialized["instructions"])
 	}
-	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 16 {
+	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 17 {
 		t.Fatal(byID["list"])
 	}
 	content := byID["3"]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)
@@ -655,5 +655,22 @@ func TestReadCarriesErrorKind(t *testing.T) {
 	m := call(t, s, "rt_read", `{"room":"r1"}`)["messages"].([]any)[0].(map[string]any)
 	if m["error_kind"] != "turn_timeout" || m["status"] != "error" {
 		t.Fatal(m)
+	}
+}
+
+func TestHandoffPostsSeatNoteAndFresh(t *testing.T) {
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Method != "POST" || r.URL.Path != "/api/rooms/r1/participants/w1/handoff" || string(body) != `{"fresh":true,"note":"PR 번호도"}` {
+			t.Errorf("%s %s %s", r.Method, r.URL.Path, body)
+		}
+		io.WriteString(w, `{"id":"m","seq":12}`)
+	}, false)
+	got := call(t, s, "rt_handoff", `{"room":"r1","seat":"w1","note":"PR 번호도","fresh":true}`)
+	if got["seq"] != float64(12) {
+		t.Fatal(got)
+	}
+	if _, err := s.call(context.Background(), "rt_handoff", json.RawMessage(`{"room":"r1"}`)); err == nil {
+		t.Fatal("seat is required")
 	}
 }

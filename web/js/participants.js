@@ -216,7 +216,31 @@ export function buildSessionActions(participantId, messageId = "") {
     };
     actions.appendChild(button);
   }
+  if (!messageId) actions.appendChild(buildHandoffButton(roomId, participantId));
   return actions;
+}
+
+// Handoff: the seat writes a summary in its current session, then its next
+// turn starts a new session holding only that summary (rt handoff).
+function buildHandoffButton(roomId, participantId) {
+  const button = el("button", "ghost", "인계 후 새 세션");
+  button.type = "button";
+  button.dataset.action = "handoff";
+  button.onclick = async () => {
+    if (!confirm("이 좌석이 지금 세션에서 인계 요약을 쓰고, 다음 턴부터 그 요약과 이후 메시지만 든 새 세션으로 바뀝니다. 대화 원문은 방에 남습니다. 진행할까요?")) return;
+    button.disabled = true;
+    button.dataset.busy = "true";
+    try {
+      await api("POST", "/api/rooms/" + roomId + "/participants/" + participantId + "/handoff", {});
+      if (state.roomId === roomId) announce("인계 요약을 요청했습니다. 요약이 끝나면 다음 턴부터 새 세션을 씁니다.");
+    } catch (e) {
+      if (state.roomId === roomId) alert(e.message);
+    } finally {
+      delete button.dataset.busy;
+      button.disabled = button.parentElement?.dataset.available !== "true";
+    }
+  };
+  return button;
 }
 
 export function updateSessionActions(actions, sessionId, running) {
@@ -226,9 +250,11 @@ export function updateSessionActions(actions, sessionId, running) {
     button.disabled = !available || button.dataset.busy === "true";
     button.title = !sessionId ? "첫 실행에서 CLI 세션이 저장되면 사용할 수 있습니다"
       : running ? "같은 세션의 실행이 끝난 뒤 열 수 있습니다"
-      : (button.dataset.action === "open"
-        ? "기존 CLI 대화를 엽니다. 이 참가자는 비활성화됩니다. CLI 창을 닫은 뒤 다시 켜세요."
-        : "이어보기 명령을 복사합니다. 직접 실행하기 전에 이 참가자를 끄세요.") + " · 세션 " + sessionId;
+      : ({
+        open: "기존 CLI 대화를 엽니다. 이 참가자는 비활성화됩니다. CLI 창을 닫은 뒤 다시 켜세요.",
+        copy: "이어보기 명령을 복사합니다. 직접 실행하기 전에 이 참가자를 끄세요.",
+        handoff: "긴 세션은 모델 호출마다 문맥 전체를 다시 읽습니다. 인계 요약을 남기고 다음 턴부터 새 세션으로 바꿔 입력 토큰을 줄입니다.",
+      }[button.dataset.action]) + " · 세션 " + sessionId;
   }
 }
 

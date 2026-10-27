@@ -88,7 +88,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 - Codex: `codex mcp add roundtable -- roundtable mcp --url http://127.0.0.1:8787`
 - agy: `agy mcp add roundtable roundtable mcp --url http://127.0.0.1:8787`
 
-기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_version`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_cancel_turn`, `rt_apply_markers`, `rt_forward`, `rt_decisions`, `rt_update_decision`, `rt_update_room`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·버전·요청·결정 카드 조회 7개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
+기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_version`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_handoff`, `rt_cancel_turn`, `rt_apply_markers`, `rt_forward`, `rt_decisions`, `rt_update_decision`, `rt_update_room`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·버전·요청·결정 카드 조회 7개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 
@@ -112,6 +112,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 - 같은 작업 폴더를 쓰는 두 방(하나라도 write)은 함께 실행하지 않는다. 다른 방이 실행 중이면 전송은 409와 그 방 이름으로 거절되고, 이미 대기열에 있는 턴은 그 방이 끝난 뒤 시작한다. 정확히 같은 폴더만 비교하고, git 작업 트리 안의 폴더만 잠근다(`.git`이 없는 worktree 모음 폴더는 잠그지 않는다).
 - 한도 오류(429, rate/usage/free limit, quota)로 끝난 턴은 그 좌석만 오류에 적힌 재시도 시각(없으면 10분 추정, 최대 6시간)까지 보류한다. 그 좌석을 대상으로 지정해 보내면 바로 다시 시도한다.
 - 턴 시간 상한은 방마다 `turn_timeout_minutes`(5~720분, 기본 45)로 정한다. 넘은 턴은 사용자 취소(`cancelled`)가 아니라 `error`·`error_kind: turn_timeout`과 "턴 시간 상한 N분을 넘어 중단됨"으로 남는다.
+- `rt_handoff`(`POST /api/rooms/{id}/participants/{seat}/handoff` `{note?, fresh?}`)는 좌석이 지금 세션에서 인계 요약을 쓰게 한 뒤, 다음 턴부터 그 요약과 이후 메시지만 든 새 세션을 쓰게 한다. 참가자 카드의 **인계 후 새 세션** 버튼도 같다. 문맥 경보가 뜬 긴 세션의 입력 토큰을 줄인다.
 - `rt_forward`(`POST /api/rooms/{id}/forward` `{from_room, seq, target?, note?}`)는 다른 방의 메시지를 원문 그대로 옮긴다. 받는 좌석 이력에 출처가 붙고, 원문 속 @멘션·마커는 실행되지 않는다. `rt_wait`의 `summary:true`는 좌석 답마다 판정 줄과 마커·신호 줄만 돌려준다.
 
 오류로 끝난 턴(예: 답을 다 쓴 뒤 `stream idle timeout`)의 `[[REQUEST]]`·`[[REQUEST_DONE]]`·`[[DECISION]]`·`[[ATTACH]]` 마커는 서버가 스스로 실행하지 않는다. 답이 잘렸을 수 있기 때문이다. 대신 메시지에 `pending_markers`(남은 마커 수)를 남기고 시스템 안내를 올린다. 답이 끝까지 쓰인 것을 확인하면 화면의 **마커 실행** 버튼이나 `rt_apply_markers`(`room`, `seq`, 쓰기 도구)로 한 번 실행한다. 실행한 답은 이후 좌석 이력에 본문과 함께 "CLI 오류 뒤 완료로 확인된 답"으로 전달된다. 출력을 낸 뒤 실패한 턴은 그 턴이 받은 메시지를 전달한 것으로 기록하므로, 같은 메시지를 기다리던 대기 턴이 일을 반복하지 않는다. 출력 전에 실패하거나 사용자가 중단한 턴의 메시지는 다음 턴에 다시 전달된다.

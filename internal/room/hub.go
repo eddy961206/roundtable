@@ -565,7 +565,7 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 			// Each CLI takes the effort per invocation, so an effort change resumes
 			// the same session instead of re-sending the room history.
 			if p.Model != original.Model {
-				p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
+				p.SessionID, p.LastSeen, p.ContextTokens, p.HistoryFrom = "", 0, 0, 0
 				p.Unseen, p.Fork = nil, nil
 				p.ContextWindow = prov.ContextWindow(p.Model)
 			}
@@ -573,7 +573,7 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	}
 	if contextChanged {
 		for _, p := range next.Participants {
-			p.SessionID, p.LastSeen, p.ContextTokens = "", 0, 0
+			p.SessionID, p.LastSeen, p.ContextTokens, p.HistoryFrom = "", 0, 0, 0
 			p.Unseen, p.Fork = nil, nil
 		}
 	}
@@ -643,7 +643,7 @@ func (h *Hub) ResetSessions(id string) error {
 	next.UpdatedAt = nowMs()
 	for i, p := range rs.room.Participants {
 		copy := *p
-		copy.SessionID, copy.LastSeen, copy.ContextTokens = "", 0, 0
+		copy.SessionID, copy.LastSeen, copy.ContextTokens, copy.HistoryFrom = "", 0, 0, 0
 		copy.Unseen, copy.Fork = nil, nil
 		next.Participants[i] = &copy
 	}
@@ -1350,6 +1350,9 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	brief := briefKey(standingBrief(rs.room, p, decisions, h.scratch))
 	forked := first && p.Fork != nil
 	tc := turnContext{Reason: t.Reason, Parallel: t.parallel, Round: t.Round, FirstTurn: first, Forked: forked, Briefed: !first && p.Brief == brief, Decisions: decisions, Scratch: h.scratch}
+	if first {
+		tc.HandoffFrom = p.HistoryFrom
+	}
 	if rs.disc != nil && t.Reason == "discussion" {
 		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
@@ -1743,6 +1746,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	}
 	rs.broadcast("message", msg)
 	h.usageNotices(rs, p)
+	if t.Reason == "handoff" {
+		h.finishHandoff(rs, p, msg, t.Fresh)
+	}
 	if msg.Status == "error" && err != nil && !interrupted {
 		if hold, until, reason, estimated := classifyLimit(msg.Error, time.Now()); hold {
 			h.holdSeat(rs, p, until, reason, estimated)
@@ -1766,7 +1772,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if workDone && msg.Status == "done" && pr.stopGen == rs.stopGen {
 		h.submitAsync(rs, pr.part.ID)
 	}
-	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" {
+	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" {
 		h.chainMentions(rs, msg, t)
 	}
 	if pr.stopGen == rs.stopGen && t.Reason == "discussion" {
@@ -1842,7 +1848,7 @@ func (rs *roomState) deltaFor(p *Participant, first bool, cap int64) ([]*Message
 func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, partID string) ([]*Message, int64, []int64) {
 	last := p.LastSeen
 	if first {
-		last = 0
+		last = max(p.HistoryFrom-1, 0) // after a handoff, the summary and what follows
 	}
 	seen := last
 	var unseen []int64

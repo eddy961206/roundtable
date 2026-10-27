@@ -83,6 +83,7 @@ func (s *Server) tools() []tool {
 		{Name: "rt_forward", Description: "다른 방의 메시지(from_room의 seq)를 원문 그대로 이 방(room)에 전달. 오케스트레이터가 검수 원문 등을 읽고 다시 쓰지 않아도 됨(그 토큰을 아낌). target(좌석 id)을 주면 그 좌석에게만, 생략하면 활성 좌석 전원. 받는 좌석의 이력에는 출처(방 제목·방ID#seq·작성자)와 note(선택, 300자 이내 한 줄 메모)가 붙음. 원문 속 @멘션과 [[REQUEST]] 등 마커는 인용으로 보고 실행하지 않음. 작업 폴더 점유·대상 확인은 rt_post와 같음. 결과의 seq는 rt_wait의 after_seq로 씀", InputSchema: object(map[string]schema{
 			"room": id, "from_room": id, "seq": integer(1, nil), "target": id, "note": str,
 		}, "room", "from_room", "seq")},
+		{Name: "rt_handoff", Description: "좌석의 긴 세션을 인계 요약으로 정리하고 다음 턴부터 새 세션으로 바꿈. 좌석이 지금 세션에서 결정·근거 위치·남은 일·다음 할 일을 요약하는 턴을 돌리고, 그 턴이 끝나면 다음 턴은 새 세션에서 그 요약과 이후 메시지만 받음(원문은 방 기록에 남음). 모델 호출마다 전체 문맥을 다시 읽으므로 문맥 경보가 뜬 좌석이나 작업이 바뀌는 지점에서 입력 토큰을 줄임. 기반 세션에서 포크한 좌석은 기반을 다시 포크하고, fresh:true면 기반 없이 시작. note는 요약에 더 담을 것(300자 이내 한 줄). 실행 중인 좌석·세션이 없는 좌석·파트를 맡은 좌석은 거절. 결과의 seq를 rt_wait의 after_seq로 씀", InputSchema: object(map[string]schema{"room": id, "seat": id, "note": str, "fresh": {Type: "boolean"}}, "room", "seat")},
 		{Name: "rt_cancel_turn", Description: "좌석의 실행 중인 턴 하나만 취소. 좌석은 켜진 채로 남아 이후 [[REQUEST]]·멘션·대기 턴을 계속 받음(웹의 '작업 중단'은 좌석까지 끔). 실행 중인 턴이 없으면 오류. 결과의 cancelled는 취소한 턴 id", InputSchema: object(map[string]schema{"room": id, "seat": id}, "room", "seat")},
 		{Name: "rt_apply_markers", Description: "오류로 끝난 좌석 답(seq)의 마커([[REQUEST]]·[[REQUEST_DONE]]·[[DECISION]]·[[ATTACH]])를 실행. 서버는 오류 턴의 마커를 스스로 처리하지 않고 시스템 안내로 알림. 답이 끝까지 쓰인 것을 확인했을 때만 호출(예: 답 뒤에 stream idle timeout). 한 번만 실행되며 결과의 message.requests가 새 요청", InputSchema: object(map[string]schema{"room": id, "seq": integer(1, nil)}, "room", "seq")},
 		{Name: "rt_decisions", Description: "결정 카드 목록 조회. status: proposed(좌석이 제안, 확정 대기)·active(안내문의 현재 결정)·superseded·dropped", InputSchema: object(map[string]schema{"room": id}, "room")},
@@ -203,6 +204,7 @@ type arguments struct {
 	TurnTimeoutMinutes int                `json:"turn_timeout_minutes"`
 	Note               string             `json:"note"`
 	ID                 string             `json:"id"`
+	Fresh              bool               `json:"fresh"`
 }
 
 const (
@@ -309,6 +311,14 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 			Seq int64 `json:"seq"`
 		}
 		if err := s.api(ctx, "POST", base+"/forward", map[string]any{"from_room": a.FromRoom, "seq": a.Seq, "target": a.Target, "note": a.Note}, &sent); err != nil {
+			return nil, err
+		}
+		return map[string]any{"seq": sent.Seq}, nil
+	case "rt_handoff":
+		var sent struct {
+			Seq int64 `json:"seq"`
+		}
+		if err := s.api(ctx, "POST", base+"/participants/"+a.Seat+"/handoff", map[string]any{"note": a.Note, "fresh": a.Fresh}, &sent); err != nil {
 			return nil, err
 		}
 		return map[string]any{"seq": sent.Seq}, nil

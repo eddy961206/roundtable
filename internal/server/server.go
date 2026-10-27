@@ -95,6 +95,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/rooms/{id}/participants", s.addParticipants)
 	s.mux.HandleFunc("DELETE /api/rooms/{id}/participants/{participant}", s.removeParticipant)
 	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/stop", s.stopParticipant)
+	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/handoff", s.handoff)
 	s.mux.HandleFunc("GET /api/rooms/{id}/participants/{participant}/session", s.nativeSession)
 	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/session/open", s.openNativeSession)
 	s.mux.HandleFunc("DELETE /api/rooms/{id}", s.deleteRoom)
@@ -324,6 +325,27 @@ func (s *Server) forwardMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, err := s.hub.Forward(r.PathValue("id"), body.FromRoom, body.Seq, body.Target, body.Note)
+	if errors.Is(err, room.ErrWorkspaceBusy) {
+		writeErr(w, 409, err)
+		return
+	}
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 201, m)
+}
+
+func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Note  string `json:"note"`
+		Fresh bool   `json:"fresh"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	m, err := s.hub.Handoff(r.PathValue("id"), r.PathValue("participant"), body.Note, body.Fresh)
 	if errors.Is(err, room.ErrWorkspaceBusy) {
 		writeErr(w, 409, err)
 		return

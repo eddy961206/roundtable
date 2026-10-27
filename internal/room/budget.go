@@ -84,7 +84,7 @@ func (h *Hub) usageNotices(rs *roomState, p *Participant) {
 	if warn := rs.room.inputWarn(); warn > 0 {
 		if level := int(p.InputAll / warn); level > p.InputWarned {
 			p.InputWarned = level
-			h.addSystem(rs, fmt.Sprintf("@%s 이 방 누적 입력이 %s 토큰을 넘음(%s, 캐시 포함) · 한 세션을 오래 이어 쓰면 턴마다 입력이 커짐: 작업이 바뀌는 지점이면 세션 초기화나 기반 포크로 새 세션을 고려",
+			h.addSystem(rs, fmt.Sprintf("@%s 이 방 누적 입력이 %s 토큰을 넘음(%s, 캐시 포함) · 한 세션을 오래 이어 쓰면 턴마다 입력이 커짐: 작업이 바뀌는 지점이면 rt handoff로 요약을 남기고 새 세션으로 바꾸는 것을 고려",
 				p.ID, comma(float64(level)*warn), comma(p.InputAll)))
 		}
 	}
@@ -93,7 +93,7 @@ func (h *Hub) usageNotices(rs *roomState, p *Participant) {
 		switch {
 		case ratio >= pct && !p.ContextWarned:
 			p.ContextWarned = true
-			h.addSystem(rs, fmt.Sprintf("@%s 문맥이 모델 한도의 %d%%(%s/%s 토큰)에 도달함 · 작업이 바뀌는 지점이면 결정·남은 일을 정리하게 한 뒤 세션 초기화나 새 세션(포크)으로 바꾸는 것을 고려",
+			h.addSystem(rs, fmt.Sprintf("@%s 문맥이 모델 한도의 %d%%(%s/%s 토큰)에 도달함 · 작업이 바뀌는 지점이면 rt handoff(화면의 '인계 후 새 세션')로 요약을 남기고 새 세션으로 바꾸는 것을 고려",
 				p.ID, ratio, comma(float64(p.ContextTokens)), comma(float64(p.ContextWindow))))
 		case ratio < pct:
 			p.ContextWarned = false // compaction or a new session re-arms the warning

@@ -28,6 +28,7 @@ type turnContext struct {
 	BlindFirst  bool     // the discussion started with a blind round 1
 	Decisions   []string // active decision texts, newest first (standing brief)
 	Scratch     string   // server scratch directory named in the standing brief
+	HandoffFrom int64    // first turn after a handoff: seq of the summary the history starts at
 }
 
 var signalRe = regexp.MustCompile(`^\[\[DISCUSSION:(CONTINUE|AGREE|PASS|CONCLUDE)\]\]$`)
@@ -228,6 +229,9 @@ func BuildPrompt(r *Room, me *Participant, history []*Message, tc turnContext) s
 		b.WriteString("- 응답 끝 신호 블록에 다음 중 하나를 한 줄로 붙이세요: [[DISCUSSION:CONTINUE]] [[DISCUSSION:AGREE]] [[DISCUSSION:PASS]] [[DISCUSSION:CONCLUDE]]\n")
 		b.WriteString("  새 기여가 있으면 CONTINUE, 새 내용 없이 동의하면 AGREE, 할 말이 없으면 PASS, 충분한 최종 결론을 제시했으면 CONCLUDE.\n")
 		b.WriteString("- CONCLUDE나 AGREE를 낼 때는 신호 블록 위에 \"확인한 근거: …\"와 \"확인하지 못한 주장: …\"을 한 줄씩 쓰세요. AGREE는 의견이 같다는 뜻일 뿐 검증이 아닙니다.\n")
+	}
+	if tc.HandoffFrom > 0 {
+		fmt.Fprintf(&b, "\n이 세션은 이전 세션이 남긴 인계 요약(#%d)부터 이어집니다. 그 앞의 대화 원문은 방 기록에 남아 있습니다. 요약에 없는 사실은 짐작하지 말고 파일·기록을 다시 확인하세요.\n", tc.HandoffFrom)
 	}
 	if tc.FirstTurn {
 		b.WriteString("\n=== 지금까지의 대화 ===\n")

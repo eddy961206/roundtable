@@ -42,6 +42,7 @@
 | `update_room --room [--title] [--note] [--workspace] [--mode] [--seat_input_budget N] [--room_input_budget N] [--input_warn_tokens N] [--context_warn_percent N] [--turn_timeout_minutes N]` | 방 메모(협업 규칙)를 바꾸거나, 지워진 worktree 대신 새 작업 폴더를 줄 때. 좌석·방 누적 입력 상한(0=없음), 누적 입력 경고 간격(0=1천만, -1=끔), 문맥 경보 비율(0=70, -1=끔)도 여기서 정한다. |
 | `discuss --room --rounds N [--blind_first false]` | 여러 모델 의견을 라운드로 겨루게 할 때. 이미 같은 질문에 답했으면 `--blind_first false`. |
 | `requests --room` / `cancel_request --room --request` | 좌석 간 `[[REQUEST]]`의 상태를 보거나, 잘못 나간 요청을 취소할 때. |
+| `handoff --room --seat [--note "한 줄"] [--fresh true]` | 한 좌석의 세션이 길어졌을 때(문맥 경보, 작업이 바뀌는 지점). 좌석이 지금 세션에서 인계 요약(근거 위치·결정·남은 일·다음 할 일)을 쓰고, 다음 턴부터 그 요약과 이후 메시지만 든 새 세션을 쓴다. 기반에서 포크한 좌석은 기반을 다시 포크한다(`--fresh true`면 기반 없이). 결과의 `seq`로 `wait`. 실행 중·세션 없음·파트 담당 좌석은 거절한다. 2026-10-28 A/B에서 다음 검수·수정 턴 입력이 43% 줄었고 결함 발견·수정 결과는 같았다(`docs/토큰효율_측정_20261028.md`). |
 | `cancel_turn --room --seat` | 좌석의 실행 중인 턴 하나만 멈출 때(중복 턴 등). 좌석은 켜진 채로 남아 요청을 계속 받는다. |
 | `apply_markers --room --seq N` | 오류로 끝난 답(`pending_markers` 있음)이 끝까지 쓰였음을 확인한 뒤 그 답의 마커를 한 번 실행할 때. |
 | `decisions --room` / `update_decision --room --id --status active\|dropped` | 좌석이 남긴 결정 카드(`proposed`)를 확인하고 확정·거절할 때. AGREE는 검증이 아니다. |
@@ -227,7 +228,7 @@ roundtable rt post --room <방> --target <w1 좌석 id> --text - < task.md
 | 좌석 답이 한도 오류(429, rate/usage/free limit, quota)로 끝나고 "한도 오류로 …까지 이 좌석의 새 턴을 보류함" 안내 | 공급사 한도 도달. 서버가 그 좌석만 재시도 시각(오류에 없으면 10분 추정)까지 보류한다. `list_rooms` 좌석의 `held_until`(ms)·`held_reason`에 보인다. | 기다리면 시각이 지난 뒤 대기 턴이 저절로 돈다. 바로 다시 해 보려면 그 좌석을 `--target`으로 지정해 보낸다(보류가 풀림). 무료 한도면 다른 모델 좌석으로 바꾼다. |
 | "턴 보류: 좌석(방) 누적 입력 …이 예산 상한 …에 도달" 안내 | 방의 `seat_input_budget`·`room_input_budget`에 닿았다. 그 좌석(방이면 전 좌석)의 새 턴을 시작하지 않는다. 메시지는 남아 있다. | 의도한 상한이면 새 좌석·포크로 바꾸거나 일을 줄인다. 계속하려면 `update_room --seat_input_budget <더 큰 값 또는 0>`. 다음 턴에 남은 메시지가 함께 간다. |
 | 답이 `error`이고 `error_kind: turn_timeout`, "턴 시간 상한 N분을 넘어 중단됨" | 턴이 방의 시간 상한(기본 45분)을 넘었다. 사용자가 누른 취소(`cancelled` "중단됨")와 다르다. 출력이 있었으면 받은 메시지는 전달된 것으로 기록된다. | 답 원문을 읽고 어디까지 했는지 확인한다. 이어서 할 일만 다시 보낸다. 긴 작업이면 `update_room --turn_timeout_minutes 120`처럼 늘린 뒤 보낸다(5~720분). |
-| "이 방 누적 입력이 …을 넘음"·"문맥이 모델 한도의 n%에 도달" 안내 | 한 세션을 오래 이어 써서 턴마다 입력이 커졌다. | 작업이 바뀌는 지점이면 좌석에게 결정·남은 일을 정리하게 한 뒤 세션을 새로 시작한다(기반 포크 또는 새 좌석). 경고만 하며 턴은 막지 않는다. |
+| "이 방 누적 입력이 …을 넘음"·"문맥이 모델 한도의 n%에 도달" 안내 | 한 세션을 오래 이어 써서 턴마다 입력이 커졌다. | 작업이 바뀌는 지점이면 `rt handoff --room --seat`로 인계 요약을 남기고 새 세션으로 바꾼다. 경고만 하며 턴은 막지 않는다. |
 | `rt post`·`rt forward`가 409 "작업 폴더 사용 중: 방 …이 같은 작업 폴더 …에서 실행 중" | 같은 폴더를 쓰는 다른 방(둘 중 하나라도 write)이 실행 중이다. 작성 중인 worktree를 다른 방이 동시에 검수·수정하지 못하게 막는다. | 그 방의 턴이 끝난 뒤(`rt wait`) 다시 보낸다. 이미 대기열에 들어간 턴은 그 방이 끝나면 저절로 시작한다. git 작업 트리 안의 폴더만 잠근다. `.git`이 없는 worktree 모음 폴더(`_worktrees` 등)를 쓰는 방끼리는 함께 실행되니 `tools/orchestrate/worktree_claims.py`로 등록한다. |
 | agy 답 본문은 끝까지 있는데 턴이 `error`(스트림 유휴 시간 초과)이고, 답 안의 `[[REQUEST]]`가 실행되지 않음 | 서버는 오류로 끝난 답의 마커를 스스로 실행하지 않는다(답이 잘렸을 수 있음). | 답을 읽고 끝까지 쓰였으면 `apply_markers --room --seq N`으로 실행한다. 잘렸으면 그 좌석에 다시 시도를 보낸다. |
 | 턴이 "작업 폴더가 없어 실행하지 않았어"로 실패 | 방의 worktree가 PR 병합 정리 등으로 지워졌다. | `rt update_room --room <방> --workspace <새 폴더>`. 방과 좌석 세션은 유지된다. 실행 중에는 바꿀 수 없다. |

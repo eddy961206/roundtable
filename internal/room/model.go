@@ -36,6 +36,9 @@ type Participant struct {
 	// HoldReason is the error that caused it (limit_hold.go).
 	HoldUntil  int64  `json:"hold_until,omitempty"`
 	HoldReason string `json:"hold_reason,omitempty"`
+	// HistoryFrom is the seq of the handoff summary a new session starts from;
+	// its first turn gets that summary and later messages only (handoff.go).
+	HistoryFrom int64 `json:"history_from,omitempty"`
 }
 
 // ForkSource is the base seat session a seat starts from. The copy is made on
@@ -158,6 +161,7 @@ type Turn struct {
 	Created  int64  `json:"created"`
 	Part     string `json:"part,omitempty"`  // work part this turn runs for (D9, review)
 	Blind    bool   `json:"blind,omitempty"` // blind first discussion round: runs concurrently and reads only up to Cap
+	Fresh    bool   `json:"fresh,omitempty"` // handoff: the new session does not fork the seat's base again
 	parallel bool   // broadcast prompt instructions survive independent start times
 	priority bool   // targeted user messages precede ordinary waiting turns
 	prompt   string // hub-built part or review instruction

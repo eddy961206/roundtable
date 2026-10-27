@@ -212,8 +212,8 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string, apply bool)
 				}
 				msg.Attachments = append(msg.Attachments, a)
 			case strings.HasPrefix(line, "[[REQUEST:"):
-				if pr.t.Reason == "discussion" || pr.t.Reason == "review" {
-					reject("request", line, "discussion·review 턴에서는 새 요청을 만들 수 없음")
+				if pr.t.Reason == "discussion" || pr.t.Reason == "review" || pr.t.Reason == "handoff" {
+					reject("request", line, "discussion·review·인계 턴에서는 새 요청을 만들 수 없음")
 					continue
 				}
 				m := requestMarker.FindStringSubmatch(line)
