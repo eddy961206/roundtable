@@ -73,28 +73,38 @@ export function announce(msg) {
 
 // In-page stand-ins for window.confirm/alert. Embedded browsers such as app panes can suppress
 // native dialogs (confirm returns false at once), which silently cancelled deletes and hid errors.
+// The answer is taken from the button click or Esc itself: the dialog "close" event waits for the
+// next rendered frame, so it never arrives while the page is hidden.
 function messageDialog(message, okText, cancelText, danger) {
   return new Promise((resolve) => {
     const dlg = el("dialog", "dlg-message");
     dlg.setAttribute("aria-label", cancelText ? "확인" : "알림");
-    const form = el("form");
-    form.method = "dialog";
     const text = el("p", "dlg-message-text", message);
     const menu = el("menu");
+    const finish = (answer) => {
+      if (!dlg.isConnected) return;
+      dlg.close();
+      dlg.remove();
+      resolve(answer);
+    };
     let cancel = null;
     if (cancelText) {
       cancel = el("button", "", cancelText);
-      cancel.value = "cancel";
+      cancel.type = "button";
+      cancel.onclick = () => finish(false);
       menu.appendChild(cancel);
     }
     const ok = el("button", danger ? "danger" : "primary", okText);
-    ok.value = "ok";
+    ok.type = "button";
+    ok.onclick = () => finish(true);
     menu.appendChild(ok);
-    form.append(text, menu);
-    dlg.appendChild(form);
-    dlg.addEventListener("close", () => {
-      dlg.remove();
-      resolve(dlg.returnValue === "ok");
+    dlg.append(text, menu);
+    dlg.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      // Esc answers only this dialog, not the page-wide Escape handling behind it.
+      e.preventDefault();
+      e.stopPropagation();
+      finish(false);
     });
     document.body.appendChild(dlg);
     dlg.showModal();
