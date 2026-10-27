@@ -129,6 +129,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		}
 		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
 		backfillInput(rs)
+		h.restoreHolds(rs)
 		rs.requests, err = store.loadRequests(r.ID)
 		if err != nil {
 			return nil, err
@@ -672,6 +673,7 @@ func (h *Hub) DeleteRoom(id string) error {
 	rs.deleted = true
 	h.stopLocked(rs, "방 삭제") // deletion still cancels turns if the stop note cannot be saved
 	delete(h.rooms, id)
+	h.pumpPeers(rs) // rooms waiting for this room's folder may start now
 	for ch := range rs.subs {
 		close(ch)
 	}
@@ -926,8 +928,10 @@ func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentID
 			return nil, fmt.Errorf("활성 대상 없음: %s", target)
 		}
 	}
-	if other := h.workspaceRival(rs); other != nil {
-		return nil, rivalError(other)
+	if target == "" || rs.activePart(target) == nil {
+		if other := h.workspaceRival(rs); other != nil {
+			return nil, rivalError(other)
+		}
 	}
 	if p := rs.room.participant(target); target != "" && p.HoldUntil != 0 {
 		// Addressing a held seat directly is the explicit retry.
@@ -948,7 +952,7 @@ func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentID
 	m.Mentions = &mentioned
 	m.Forward = fwd
 	var liveRun *running
-	if target != "" && len(attachments) == 0 {
+	if target != "" && len(attachments) == 0 && fwd == nil {
 		if run := rs.runningFor(target); run != nil && run.steer != nil && len(run.steer) < cap(run.steer) {
 			// h.mu serializes all senders; the provider can only free capacity.
 			liveRun = run
@@ -1249,13 +1253,13 @@ func (h *Hub) pump(rs *roomState) {
 			i++
 			continue
 		}
-		if seatHeld(p) {
-			i++ // a limit hold; its timer pumps again when the hold ends
-			continue
-		}
-		// Part and review turns run in their own worktree, not the room folder.
-		if t.Reason != "part" && t.Reason != "review" && h.workspaceRival(rs) != nil {
-			i++ // waits; pumpPeers starts it when the other room is done
+		// A limit hold (its timer pumps again) or a busy folder (pumpPeers starts
+		// it) makes the turn wait; a waiting sequential turn still holds its place.
+		if seatHeld(p) || (runsInRoomFolder(rs, t) && h.workspaceRival(rs) != nil) {
+			if sequential {
+				discussionBlocked = true
+			}
+			i++
 			continue
 		}
 		rs.queue = slices.Delete(rs.queue, i, i+1)

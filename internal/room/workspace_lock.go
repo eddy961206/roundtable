@@ -35,14 +35,22 @@ func (h *Hub) workspaceRival(rs *roomState) *roomState {
 		return nil
 	}
 	for _, other := range h.rooms {
-		if other == rs || len(other.running) == 0 || workspaceKey(other.room) != key {
+		if other == rs || workspaceKey(other.room) != key || !(rs.room.Mode == agent.ModeWrite || other.room.Mode == agent.ModeWrite) {
 			continue
 		}
-		if rs.room.Mode == agent.ModeWrite || other.room.Mode == agent.ModeWrite {
-			return other
+		for _, run := range other.running {
+			if runsInRoomFolder(other, run.turn) {
+				return other
+			}
 		}
 	}
 	return nil
+}
+
+// runsInRoomFolder: part and review turns, and any turn of a seat with an
+// active part, run in that part's own worktree.
+func runsInRoomFolder(rs *roomState, t *Turn) bool {
+	return t.Reason != "part" && t.Reason != "review" && rs.activePart(t.Agent) == nil
 }
 
 func rivalError(other *roomState) error {
