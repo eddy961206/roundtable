@@ -18,6 +18,7 @@
 | `lifecycle_smoke.py` | CLI `rt post/read`, 세션 재개, 참가자별 중단, 독립 실행, 사용량, 정상 종료 후 재시작 |
 | `frontend-trace.mjs` | 실제 SSE 처리 함수에 200+2,000개 이벤트/기록을 전달, 전체 내용·순서 대조 |
 | `frontend-trace.test.mjs` | 전체/중첩 기록, 중복 이벤트, 표시 길이, 오류·LRU 보존 회귀 검사 |
+| `frontend-unread.test.mjs` | 방 목록의 실행 중 회전 표시·안 읽은 답 점 판정(`web/js/unread.js`), localStorage 예외·삭제된 방 정리 |
 | `frontend-browser.mjs` | 실제 HTML/CSS/marked/JS에서 200개 메시지와 동시 렌더, CDP CPU·layout 지표·UI 상태 검사 |
 | `frontend-live-smoke.mjs` | 실제 앱 부팅·HTTP·합성 CLI로 방 생성, 1,000개 기록, 입력·키보드·방 전환·중단·테마 검사 |
 | `summarize.py` | Go 원자료의 중앙값·범위·증감률 JSON. 서로 다른 benchmark 이름은 비교하지 않음 |

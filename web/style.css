@@ -359,6 +359,20 @@ kbd {
   background: var(--ok);
   flex: none;
 }
+/* A running room: an 8px ring with one coloured quarter; only transform animates. */
+.room-spin {
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--ok);
+  border-radius: 50%;
+  flex: none;
+  animation: spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .room-spin { animation: none; border-color: var(--ok); border-left-color: var(--border-strong); }
+}
 
 #provider-panel {
   border-top: 1px solid var(--border);

@@ -7,6 +7,9 @@ import { closeDrawers } from "./layout.js";
 import { renderUsagePanel } from "./usage.js";
 import { renderTargetControls } from "./composer.js";
 import { renderWorkHeadBar } from "./work.js";
+import { createUnreadTracker } from "./unread.js";
+
+const unread = createUnreadTracker((() => { try { return globalThis.localStorage; } catch { return null; } })());
 
 let roomsTimer = null;
 let roomsLoading = null;
@@ -248,6 +251,8 @@ function buildRoomListItems(ul) {
     ul.appendChild(emptyLi);
     return;
   }
+  // Every listed room, not only the search hits, so a search does not forget seen counts.
+  const marks = unread.marks(state.rooms, state.roomId);
   if (menuOpenFor && !filtered.some((r) => r.id === menuOpenFor)) menuOpenFor = "";
   if (renamingId && !filtered.some((r) => r.id === renamingId)) { renamingId = ""; renameDraft = ""; }
   for (const r of filtered) {
@@ -271,11 +276,14 @@ function buildRoomListItems(ul) {
     icon.setAttribute("aria-hidden", "true");
     btn.appendChild(icon);
     btn.appendChild(el("span", "name", r.title));
-    if (r.active) {
-      const dot = el("span", "dot");
-      dot.title = "실행 중";
-      dot.setAttribute("aria-label", "실행 중");
-      btn.appendChild(dot);
+    const mark = marks[r.id];
+    if (mark) {
+      const label = mark === "active" ? "실행 중" : "안 읽은 답 있음";
+      const badge = el("span", mark === "active" ? "room-spin" : "dot");
+      badge.title = label;
+      badge.setAttribute("role", "img");
+      badge.setAttribute("aria-label", label);
+      btn.appendChild(badge);
     }
     btn.onclick = () => {
       closeDrawers();
