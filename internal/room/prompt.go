@@ -37,12 +37,17 @@ var signalRe = regexp.MustCompile(`^\[\[DISCUSSION:(CONTINUE|AGREE|PASS|CONCLUDE
 // trailingSignals is shared by all completion consumers. Only consecutive
 // signal lines at the end count; ordinary text (including a blank line) ends
 // the block. Each consumer removes only its own signals.
+// One-line action markers ([[REQUEST]], [[ATTACH]], [[DECISION]]) may sit in the
+// block too: a review loop ends "[[REQUEST_DONE:id]]" then "[[REQUEST:@reviewer]] ...",
+// and counting the new request as ordinary text rejected the DONE above it
+// (2026-10-28 VMS-next #70 room, the request stayed pending).
 func trailingSignals(text string) (lines []string, start int) {
 	lines = strings.Split(strings.TrimSpace(text), "\n")
 	start = len(lines)
 	for start > 0 {
 		line := strings.TrimSpace(lines[start-1])
-		if line != workDoneSignal && !signalRe.MatchString(line) && !resultMarker.MatchString(line) {
+		if line != workDoneSignal && !signalRe.MatchString(line) && !resultMarker.MatchString(line) &&
+			!requestMarker.MatchString(line) && !attachMarker.MatchString(line) && !decisionMarker.MatchString(line) {
 			break
 		}
 		start--
