@@ -403,6 +403,7 @@ function routeHtml(fromId, targetName, kind, outcome, raw) {
 }
 
 const MARKER_KIND = { request: "요청 마커", request_result: "요청 결과 마커", attach: "첨부 마커", decision: "결정 마커" };
+const USER_ALIASES = new Set(["user", "사용자", "human", "사람"]);
 
 // markerNoticeHtml renders the server's marker rejection notice as
 // "sender → target · kind · 전달 안 됨: reason"; null for other system messages.
@@ -418,6 +419,12 @@ export function markerNoticeHtml(m) {
 export function requestRouteHtml(raw, msg) {
   const r = requestMarker(raw);
   if (!r || !msg) return null;
+  // 서버는 사람에게 묻는 [[REQUEST:@User]]를 좌석 요청이 아니라 사용자 확인 공지로 남긴다.
+  if (USER_ALIASES.has(r.target.toLowerCase())) {
+    return '<span class="marker-route user-ask" role="group" aria-label="' + esc("보낸 좌석 " + participantLabel(msg.author) + ", 사용자 확인 요청") + '">' +
+      seatChipHtml(msg.author) + '<span class="route-arrow" aria-hidden="true">→</span>' +
+      '<span class="route-ask">사용자 확인 요청</span><span class="route-body">' + esc(r.body) + "</span></span>";
+  }
   let reason = "";
   for (const other of state.messages.values()) {
     if (other.kind === "system" && other.notice_msg === msg.id && other.notice_marker === "request") {

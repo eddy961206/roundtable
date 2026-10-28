@@ -203,6 +203,30 @@ func TestRequestUnknownSeatAndIDFeedback(t *testing.T) {
 	waitIdle(t, h, r.ID)
 }
 
+func TestRequestToUserBecomesNotice(t *testing.T) {
+	h, r, ps := controlledHub(t, "codex")
+	if _, err := h.PostUser(r.ID, "start", ""); err != nil {
+		t.Fatal(err)
+	}
+	call := nextCall(t, ps[0])
+	call.result <- controlledResult{text: "answer\n[[REQUEST:@User]] 다크 모드 캡처를 확인해 줘\n[[REQUEST:@사용자]] 두 번째"}
+	waitIdle(t, h, r.ID)
+	snap, _ := h.Snapshot(r.ID)
+	if len(snap.Requests) != 0 {
+		t.Fatal(snap.Requests)
+	}
+	var notices []string
+	for _, m := range snap.Messages {
+		if m.Kind == "system" {
+			notices = append(notices, m.Text)
+		}
+	}
+	joined := strings.Join(notices, "\n")
+	if strings.Contains(joined, "마커 거절") || !strings.Contains(joined, "사용자 확인 요청: 다크 모드 캡처를 확인해 줘") || !strings.Contains(joined, "사용자 확인 요청: 두 번째") {
+		t.Fatal(notices)
+	}
+}
+
 func TestRequestLimitAndRestartInProgress(t *testing.T) {
 	h, r, ps := controlledHub(t, "codex", "claude")
 	r.MaxChain = 0

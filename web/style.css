@@ -2953,6 +2953,15 @@ dialog.dlg-stats { width: min(1100px, 96vw); }
   border-radius: 999px;
 }
 .marker-route .route-raw { font-size: 11.5px; color: var(--muted); }
+.marker-route.user-ask .route-ask {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--warn);
+  background: var(--warn-bg);
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.marker-route.user-ask .route-body { font-size: 13px; }
 .marker-route .route-raw summary { cursor: pointer; }
 .marker-route .route-raw code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .steer-tag.route, .call-route { display: inline-flex; align-items: center; gap: 4px; }

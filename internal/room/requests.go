@@ -145,6 +145,12 @@ func (h *Hub) beginRequests(rs *roomState, pr *prepared) {
 
 var attachMarker = regexp.MustCompile(`^\[\[ATTACH:(.+)\]\]$`)
 var requestMarker = regexp.MustCompile(`^\[\[REQUEST:@([^\]\s]+)\]\]\s+(.+)$`)
+
+// userAliases are the names a seat uses for the person running the room.
+var userAliases = map[string]bool{"user": true, "사용자": true, "human": true, "사람": true}
+
+func isUserAlias(name string) bool { return userAliases[strings.ToLower(name)] }
+
 var resultMarker = regexp.MustCompile(`^\[\[REQUEST_(DONE|REJECT):([^\]\s]+)\]\](?:\s+(.*))?$`)
 
 // markerError records which handler rejected the line and the reply it came
@@ -225,6 +231,14 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string, apply bool)
 					continue
 				}
 				to, why := rs.requestTarget(m[1])
+				if to == nil && isUserAlias(m[1]) {
+					// 좌석은 대화 기록에서 사람을 User로 본다. 사람에게 묻는 요청은 좌석 요청이 아니라
+					// 방 공지로 남겨 사람(오케스트레이터)이 보게 한다. 같은 이름의 좌석이 있으면 좌석이 우선이다.
+					if err := h.addSeatNotice(rs, pr, "user_request", fmt.Sprintf("@%s 사용자 확인 요청: %s", pr.p.ID, strings.TrimSpace(m[2]))); err != nil {
+						processingErr = err
+					}
+					continue
+				}
 				if to != nil && to.ID == pr.p.ID {
 					why = "@" + to.ID + "는 이 좌석 자기 자신이라 요청할 수 없음"
 				}
@@ -399,7 +413,7 @@ func ordinaryMentionText(text string) string {
 // scratch is the server scratch directory; agents cannot discover it on their
 // own, so the brief names it for images that must not stay in the worktree.
 func markerBrief(mode, scratch string) string {
-	text := "- 참가자에게 요청: [[REQUEST:@좌석ID 또는 @이름]] 확인할 내용 한 줄 (discussion·review 턴에서는 금지)\n- 받은 요청 완료(응답 끝 신호 블록): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 끝 신호 블록): [[REQUEST_REJECT:요청ID]] 거절 이유\n- 응답 끝 신호(요청 결과, 토론 신호, 파트 완료 신호)가 여럿이면 빈 줄 없이 한 줄씩 모으세요. 순서는 자유입니다. 이번 턴에 해당하는 신호만 쓰세요.\n- 끝나지 않은 파트를 맡은 좌석에는 요청할 수 없습니다. 파트가 끝난 뒤 다시 요청하거나 사용자에게 알리세요.\n- 결정 기록(한 줄, 결정이 정해졌을 때만):" + decisionMarkerForm + "\n"
+	text := "- 참가자에게 요청: [[REQUEST:@좌석ID 또는 @이름]] 확인할 내용 한 줄 (discussion·review 턴에서는 금지)\n- 사용자(사람)에게 확인 요청: [[REQUEST:@User]] 확인할 내용 한 줄 — 좌석 요청이 아니라 사용자 확인 공지로 남고, 좌석을 부르지 않습니다\n- 받은 요청 완료(응답 끝 신호 블록): [[REQUEST_DONE:요청ID]]\n- 받은 요청 거절(응답 끝 신호 블록): [[REQUEST_REJECT:요청ID]] 거절 이유\n- 응답 끝 신호(요청 결과, 토론 신호, 파트 완료 신호)가 여럿이면 빈 줄 없이 한 줄씩 모으세요. 순서는 자유입니다. 이번 턴에 해당하는 신호만 쓰세요.\n- 끝나지 않은 파트를 맡은 좌석에는 요청할 수 없습니다. 파트가 끝난 뒤 다시 요청하거나 사용자에게 알리세요.\n- 결정 기록(한 줄, 결정이 정해졌을 때만):" + decisionMarkerForm + "\n"
 	if mode != agent.ModeChat {
 		text += "- 기존 이미지 공유(한 줄): [[ATTACH:경로]] — PNG·JPEG·WEBP, 파일당 10MB, 메시지당 4장. 상대 경로는 작업 폴더 기준입니다. 서버 scratch 폴더 " + scratch + " 의 파일은 절대 경로로 쓰세요. 다른 폴더(각 CLI 자체 임시 폴더 등)는 거절됩니다.\n"
 		if mode == agent.ModeWrite {
