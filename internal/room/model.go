@@ -84,8 +84,15 @@ type Room struct {
 	TurnTimeoutMinutes int   `json:"turn_timeout_minutes,omitempty"` // 0: DefaultTurnTimeoutMinutes
 	// CompactWindowTokens makes Claude seats compact their session at this
 	// context size (budget.go); 0 keeps the CLI default.
-	CompactWindowTokens int       `json:"compact_window_tokens,omitempty"`
-	Work                *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
+	CompactWindowTokens int `json:"compact_window_tokens,omitempty"`
+	// QuietDone: a [[REQUEST_DONE]] result does not wake its requester
+	// (chainMentions). A rejection still does. For review rooms where a pass
+	// needs no reply and a fix is asked with its own [[REQUEST]].
+	QuietDone bool `json:"quiet_done,omitempty"`
+	// Archived rooms are left out of room lists unless asked for; they keep
+	// working and an active one is still listed.
+	Archived bool      `json:"archived,omitempty"`
+	Work     *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {
@@ -113,6 +120,7 @@ type Message struct {
 	NoticeDelivered  bool           `json:"notice_delivered,omitempty"`
 	NoticeMarker     string         `json:"notice_marker,omitempty"` // marker feedback: attach | request | request_result | decision | discussion
 	NoticeMsg        string         `json:"notice_msg,omitempty"`    // reply whose marker was rejected
+	UserOnly         bool           `json:"user_only,omitempty"`     // for people and the orchestrator; never in a seat's history (usage warnings)
 	Attachments      []Attachment   `json:"attachments,omitempty"`
 	Requests         []string       `json:"requests,omitempty"`
 	Decisions        []string       `json:"decisions,omitempty"`       // decision cards recorded by this reply's markers

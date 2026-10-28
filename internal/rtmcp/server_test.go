@@ -224,7 +224,7 @@ func TestReadOnly(t *testing.T) {
 			t.Fatal(tool)
 		}
 	}
-	want := []string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_version", "rt_requests", "rt_decisions"}
+	want := []string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_seats", "rt_version", "rt_requests", "rt_decisions"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatal(names)
 	}
@@ -565,7 +565,7 @@ func TestStdioProtocol(t *testing.T) {
 	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고") || !strings.Contains(text, "resume_after_seq를 after_seq로") || !strings.Contains(text, "사람에게 확인받는다") {
 		t.Fatal(initialized["instructions"])
 	}
-	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 17 {
+	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 19 {
 		t.Fatal(byID["list"])
 	}
 	content := byID["3"]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)

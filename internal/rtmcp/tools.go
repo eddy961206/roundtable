@@ -60,9 +60,9 @@ func (s *Server) tools() []tool {
 	fork := object(map[string]schema{"room": id, "seat": id}, "room", "seat")
 	participant := object(map[string]schema{"provider": text, "model": str, "effort": str, "label": str, "role": str, "fork_from": fork}, "provider")
 	all := []tool{
-		{Name: "rt_list_rooms", Description: fmt.Sprintf("최근 갱신순 방 id·제목·모드·실행 여부와 좌석(id·이름·공급사·모델·enabled) 조회. 좌석의 held_until(ms)·held_reason은 한도 오류로 그 시각까지 새 턴이 보류됨, budget_held는 입력 예산 상한으로 보류됨을 뜻함. 삭제된 좌석은 빠지고 enabled:false는 꺼진 좌석. limit 기본 %d, 최대 %d", defaultListRooms, maxListRooms), InputSchema: object(map[string]schema{"limit": integer(1, &roomLimit)})},
-		{Name: "rt_create_room", Description: "새 방 생성. 결과는 방 id와 좌석 목록(id·이름·공급사·모델·enabled). 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용. fork_from {room, seat}을 주면 그 좌석의 세션(공통 문서를 읽힌 기반 세션)을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않음. 포크 좌석은 공급사·모델이 기반 좌석과 같아야 함(생략 시 기반 좌석 값). 작업 폴더·모드는 달라도 됨(다른 worktree면 첫 턴에 두 폴더를 알려 줌). 포크마다 문맥이 따로라 작성·검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않음. agy는 포크 미지원. OpenCode 좌석은 read 모드에서 셸이 없고 작업 폴더 밖을 읽지 못하므로, 시험을 직접 돌리는 검수는 write 모드에 검수 대상 폴더를 작업 폴더로 준다", InputSchema: object(map[string]schema{
-			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}}, "turn_timeout_minutes": integer(0, &maxTurnMinutes),
+		{Name: "rt_list_rooms", Description: fmt.Sprintf("최근 갱신순 방 id·제목·모드·실행 여부와 좌석(id·이름·공급사·모델·enabled) 조회. 좌석의 held_until(ms)·held_reason은 한도 오류로 그 시각까지 새 턴이 보류됨, budget_held는 입력 예산 상한으로 보류됨을 뜻함. 삭제된 좌석은 빠지고 enabled:false는 꺼진 좌석. 보관한 방(rt_archive_rooms)은 실행 중이 아니면 빠지며 include_archived:true면 포함(archived:true). limit 기본 %d, 최대 %d", defaultListRooms, maxListRooms), InputSchema: object(map[string]schema{"limit": integer(1, &roomLimit), "include_archived": {Type: "boolean"}})},
+		{Name: "rt_create_room", Description: "새 방 생성. 결과는 방 id와 좌석 목록(id·이름·공급사·모델·enabled). 참가자의 모델·추론 수준을 생략하면 HTTP API 기본값 사용. fork_from {room, seat}을 주면 그 좌석의 세션(공통 문서를 읽힌 기반 세션)을 복사해 첫 턴을 시작하므로 같은 문서를 다시 읽지 않음. 포크 좌석은 공급사·모델이 기반 좌석과 같아야 함(생략 시 기반 좌석 값). 작업 폴더·모드는 달라도 됨(다른 worktree면 첫 턴에 두 폴더를 알려 줌). 포크마다 문맥이 따로라 작성·검수 좌석을 같은 기반에서 각각 포크해도 서로의 작업을 보지 않음. agy는 포크 미지원. OpenCode 좌석은 read 모드에서 셸이 없고 작업 폴더 밖을 읽지 못하므로, 시험을 직접 돌리는 검수는 write 모드에 검수 대상 폴더를 작업 폴더로 준다. quiet_done:true면 [[REQUEST_DONE]] 완료 신호가 요청한 좌석을 다시 부르지 않음(거절은 부름): 검수 통과 뒤 작성 좌석이 \"승인됐어\"만 쓰며 문맥 전체를 다시 읽는 턴을 없앰. 수정이 필요하면 검수 좌석이 [[REQUEST:@작성]]로 따로 요청함", InputSchema: object(map[string]schema{
+			"title": text, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}}, "turn_timeout_minutes": integer(0, &maxTurnMinutes), "quiet_done": {Type: "boolean"},
 			"participants": {Type: "array", Items: &participant, MinItems: 1},
 		}, "title", "workspace", "mode", "participants")},
 		{Name: "rt_post", Description: "메시지 전송. 결과의 seq는 보낸 메시지 번호. target은 좌석 id(rt_list_rooms의 participants[].id)이며 생략하면 방 규칙대로 전달. wait_seconds(0~600) 생략·0이면 기다리지 않음. 지정하면 이 메시지로 시작된 턴과 연쇄 호출 턴이 끝날 때까지 대기하고 답변도 반환. 실행 중인 대상에 끼워 넣은 입력(steering)이면 그 답의 seq가 보낸 seq보다 낮을 수 있음. 시간 초과(timed_out)는 실행 취소가 아니며, 그때 결과의 resume_after_seq를 rt_read의 after_seq로 써서 이어 읽음", InputSchema: object(map[string]schema{
@@ -75,6 +75,8 @@ func (s *Server) tools() []tool {
 			"rooms": waitList, "timeout_seconds": integer(1, &waitLimit), "max_chars": integer(1, nil), "summary": {Type: "boolean"},
 		}, "rooms")},
 		{Name: "rt_usage", Description: "방별 토큰 사용량 합계와 좌석별 내역. rooms는 쉼표로 이은 방ID. 공급사별 차이를 맞춘 값: input_tokens(처리한 입력 전체)=cached_tokens(캐시 읽기)+uncached_tokens(나머지, 캐시 쓰기 포함), output_tokens, cost_usd(보고하는 공급사만), max_context_tokens(턴의 가장 큰 단일 호출), turns·errors·duration_ms. totals는 지정한 방 전체 합", InputSchema: object(map[string]schema{"rooms": usageList}, "rooms")},
+		{Name: "rt_seats", Description: fmt.Sprintf("여러 방의 활성 좌석 상태를 한 번에 조회. rooms(쉼표로 이은 방ID)를 생략하면 보관하지 않은 최근 방 limit개(기본 %d, 최대 %d). 좌석마다 status(idle·queued·running), ctx(마지막 호출 문맥 토큰)·window(모델 문맥 창), session(이어 쓰는 CLI 세션 유무), turns, held(입력 예산 보류 사유), last_seq·last(최근 %d개 메시지 안의 마지막 답: 상태와 판정·신호 줄, 판정 줄이 없으면 끝 몇 줄). ctx가 수십만이면 다음 일을 배정하기 전에 rt_handoff를 고려", defaultListRooms, maxListRooms, seatsWindow), InputSchema: object(map[string]schema{"rooms": usageList, "limit": integer(1, &roomLimit)})},
+		{Name: "rt_archive_rooms", Description: "여러 방을 한꺼번에 보관(archived:true, 기본)하거나 보관 해제(false). 보관한 방은 rt_list_rooms·rt_seats·화면 목록에서 빠지지만 기록·세션은 그대로이고 계속 쓸 수 있음(삭제가 아님). 실행·대기 중인 턴이 있는 방은 보관하지 않고 failed에 사유를 남김. 결과 archived·failed", InputSchema: object(map[string]schema{"rooms": usageList, "archived": {Type: "boolean"}}, "rooms")},
 		{Name: "rt_version", Description: "실행 중인 Roundtable 빌드와 공개 브랜치 비교(GET /api/version). state: behind면 update_available:true이고 behind_by·commits(최근 5개, 최신순)가 새 커밋. up_to_date·ahead·diverged·unknown_revision(원격에 없는 로컬 커밋)·local_build(빌드에 커밋 정보 없음)·pending·off·error. running.modified는 커밋하지 않은 변경이 있던 빌드. checked_at은 마지막 확인 시각(ms). 서버가 주기적으로 확인한 값을 읽기만 하며 GitHub를 직접 부르지 않음", InputSchema: object(map[string]schema{})},
 		{Name: "rt_discuss", Description: "토론 시작. blind_first 생략 시 방의 기본 설정 사용. 좌석들이 이미 같은 질문에 답했다면 블라인드 1라운드는 독립 답을 다시 받느라 호출을 좌석 수(N)만큼 더 쓰므로 blind_first:false를 고려", InputSchema: object(map[string]schema{
 			"room": id, "rounds": integer(1, nil), "blind_first": {Type: "boolean"},
@@ -88,10 +90,10 @@ func (s *Server) tools() []tool {
 		{Name: "rt_cancel_turn", Description: "좌석의 실행 중인 턴 하나만 취소. 좌석은 켜진 채로 남아 이후 [[REQUEST]]·멘션·대기 턴을 계속 받음(웹의 '작업 중단'은 좌석까지 끔). 실행 중인 턴이 없으면 오류. 결과의 cancelled는 취소한 턴 id", InputSchema: object(map[string]schema{"room": id, "seat": id}, "room", "seat")},
 		{Name: "rt_apply_markers", Description: "오류로 끝난 좌석 답(seq)의 마커([[REQUEST]]·[[REQUEST_DONE]]·[[DECISION]]·[[ATTACH]])를 실행. 서버는 오류 턴의 마커를 스스로 처리하지 않고 시스템 안내로 알림. 답이 끝까지 쓰인 것을 확인했을 때만 호출(예: 답 뒤에 stream idle timeout). 한 번만 실행되며 결과의 message.requests가 새 요청", InputSchema: object(map[string]schema{"room": id, "seq": integer(1, nil)}, "room", "seq")},
 		{Name: "rt_decisions", Description: "결정 카드 목록 조회. status: proposed(좌석이 제안, 확정 대기)·active(안내문의 현재 결정)·superseded·dropped", InputSchema: object(map[string]schema{"room": id}, "room")},
-		{Name: "rt_update_room", Description: "방 설정 수정. 생략한 항목은 그대로이며 하나 이상 필요. 작업 폴더(git worktree)가 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 workspace를 새 폴더로 바꾼다. 실행 중인 턴에는 다음 턴부터 적용. 사용량 경보·상한: input_warn_tokens(좌석 누적 입력 경고 간격, 0=기본 1천만, -1=끔), context_warn_percent(문맥 경보 비율, 0=기본 70, -1=끔), seat_input_budget·room_input_budget(누적 입력 상한 토큰, 0=없음; 넘으면 그 좌석·방의 새 턴을 시작하지 않고 시스템 안내로 이유를 남김, 메시지는 상한을 올린 뒤 다음 턴에 전달), compact_window_tokens(Claude 좌석이 세션을 이 문맥 크기에서 자동 압축, 0=CLI 기본, 100000~1000000; 긴 세션의 입력을 줄이지만 압축 호출만큼 턴이 길어짐)", InputSchema: object(map[string]schema{
+		{Name: "rt_update_room", Description: "방 설정 수정. 생략한 항목은 그대로이며 하나 이상 필요. 작업 폴더(git worktree)가 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 workspace를 새 폴더로 바꾼다. 실행 중인 턴에는 다음 턴부터 적용. 사용량 경보·상한: input_warn_tokens(좌석 누적 입력 경고 간격, 0=기본 1천만, -1=끔), context_warn_percent(문맥 경보 비율, 0=기본 70, -1=끔), seat_input_budget·room_input_budget(누적 입력 상한 토큰, 0=없음; 넘으면 그 좌석·방의 새 턴을 시작하지 않고 시스템 안내로 이유를 남김, 메시지는 상한을 올린 뒤 다음 턴에 전달), compact_window_tokens(Claude 좌석이 세션을 이 문맥 크기에서 자동 압축, 0=CLI 기본, 100000~1000000; 긴 세션의 입력을 줄이지만 압축 호출만큼 턴이 길어짐), quiet_done(완료 신호가 요청자를 다시 부르지 않음, rt_create_room 참고), archived(방 보관·해제, 여러 방은 rt_archive_rooms)", InputSchema: object(map[string]schema{
 			"room": id, "title": text, "note": str, "workspace": str, "mode": {Type: "string", Enum: []string{"chat", "read", "write"}},
 			"turn_timeout_minutes": integer(0, &maxTurnMinutes), "input_warn_tokens": integer(-1, nil), "seat_input_budget": integer(0, nil), "room_input_budget": integer(0, nil), "context_warn_percent": integer(-1, &maxPercent),
-			"compact_window_tokens": integer(0, &maxCompactWindow),
+			"compact_window_tokens": integer(0, &maxCompactWindow), "quiet_done": {Type: "boolean"}, "archived": {Type: "boolean"},
 		}, "room")},
 		{Name: "rt_update_decision", Description: "결정 카드 수정·상태 변경. 좌석이 [[DECISION]]으로 남긴 proposed 카드는 status active로 확정, dropped로 거절. 생략한 항목은 그대로이며 하나 이상 필요", InputSchema: object(map[string]schema{
 			"room": id, "id": id, "status": {Type: "string", Enum: []string{"active", "superseded", "dropped"}},
@@ -100,7 +102,7 @@ func (s *Server) tools() []tool {
 	}
 	out := make([]tool, 0, len(all))
 	for _, t := range all {
-		read := slices.Contains([]string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_version", "rt_requests", "rt_decisions"}, t.Name)
+		read := slices.Contains([]string{"rt_list_rooms", "rt_read", "rt_wait", "rt_usage", "rt_seats", "rt_version", "rt_requests", "rt_decisions"}, t.Name)
 		if s.readOnly && !read {
 			continue
 		}
@@ -207,6 +209,9 @@ type arguments struct {
 	Note               string             `json:"note"`
 	ID                 string             `json:"id"`
 	Fresh              bool               `json:"fresh"`
+	IncludeArchived    bool               `json:"include_archived"`
+	QuietDone          bool               `json:"quiet_done"`
+	Archived           *bool              `json:"archived"`
 }
 
 const (
@@ -247,7 +252,7 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 	base := "/api/rooms/" + a.Room
 	switch name {
 	case "rt_list_rooms":
-		return s.listRooms(ctx, a.Limit)
+		return s.listRooms(ctx, a.Limit, a.IncludeArchived)
 	case "rt_create_room":
 		if a.Mode != "chat" && strings.TrimSpace(a.Workspace) == "" {
 			return nil, fmt.Errorf("read/write 모드는 workspace가 필요함")
@@ -256,7 +261,7 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 			ID           string `json:"id"`
 			Participants []seat `json:"participants"`
 		}
-		err := s.api(ctx, "POST", "/api/rooms", map[string]any{"title": a.Title, "workspace": a.Workspace, "mode": a.Mode, "participant_specs": a.Participants, "turn_timeout_minutes": a.TurnTimeoutMinutes}, &created)
+		err := s.api(ctx, "POST", "/api/rooms", map[string]any{"title": a.Title, "workspace": a.Workspace, "mode": a.Mode, "participant_specs": a.Participants, "turn_timeout_minutes": a.TurnTimeoutMinutes, "quiet_done": a.QuietDone}, &created)
 		if err != nil {
 			return nil, err
 		}
@@ -287,6 +292,20 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 		return res, err
 	case "rt_usage":
 		return s.usage(ctx, a.Rooms)
+	case "rt_seats":
+		return s.seats(ctx, a.Rooms, a.Limit)
+	case "rt_archive_rooms":
+		archived := a.Archived == nil || *a.Archived
+		done, failed := []string{}, map[string]string{}
+		for _, id := range strings.Split(a.Rooms, ",") {
+			var result json.RawMessage
+			if err := s.api(ctx, "PATCH", "/api/rooms/"+id, map[string]any{"archived": archived}, &result); err != nil {
+				failed[id] = err.Error()
+				continue
+			}
+			done = append(done, id)
+		}
+		return map[string]any{"archived": archived, "rooms": done, "failed": failed}, nil
 	case "rt_version":
 		var result json.RawMessage
 		err := s.api(ctx, "GET", "/api/version", nil, &result)
@@ -364,7 +383,7 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 			}
 		}
 		if len(body) == 0 {
-			return nil, fmt.Errorf("바꿀 항목(title·note·workspace·mode)이 하나 이상 필요함")
+			return nil, fmt.Errorf("바꿀 항목(title·note·workspace·mode 등)이 하나 이상 필요함")
 		}
 		var result json.RawMessage
 		err := s.api(ctx, "PATCH", base, body, &result)

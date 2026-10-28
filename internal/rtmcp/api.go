@@ -135,13 +135,20 @@ type listSeat struct {
 
 // listRooms keeps the server's newest-first order. Removed seats are left out:
 // they cannot be addressed, and rt_read names their past messages.
-func (s *Server) listRooms(ctx context.Context, limit int) (any, error) {
-	var rooms []struct {
-		ID     string `json:"id"`
-		Active bool   `json:"active"`
+func (s *Server) listRooms(ctx context.Context, limit int, includeArchived bool) (any, error) {
+	var listed []struct {
+		ID       string `json:"id"`
+		Active   bool   `json:"active"`
+		Archived bool   `json:"archived"`
 	}
-	if err := s.api(ctx, "GET", "/api/rooms", nil, &rooms); err != nil {
+	if err := s.api(ctx, "GET", "/api/rooms", nil, &listed); err != nil {
 		return nil, err
+	}
+	rooms := listed[:0]
+	for _, room := range listed {
+		if includeArchived || !room.Archived || room.Active {
+			rooms = append(rooms, room)
+		}
 	}
 	if len(rooms) > limit {
 		rooms = rooms[:limit]
@@ -162,7 +169,11 @@ func (s *Server) listRooms(ctx context.Context, limit int) (any, error) {
 				seats = append(seats, listSeat{ID: sp.ID, Label: sp.Label, Provider: sp.Provider, Model: sp.Model, Enabled: sp.Enabled, HeldUntil: sp.HoldUntil, HeldReason: sp.HoldReason, BudgetHeld: sp.BudgetHeld})
 			}
 		}
-		rows = append(rows, map[string]any{"id": room.ID, "title": p.Room.Title, "mode": p.Room.Mode, "participants": seats, "active": room.Active})
+		row := map[string]any{"id": room.ID, "title": p.Room.Title, "mode": p.Room.Mode, "participants": seats, "active": room.Active}
+		if room.Archived {
+			row["archived"] = true
+		}
+		rows = append(rows, row)
 	}
 	return map[string]any{"rooms": rows}, nil
 }

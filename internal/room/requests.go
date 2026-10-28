@@ -137,6 +137,9 @@ func (h *Hub) beginRequests(rs *roomState, pr *prepared) {
 		}
 		pr.requests = append(pr.requests, r.ID)
 		pr.opts.Prompt += fmt.Sprintf("\n[요청 %s from @%s: %s] 응답 끝 신호 블록에 한 줄씩: [[REQUEST_DONE:%s]] 또는 [[REQUEST_REJECT:%s]] 이유", r.ID, r.From, r.Text, r.ID, r.ID)
+		if rs.room.QuietDone {
+			pr.opts.Prompt += fmt.Sprintf(" · 이 방에서 완료 신호는 @%s를 다시 부르지 않습니다. @%s가 이어서 할 일(수정 등)이 있으면 [[REQUEST:@%s]]로 따로 요청하세요.", r.From, r.From, r.From)
+		}
 	}
 }
 

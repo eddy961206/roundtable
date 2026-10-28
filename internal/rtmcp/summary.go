@@ -10,11 +10,16 @@ import (
 var verdictLine = regexp.MustCompile(`(?i)(판정|결론|verdict)\s*(\([^)\n]*\))?\s*[:：]`)
 var fenceLine = regexp.MustCompile("^\\s*(```|~~~)")
 
+// summaryTail is how many closing prose lines stand in for a missing verdict.
+const summaryTail = 3
+
 // summarizeText keeps, in order, the verdict lines and the marker/signal lines
-// ([[...]], WORK:DONE) outside code fences: what decides the next step.
+// ([[...]], WORK:DONE) outside code fences: what decides the next step. An
+// answer without a verdict line (e.g. a writer reporting progress) keeps its
+// last prose lines instead, so the summary is never empty for a real answer.
 func summarizeText(text string) string {
-	var keep []string
-	fenced := false
+	var keep, prose []string
+	verdict, fenced := false, false
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if fenceLine.MatchString(line) {
@@ -24,9 +29,18 @@ func summarizeText(text string) string {
 		if fenced || trimmed == "" {
 			continue
 		}
-		if strings.HasPrefix(trimmed, "[[") || trimmed == "WORK:DONE" || verdictLine.MatchString(trimmed) {
+		switch {
+		case verdictLine.MatchString(trimmed):
+			verdict = true
 			keep = append(keep, trimmed)
+		case strings.HasPrefix(trimmed, "[[") || trimmed == "WORK:DONE":
+			keep = append(keep, trimmed)
+		default:
+			prose = append(prose, trimmed)
 		}
+	}
+	if !verdict {
+		keep = append(prose[max(0, len(prose)-summaryTail):], keep...)
 	}
 	return strings.Join(keep, "\n")
 }

@@ -219,7 +219,8 @@ type RoomSpec struct {
 	// BlindFirstDefault is nil when omitted; new rooms then start discussions blind.
 	BlindFirstDefault *bool `json:"blind_first_default"`
 	// TurnTimeoutMinutes is the longest a turn may run; 0 is the default (turn_timeout.go).
-	TurnTimeoutMinutes int `json:"turn_timeout_minutes"`
+	TurnTimeoutMinutes int  `json:"turn_timeout_minutes"`
+	QuietDone          bool `json:"quiet_done"`
 }
 
 func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
@@ -242,7 +243,7 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 		}
 		spec.Workspace = absolute
 	}
-	r := &Room{ID: newID(), Title: spec.Title, CreatedAt: nowMs(), UpdatedAt: nowMs(), Workspace: spec.Workspace, Mode: spec.Mode, Note: spec.Note, MaxChain: spec.MaxChain, DiscussionRounds: spec.DiscussionRounds, Persona: spec.Persona, BlindFirstDefault: true, TurnTimeoutMinutes: spec.TurnTimeoutMinutes}
+	r := &Room{ID: newID(), Title: spec.Title, CreatedAt: nowMs(), UpdatedAt: nowMs(), Workspace: spec.Workspace, Mode: spec.Mode, Note: spec.Note, MaxChain: spec.MaxChain, DiscussionRounds: spec.DiscussionRounds, Persona: spec.Persona, BlindFirstDefault: true, TurnTimeoutMinutes: spec.TurnTimeoutMinutes, QuietDone: spec.QuietDone}
 	if spec.BlindFirstDefault != nil {
 		r.BlindFirstDefault = *spec.BlindFirstDefault
 	}
@@ -314,6 +315,7 @@ type RoomSummary struct {
 	Mode      string `json:"mode"`
 	Messages  int    `json:"messages"`
 	Active    bool   `json:"active"`
+	Archived  bool   `json:"archived,omitempty"`
 }
 
 func (h *Hub) Rooms() []RoomSummary {
@@ -328,7 +330,7 @@ func (h *Hub) Rooms() []RoomSummary {
 }
 
 func (rs *roomState) summary() RoomSummary {
-	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0}
+	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0, Archived: rs.room.Archived}
 }
 
 func sortSummaries(s []RoomSummary) {
@@ -431,6 +433,8 @@ type RoomPatch struct {
 	ContextWarnPercent  *int               `json:"context_warn_percent,omitempty"`
 	TurnTimeoutMinutes  *int               `json:"turn_timeout_minutes,omitempty"`
 	CompactWindowTokens *int               `json:"compact_window_tokens,omitempty"`
+	QuietDone           *bool              `json:"quiet_done,omitempty"`
+	Archived            *bool              `json:"archived,omitempty"`
 	Participants        []ParticipantPatch `json:"participants,omitempty"`
 }
 
@@ -525,6 +529,15 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	}
 	if patch.BlindFirstDefault != nil {
 		next.BlindFirstDefault = *patch.BlindFirstDefault
+	}
+	if patch.QuietDone != nil {
+		next.QuietDone = *patch.QuietDone
+	}
+	if patch.Archived != nil {
+		if *patch.Archived && (len(rs.running) > 0 || len(rs.queue) > 0) {
+			return nil, fmt.Errorf("실행·대기 중인 턴이 있는 방은 보관할 수 없음")
+		}
+		next.Archived = *patch.Archived
 	}
 	patched := map[string]bool{}
 	for _, pp := range patch.Participants {
@@ -887,7 +900,18 @@ func (h *Hub) saveRoom(rs *roomState) error {
 }
 
 func (h *Hub) addSystem(rs *roomState, text string) (*Message, error) {
+	return h.appendSystem(rs, rs.nextMessage("system", "system", text))
+}
+
+// addUserNotice records a system message for people and the orchestrator only;
+// seats never read it (deltaForContext).
+func (h *Hub) addUserNotice(rs *roomState, text string) (*Message, error) {
 	m := rs.nextMessage("system", "system", text)
+	m.UserOnly = true
+	return h.appendSystem(rs, m)
+}
+
+func (h *Hub) appendSystem(rs *roomState, m *Message) (*Message, error) {
 	if err := h.store.AppendMessage(rs.room.ID, m); err != nil {
 		rs.msgs = rs.msgs[:len(rs.msgs)-1]
 		// Keep the sequence reserved: a write/close error may follow a partial append.
@@ -1914,9 +1938,9 @@ func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, part
 		if m.Status == "cancelled" && m.Text == "" {
 			continue
 		}
-		if m.NoticeFor == p.ID {
+		if m.NoticeFor == p.ID || m.UserOnly {
 			continue
-		} // delivered separately, regardless of cap or history trimming
+		} // a seat notice is delivered separately, regardless of cap or history trimming
 		out = append(out, m)
 	}
 	return out, seen, unseen
@@ -1937,10 +1961,11 @@ func (h *Hub) chainMentions(rs *roomState, msg *Message, t *Turn) {
 			targets = append(targets, r.To)
 		}
 	}
-	// A result is a new trigger for its requester, even without an explicit @.
+	// A result is a new trigger for its requester, even without an explicit @,
+	// except a completion in a quiet_done room.
 	// Merge with ordinary mentions and other results before applying max_chain.
 	for _, r := range rs.requests {
-		if r.ResultMsg != msg.ID || (r.Status != "done" && r.Status != "rejected") || slices.Contains(targets, r.From) {
+		if r.ResultMsg != msg.ID || (r.Status != "done" && r.Status != "rejected") || (r.Status == "done" && rs.room.QuietDone) || slices.Contains(targets, r.From) {
 			continue
 		}
 		if p := rs.room.participant(r.From); p != nil && p.Enabled && !p.Removed && p.ID != msg.Author {

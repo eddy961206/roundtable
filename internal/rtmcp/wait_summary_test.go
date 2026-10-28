@@ -59,12 +59,12 @@ func TestWaitSummaryKeepsVerdictAndSignals(t *testing.T) {
 
 func TestSummarizeTextEdges(t *testing.T) {
 	for in, want := range map[string]string{
-		"설명만 있고 판정 없음":                  "",
+		"설명만 있고 판정 없음":                  "설명만 있고 판정 없음", // no verdict: the closing prose lines stand in
 		"Verdict: approve\n본문":          "Verdict: approve",
 		"본문\n결론: 승인\n\nWORK:DONE":       "결론: 승인\nWORK:DONE",
 		"```\n판정: 코드 안\n```\n판정(x): 승인": "판정(x): 승인",
-		"[[REQUEST:@a]] 중간 마커\n본문 끝":    "[[REQUEST:@a]] 중간 마커", // the server acts on marker lines anywhere
-		"본문\n[[REQUEST_DONE:r1]]\n\n":   "[[REQUEST_DONE:r1]]",
+		"[[REQUEST:@a]] 중간 마커\n본문 끝":    "본문 끝\n[[REQUEST:@a]] 중간 마커", // the server acts on marker lines anywhere
+		"본문\n[[REQUEST_DONE:r1]]\n\n":   "본문\n[[REQUEST_DONE:r1]]",
 	} {
 		if got := summarizeText(in); got != want {
 			t.Errorf("%q\n got %q\nwant %q", in, got, want)
