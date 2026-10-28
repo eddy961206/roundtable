@@ -10,8 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// codexExitGrace is how long a codex process may stay after turn.completed.
+var codexExitGrace = 60 * time.Second
 
 // Codex runs `codex exec --json` and watches ~/.codex/sessions for sub-agent threads.
 type Codex struct {
@@ -191,7 +195,28 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 			}
 		}
 	}()
-	stderr, runErr := runLines(ctx, cmd, codexPrompt(o), func(line string) { p.Line(line, emit) })
+	// codex exec가 turn.completed 뒤에도 끝나지 않는 일이 있다(2026-10-28: 턴 안에서 띄운 Gradle 데몬이
+	// 출력 핸들을 물려받아 1시간 45분 동안 턴이 닫히지 않음). 완료를 본 뒤 유예가 지나면 정리하고 완료로 닫는다.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	var lingerTimer *time.Timer
+	var lingered atomic.Bool
+	stderr, runErr := runLines(runCtx, cmd, codexPrompt(o), func(line string) {
+		p.Line(line, emit)
+		if p.completed && lingerTimer == nil {
+			lingerTimer = time.AfterFunc(codexExitGrace, func() {
+				lingered.Store(true)
+				cancelRun()
+			})
+		}
+	})
+	if lingerTimer != nil {
+		lingerTimer.Stop()
+	}
+	if lingered.Load() && ctx.Err() == nil {
+		runErr = nil
+		stderr += fmt.Sprintf("\n[roundtable] codex가 완료 뒤 %s 동안 끝나지 않아 프로세스를 정리함", codexExitGrace)
+	}
 	close(stop)
 	<-watchDone
 	if id := p.threadID(); id != "" {

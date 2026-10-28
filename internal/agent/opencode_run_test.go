@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // With this variable set the test binary acts as `opencode run`: it prints the
@@ -14,9 +15,10 @@ import (
 const fakeOpenCodeEnv = "ROUNDTABLE_FAKE_OPENCODE"
 
 type fakeOpenCode struct {
-	Stdout []string
-	Stderr string
-	Exit   int
+	Stdout  []string
+	Stderr  string
+	Exit    int
+	SleepMs int // stay alive after printing, like a CLI that does not exit
 }
 
 func TestMain(m *testing.M) {
@@ -30,6 +32,7 @@ func TestMain(m *testing.M) {
 			fmt.Println(line)
 		}
 		fmt.Fprint(os.Stderr, f.Stderr)
+		time.Sleep(time.Duration(f.SleepMs) * time.Millisecond)
 		os.Exit(f.Exit)
 	}
 	os.Exit(m.Run())
