@@ -27,11 +27,13 @@ Roundtable은 서로 다른 공급사의 AI CLI가 한 방에서 대화·리뷰�
 4. `timed_out:true`는 실행 취소가 아니다. 다시 보내지 말고 결과의 `resume_after_seq`로 `rt read --after_seq`를 실행한다.
 5. 서버 교체는 사람이 허락한 경우에만, `install` 다음 `restart`로만 한다.
 6. 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 명령은 사람에게 확인받는다.
-7. 좌석 세션이 길어지면(문맥 경보, 작업이 바뀌는 지점) `rt handoff --room <방> --seat <좌석>`으로 인계 요약을 남기고 새 세션으로 바꾼다. 모델 호출마다 문맥 전체를 다시 읽으므로 긴 세션은 턴마다 비싸진다.
+7. 좌석 세션이 길어지면(문맥 경보, 작업이 바뀌는 지점) `rt handoff --room <방> --seat <좌석>`으로 인계 요약을 남기고 새 세션으로 바꾼다. 모델 호출마다 문맥 전체를 다시 읽으므로 긴 세션은 턴마다 비싸진다. 여러 방의 좌석 문맥은 `rt seats`로 한 번에 본다.
 8. 409 "작업 폴더 사용 중"은 같은 폴더의 다른 방이 끝난 뒤 다시 보낸다. 한도 오류 보류(`held_until`)·입력 예산 보류(`budget_held`) 안내가 나오면 같은 좌석으로 곧장 재시도하지 말고 안내의 다음 행동을 따른다.
+9. 작성·검수 방은 `create_room --quiet_done true`로 만든다. 검수 통과(`[[REQUEST_DONE]]`) 뒤 작성 좌석이 "승인됐어"만 쓰며 문맥 전체를 다시 읽는 턴이 없어진다. 수정은 검수 좌석의 `[[REQUEST:@작성]]`으로 그대로 돈다.
+10. 끝난 방은 `rt archive_rooms --rooms <방>,...`으로 보관한다(목록에서만 숨김, 기록·세션 유지). 삭제는 사람에게 확인받는다.
 
 ## 기본 흐름
-1. `roundtable rt list_rooms --limit 5` — 방과 좌석 id 확인. 알맞은 방이 없으면 `create_room`(같은 프로젝트의 여러 작업이면 안내서의 기반 세션 포크).
+1. `roundtable rt list_rooms --limit 5` — 방과 좌석 id 확인. 좌석 상태·문맥 크기·마지막 답 요약은 `roundtable rt seats --rooms <방>,...`. 알맞은 방이 없으면 `create_room`(같은 프로젝트의 여러 작업이면 안내서의 기반 세션 포크).
 2. `roundtable rt post --room <방> --target <좌석> --text - < 지시.md` — 보낸 메시지의 `seq`를 받는다. 한 방만 짧게 기다릴 때는 `--wait_seconds 300`.
 3. `roundtable rt wait --rooms <방A>:<seqA>,<방B>:<seqB> --timeout_seconds 3600` — 먼저 끝난 방의 새 답(`ready[]`)과 남은 방(`waiting`)을 받는다. 셸 제한보다 길면 백그라운드로 실행한다. 폴링하지 않는다.
 4. `roundtable rt read --room <방> --after_seq <seq>` — 답 원문. `roundtable rt usage --rooms <방>` — 좌석별 토큰.

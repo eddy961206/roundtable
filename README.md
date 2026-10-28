@@ -49,6 +49,25 @@ Windows에서는 Hyper-V·WinNAT 등이 기본 포트 8787을 예약 범위로 �
 
 `restart`를 실행한 셸이 새 서버 프로세스가 되므로, 서버를 원래 띄우던 방식(백그라운드 셸, 서비스 등)으로 실행한다.
 
+### 로그인할 때 자동으로 띄우기 (Windows, 선택)
+
+노트북을 재시작하면 서버는 꺼진 채로 남는다. 로그인할 때 띄우려면 작업 스케줄러에 등록한다. 시스템 설정을 바꾸는 일이라 roundtable이 스스로 등록하지 않는다.
+
+1. 서버를 띄우는 명령을 정한다. 지금 쓰는 인자를 그대로 쓴다. 예: `"<roundtable 폴더>\roundtable.exe" -addr 127.0.0.1:18787`
+2. PowerShell에서 작업을 등록한다. 창 없이 현재 사용자로 로그인할 때 한 번 실행한다.
+
+   ```powershell
+   $action  = New-ScheduledTaskAction -Execute '<roundtable 폴더>\roundtable.exe' -Argument '-addr 127.0.0.1:18787' -WorkingDirectory '<roundtable 폴더>'
+   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+   $setting = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+   Register-ScheduledTask -TaskName 'Roundtable' -Action $action -Trigger $trigger -Settings $setting
+   ```
+
+3. 확인은 `Start-ScheduledTask -TaskName Roundtable` 뒤 `http://127.0.0.1:18787`을 연다. 끄려면 `Unregister-ScheduledTask -TaskName Roundtable`.
+
+- `-ExecutionTimeLimit 0`이 없으면 작업 스케줄러가 3일 뒤 서버를 끈다.
+- 새 빌드 교체는 위와 같다. `restart`로 뜬 새 서버는 작업 스케줄러가 아니라 `restart`를 실행한 셸에서 돈다. 다음 로그인부터 다시 작업 스케줄러가 띄운다.
+
 ### 새 업데이트 알림
 
 서버는 시작할 때 한 번, 그 뒤로 6시간마다 실행 중인 빌드의 커밋과 공개 저장소의 `main`을 비교한다. 비교에는 GitHub API `GET /repos/eddy961206/roundtable/compare/<실행 커밋>...main`을 인증 없이 한 번 부른다. 앞 응답의 `ETag`를 `If-None-Match`로 보내 바뀌지 않았으면 304를 받는다. 밖으로 나가는 것은 이 요청 하나다(헤더는 `User-Agent: roundtable-update-check`와 GitHub API 버전뿐). 네트워크나 API가 실패해도 서버 동작은 바뀌지 않고 상태에 오류만 남는다.

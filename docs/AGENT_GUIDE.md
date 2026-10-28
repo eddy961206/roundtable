@@ -32,20 +32,22 @@
 
 | 명령 | 언제 쓰나 |
 |---|---|
-| `list_rooms [--limit N]` | 방 id·좌석 id·`enabled`를 찾을 때. 좌석은 이름이 아니라 id로 부른다. |
-| `create_room --title --workspace --mode --participants '<JSON>' [--turn_timeout_minutes N]` | 작업 하나에 방 하나를 만들 때. `participants[]`는 `provider`·`model`·`effort`·`label`·`role`·`fork_from`. 결과의 좌석 id를 적어 둔다. 긴 작성 턴이 예상되면 턴 시간 상한(5~720분, 기본 45)을 늘린다. |
+| `list_rooms [--limit N] [--include_archived true]` | 방 id·좌석 id·`enabled`를 찾을 때. 좌석은 이름이 아니라 id로 부른다. 보관한 방은 실행 중이 아니면 빠진다. |
+| `seats [--rooms <방>,...] [--limit N]` | 여러 방의 좌석 상태를 한 번에 볼 때. 좌석마다 `status`(idle·queued·running), `ctx`(마지막 호출 문맥)·`window`, `session`(이어 쓰는 세션 유무), `turns`, `last_seq`·`last`(최근 40개 메시지 안의 마지막 답: 상태와 판정·신호 줄, 판정 줄이 없으면 끝 3줄)가 나온다. `--rooms`를 빼면 보관하지 않은 최근 방 `limit`개(기본 20). 다음 일을 배정하기 전 인계할 좌석을 고를 때 쓴다. |
+| `create_room --title --workspace --mode --participants '<JSON>' [--turn_timeout_minutes N] [--quiet_done true]` | 작업 하나에 방 하나를 만들 때. `participants[]`는 `provider`·`model`·`effort`·`label`·`role`·`fork_from`. 결과의 좌석 id를 적어 둔다. 긴 작성 턴이 예상되면 턴 시간 상한(5~720분, 기본 45)을 늘린다. 작성·검수 방이면 `--quiet_done true`를 준다(6.2). |
 | `post --room --text [--target <좌석>] [--wait_seconds N]` | 지시를 보낼 때. 여러 방이면 `--wait_seconds` 없이 보내고 `seq`를 모은다. |
 | `read --room [--after_seq N] [--max_chars N]` | 답 원문을 읽을 때. `after_seq`보다 큰 seq만 나온다. 생략하면 최신부터 20000자다. |
-| `wait --rooms <방>:<seq>,... [--timeout_seconds N] [--summary true]` | 여러 방 중 먼저 끝난 방을 기다릴 때. 서버 SSE로 깨어나 폴링이 없다. `--summary true`면 좌석 답마다 판정 줄(`판정`·`결론`·`verdict` 뒤 `:`)과 마커·신호 줄만 받고 `chars`로 원래 길이를 본다. |
+| `wait --rooms <방>:<seq>,... [--timeout_seconds N] [--summary true]` | 여러 방 중 먼저 끝난 방을 기다릴 때. 서버 SSE로 깨어나 폴링이 없다. `--summary true`면 좌석 답마다 판정 줄(`판정`·`결론`·`verdict` 뒤 `:`)과 마커·신호 줄만 받고 `chars`로 원래 길이를 본다. 판정 줄이 없는 답(진행 보고 등)은 끝 산문 3줄이 판정 대신 남는다. |
 | `forward --room <받는 방> --from_room <방> --seq N [--target <좌석>] [--note "한 줄"]` | 다른 방의 답(검수 결과 등)을 원문 그대로 넘길 때. 받는 좌석 이력에 출처(방·#seq·작성자)가 붙고, 원문 속 @멘션·마커는 실행되지 않는다. 받은 좌석이 원문을 답에 인용할 때는 ``` 코드 블록 안에 둔다. 코드 블록 밖에 다시 적은 `[[REQUEST]]`·`[[ATTACH]]`·`[[DECISION]]` 줄은 그 좌석 자신의 마커로 실행된다. |
 | `usage --rooms <방>,...` | 좌석·방별 토큰(`input`=`cached`+`uncached`, `output`, `max_context_tokens`, `turns`, `errors`)을 볼 때. `messages.jsonl`을 직접 파싱하지 않는다. |
-| `update_room --room [--title] [--note] [--workspace] [--mode] [--seat_input_budget N] [--room_input_budget N] [--input_warn_tokens N] [--context_warn_percent N] [--turn_timeout_minutes N] [--compact_window_tokens N]` | 방 메모(협업 규칙)를 바꾸거나, 지워진 worktree 대신 새 작업 폴더를 줄 때. 좌석·방 누적 입력 상한(0=없음), 누적 입력 경고 간격(0=1천만, -1=끔), 문맥 경보 비율(0=70, -1=끔), Claude 좌석 자동 압축 기준 `compact_window_tokens`(0=CLI 기본, 100000~1000000)도 여기서 정한다. 압축 기준은 긴 세션의 입력을 줄이지만 턴이 길어진다(A/B -38% 입력, +57% 시간). |
+| `update_room --room [--title] [--note] [--workspace] [--mode] [--seat_input_budget N] [--room_input_budget N] [--input_warn_tokens N] [--context_warn_percent N] [--turn_timeout_minutes N] [--compact_window_tokens N] [--quiet_done true\|false] [--archived true\|false]` | 방 메모(협업 규칙)를 바꾸거나, 지워진 worktree 대신 새 작업 폴더를 줄 때. 좌석·방 누적 입력 상한(0=없음), 누적 입력 경고 간격(0=1천만, -1=끔), 문맥 경보 비율(0=70, -1=끔), Claude 좌석 자동 압축 기준 `compact_window_tokens`(0=CLI 기본, 100000~1000000)도 여기서 정한다. 압축 기준은 긴 세션의 입력을 줄이지만 턴이 길어진다(A/B -38% 입력, +57% 시간). |
 | `discuss --room --rounds N [--blind_first false]` | 여러 모델 의견을 라운드로 겨루게 할 때. 이미 같은 질문에 답했으면 `--blind_first false`. |
 | `requests --room` / `cancel_request --room --request` | 좌석 간 `[[REQUEST]]`의 상태를 보거나, 잘못 나간 요청을 취소할 때. |
 | `handoff --room --seat [--note "한 줄"] [--fresh true]` | 한 좌석의 세션이 길어졌을 때(문맥 경보, 작업이 바뀌는 지점). 좌석이 지금 세션에서 인계 요약(근거 위치·결정·남은 일·다음 할 일)을 쓰고, 다음 턴부터 그 요약과 이후 메시지만 든 새 세션을 쓴다. 기반에서 포크한 좌석은 기반을 다시 포크한다(`--fresh true`면 기반 없이). 결과의 `seq`로 `wait`. 조용한 좌석만 받는다: 실행·대기 중인 턴, 미완료 파트, 토론, 한도·예산 보류, 이미 인계됨, 세션 없음, 기반 방 삭제(`--fresh true` 필요)면 사유와 함께 거절한다. 요약 턴은 끼어들기·요청·마커를 처리하지 않고, 인계 뒤 첫 턴이 전달될 때까지 매 턴 새 세션이 요약부터 시작한다. 2026-10-28 A/B에서 다음 검수·수정 턴 입력이 43% 줄었고 결함 발견·수정 결과는 같았다(`docs/토큰효율_측정_20261028.md`). |
 | `cancel_turn --room --seat` | 좌석의 실행 중인 턴 하나만 멈출 때(중복 턴 등). 좌석은 켜진 채로 남아 요청을 계속 받는다. |
 | `apply_markers --room --seq N` | 오류로 끝난 답(`pending_markers` 있음)이 끝까지 쓰였음을 확인한 뒤 그 답의 마커를 한 번 실행할 때. |
 | `decisions --room` / `update_decision --room --id --status active\|dropped` | 좌석이 남긴 결정 카드(`proposed`)를 확인하고 확정·거절할 때. AGREE는 검증이 아니다. |
+| `archive_rooms --rooms <방>,... [--archived false]` | 끝난 방을 목록에서 숨길 때(보관). 기록·세션은 남고 계속 쓸 수 있다. 실행·대기 중인 방은 `failed`에 사유가 남는다. `--archived false`는 보관 해제. 되돌릴 수 없는 삭제 대신 이것을 쓴다(6.5). |
 | `version` | 실행 중인 빌드가 공개 main보다 뒤처졌는지 볼 때. |
 
 **읽기·기다리기 세부**
@@ -69,7 +71,7 @@
 | 방 전체 중지 | `POST /api/rooms/{방}/stop` | 실행 중인 턴과 대기열을 모두 비운다. |
 | 좌석 제거 | `DELETE /api/rooms/{방}/participants/{좌석}` | 기록·사용량은 남고 다시 부를 수 없다. |
 | 방 세션 초기화 | `POST /api/rooms/{방}/reset` | 모든 좌석이 다음 턴에 새 세션으로 시작한다. |
-| 방 삭제 | `DELETE /api/rooms/{방}` | 기록까지 지운다. 되돌릴 수 없다. 사람에게 확인받는다. |
+| 방 삭제 | `DELETE /api/rooms/{방}` | 기록까지 지운다. 되돌릴 수 없다. 사람에게 확인받는다. 목록을 줄이려면 `rt archive_rooms`(보관)를 쓴다. |
 | 공급사·모델 목록 | `GET /api/providers[?refresh=true]` | 5절 능력표의 근거. |
 | 방 원문·대기열 | `GET /api/rooms/{방}?limit=N` | 메시지·좌석·요청·대기열 스냅샷. |
 
@@ -180,7 +182,7 @@ roundtable 방과 Gitea PR을 오케스트레이터 한 명이 이어 붙일 때
 만드는 명령 예시:
 
 ```bash
-roundtable rt --url http://127.0.0.1:8787 create_room --title "작업 X" --workspace <작업 X worktree> --mode write \
+roundtable rt --url http://127.0.0.1:8787 create_room --title "작업 X" --workspace <작업 X worktree> --mode write --quiet_done true \
   --participants '[{"provider":"codex","label":"w1","effort":"high"},{"provider":"agy","model":"gemini-4-argon","label":"r1"}]'
 # max_chain은 HTTP로만 바꾼다. patch.json = {"max_chain":8}
 curl -s -X PATCH http://127.0.0.1:8787/api/rooms/<방> -H "Content-Type: application/json" --data-binary @patch.json
@@ -188,7 +190,12 @@ roundtable rt update_room --room <방> --note - < note.txt
 roundtable rt post --room <방> --target <w1 좌석 id> --text - < task.md
 ```
 
-요청을 받은 좌석은 답 끝에 `[[REQUEST_DONE:요청ID]]`를 붙이라는 안내를 받는다. 이 결과 신호는 요청한 좌석을 다시 부른다. 그래서 검수가 통과여도 작성 좌석이 한 턴 더 돈다. 그 턴의 답은 짧게 끝내라고 메모에 적어 둘 수 있다.
+요청을 받은 좌석은 답 끝에 `[[REQUEST_DONE:요청ID]]`를 붙이라는 안내를 받는다. 기본으로 이 결과 신호는 요청한 좌석을 다시 부른다. 그러면 검수가 통과여도 작성 좌석이 "승인됐어"만 쓰는 턴을 한 번 더 돌며 문맥 전체를 다시 읽는다(10-27~28 운영 실측: 그런 턴 하나가 캐시 읽기 59만~67만 토큰). 그래서 작성·검수 방은 `--quiet_done true`로 만든다.
+- `quiet_done`인 방에서는 완료 신호(`REQUEST_DONE`)가 요청자를 부르지 않는다. 거절 신호(`REQUEST_REJECT`)는 그대로 부른다.
+- 요청을 받은 좌석의 프롬프트에 "이어서 할 일이 있으면 `[[REQUEST:@요청자]]`로 따로 요청하라"는 안내가 붙는다. 위 메모 규칙(수정이 필요하면 `[[REQUEST:@w1]]`)과 같으므로 수정 왕복은 그대로 돈다.
+- 작성 좌석은 다음에 부를 때 검수 답을 이력으로 함께 받는다. 잃는 정보는 없다.
+- 2026-10-28 A/B(작은 문서 과제 2쌍): 검수 통과 뒤 작성 좌석 턴(입력 4.2만~4.4만, 그 좌석의 문맥 크기)이 없어졌고 검수 판정·커밋은 같았다. 수정 경로도 그대로 돌았다(`docs/토큰효율_측정_20261028.md` T5).
+- 이미 만든 방은 `rt update_room --room <방> --quiet_done true`로 켠다.
 
 `create_room` 결과의 좌석 id가 `label`과 다를 수 있다. `[[REQUEST:@이름]]`은 공백 없는 고유한 이름이면 동작하지만, 메모에는 좌석 id를 적는 것이 가장 확실하다.
 
@@ -224,7 +231,14 @@ roundtable rt post --room <방> --target <w1 좌석 id> --text - < task.md
 - `--wait_seconds` 없이 각 방에 보내고, `rt wait --rooms A:<seq>,B:<seq>`로 먼저 끝난 방부터 처리한다. 결과의 `waiting` 값을 다음 대기에 그대로 쓴다.
 - 대기 시간이 셸 도구 제한보다 길면 백그라운드로 실행하고 끝났다는 알림을 받는다.
 - 병합 전후로 `pr_overlap.py`·`after_merge.py`를 돌려 열린 PR끼리의 충돌을 미리 본다.
-- 상대 개발자의 리뷰를 같은 작성 방에 다시 맡기기 전에 `list_rooms`·`GET /api/rooms/{방}`의 좌석 `context_tokens`를 본다. 수십만 토큰이면 먼저 `rt handoff --room <방> --seat <작성 좌석> --note "곧 받을 일"`을 보내고 그 `seq`로 기다린 뒤 배정한다. 이어 쓰면 수정 턴의 모델 호출마다 그 문맥 전체를 다시 읽는다(2026-10-28 VMS-next 리뷰 대응 4건 배정 전 Opus 작성 좌석 3개가 42만~46만 토큰이었다).
+- 상대 개발자의 리뷰를 같은 작성 방에 다시 맡기기 전에 `rt seats --rooms <방>,...`로 좌석 `ctx`를 본다(여러 방을 한 번에 읽는다. 방마다 `GET /api/rooms/{방}`을 부르는 스크립트는 쓰지 않는다). 수십만 토큰이면 먼저 `rt handoff --room <방> --seat <작성 좌석> --note "곧 받을 일"`을 보내고 그 `seq`로 기다린 뒤 배정한다. 이어 쓰면 수정 턴의 모델 호출마다 그 문맥 전체를 다시 읽는다(2026-10-28 VMS-next 리뷰 대응 4건 배정 전 Opus 작성 좌석 3개가 42만~46만 토큰이었다).
+
+### 6.5 끝난 방 정리
+
+- 작업이 끝난 방은 `rt archive_rooms --rooms <방>,<방>,...`으로 보관한다. `list_rooms`·`seats`·화면 목록에서 빠지고, 기록·세션·사용량은 남는다. 보관한 방도 메시지를 보내면 그대로 돈다(실행 중에는 목록에 다시 보인다).
+- 보관한 방까지 보려면 `list_rooms --include_archived true`. 되돌리려면 `archive_rooms --rooms <방> --archived false`.
+- 화면에서는 방 우클릭 메뉴의 "보관", 또는 검색창에 공통 이름(예: 실험 제목)을 넣고 "검색된 방 N개 보관"을 누른다.
+- 삭제(`DELETE /api/rooms/{방}`)는 되돌릴 수 없으니 사람이 확인한 방만 지운다.
 
 ## 7. 실패 유형과 대처
 
@@ -233,7 +247,7 @@ roundtable rt post --room <방> --target <w1 좌석 id> --text - < task.md
 | 좌석 답이 한도 오류(429, rate/usage/free limit, quota)로 끝나고 "한도 오류로 …까지 이 좌석의 새 턴을 보류함" 안내 | 공급사 한도 도달. 서버가 그 좌석만 재시도 시각(오류에 없으면 10분 추정)까지 보류한다. `list_rooms` 좌석의 `held_until`(ms)·`held_reason`에 보인다. | 기다리면 시각이 지난 뒤 대기 턴이 저절로 돈다. 바로 다시 해 보려면 그 좌석을 `--target`으로 지정해 보낸다(보류가 풀림). 무료 한도면 다른 모델 좌석으로 바꾼다. |
 | "턴 보류: 좌석(방) 누적 입력 …이 예산 상한 …에 도달" 안내 | 방의 `seat_input_budget`·`room_input_budget`에 닿았다. 그 좌석(방이면 전 좌석)의 새 턴을 시작하지 않는다. 메시지는 남아 있다. | 의도한 상한이면 새 좌석·포크로 바꾸거나 일을 줄인다. 계속하려면 `update_room --seat_input_budget <더 큰 값 또는 0>`. 다음 턴에 남은 메시지가 함께 간다. |
 | 답이 `error`이고 `error_kind: turn_timeout`, "턴 시간 상한 N분을 넘어 중단됨" | 턴이 방의 시간 상한(기본 45분)을 넘었다. 사용자가 누른 취소(`cancelled` "중단됨")와 다르다. 출력이 있었으면 받은 메시지는 전달된 것으로 기록된다. | 답 원문을 읽고 어디까지 했는지 확인한다. 이어서 할 일만 다시 보낸다. 긴 작업이면 `update_room --turn_timeout_minutes 120`처럼 늘린 뒤 보낸다(5~720분). |
-| "이 방 누적 입력이 …을 넘음"·"문맥이 모델 한도의 n%에 도달" 안내 | 한 세션을 오래 이어 써서 턴마다 입력이 커졌다. | 작업이 바뀌는 지점이면 `rt handoff --room --seat`로 인계 요약을 남기고 새 세션으로 바꾼다. 경고만 하며 턴은 막지 않는다. |
+| "이 방 누적 입력이 …을 넘음"·"문맥이 모델 한도의 n%에 도달" 안내 | 한 세션을 오래 이어 써서 턴마다 입력이 커졌다. | 작업이 바뀌는 지점이면 `rt handoff --room --seat`로 인계 요약을 남기고 새 세션으로 바꾼다. 경고만 하며 턴은 막지 않는다. 이 안내는 사람·오케스트레이터용이라 좌석 프롬프트에는 들어가지 않는다(`user_only`). |
 | `rt post`·`rt forward`가 409 "작업 폴더 사용 중: 방 …이 같은 작업 폴더 …에서 실행 중" | 같은 폴더를 쓰는 다른 방(둘 중 하나라도 write)이 실행 중이다. 작성 중인 worktree를 다른 방이 동시에 검수·수정하지 못하게 막는다. | 그 방의 턴이 끝난 뒤(`rt wait`) 다시 보낸다. 이미 대기열에 들어간 턴은 그 방이 끝나면 저절로 시작한다. git 작업 트리 안의 폴더만 잠근다. `.git`이 없는 worktree 모음 폴더(`_worktrees` 등)를 쓰는 방끼리는 함께 실행되니 `tools/orchestrate/worktree_claims.py`로 등록한다. |
 | agy 답 본문은 끝까지 있는데 턴이 `error`(스트림 유휴 시간 초과)이고, 답 안의 `[[REQUEST]]`가 실행되지 않음 | 서버는 오류로 끝난 답의 마커를 스스로 실행하지 않는다(답이 잘렸을 수 있음). | 답을 읽고 끝까지 쓰였으면 `apply_markers --room --seq N`으로 실행한다. 잘렸으면 그 좌석에 다시 시도를 보낸다. |
 | 턴이 "작업 폴더가 없어 실행하지 않았어"로 실패 | 방의 worktree가 PR 병합 정리 등으로 지워졌다. | `rt update_room --room <방> --workspace <새 폴더>`. 방과 좌석 세션은 유지된다. 실행 중에는 바꿀 수 없다. |

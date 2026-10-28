@@ -1344,8 +1344,8 @@ pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
 .seat-spec select, .seat-spec input { width: 100%; min-width: 0; }
 .seat-spec > button { justify-self: start; align-self: end; }
 .seat-spec .seat-fork { grid-column: 1 / -1; }
-.seat-spec .seat-fork[open] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
-.seat-spec .seat-fork > summary, .seat-spec .seat-fork > p { grid-column: 1 / -1; margin: 0; }
+.seat-spec .seat-fork > p { margin: 6px 0; }
+.seat-spec .seat-fork label { display: block; margin-top: 6px; }
 @media (max-width: 480px) { .seat-spec { grid-template-columns: minmax(0, 1fr); } }
 .pcard .status-line {
   font-size: 12px;
