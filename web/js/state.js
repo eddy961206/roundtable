@@ -25,6 +25,7 @@ export const state = {
   config: {},
   rooms: [],
   roomSearch: "",
+  showArchived: false,
   roomId: null,
   room: null,
   work: null,

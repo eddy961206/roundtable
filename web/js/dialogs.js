@@ -1,5 +1,5 @@
 // Dialogs: new room / room settings with seat specs, and the work plan form.
-import { $, $$, announce, el, LABEL, showAlert } from "./util.js";
+import { $, $$, announce, el, fmtK, LABEL, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { activeParticipants, openSeq, participantLabel, state } from "./state.js";
 import { updateHint } from "./composer.js";
@@ -379,6 +379,7 @@ export function addSeatSpec(box, providerId = "", removable = true, seed = null)
     effort.value = seed.effort;
     label.value = seed.label;
   }
+  if (!seed) row.appendChild(buildForkPicker(row, provider, model, effort, syncModel));
   if (removable) {
     const remove = el("button", "ghost", "구성 제거");
     remove.type = "button";
@@ -388,15 +389,82 @@ export function addSeatSpec(box, providerId = "", removable = true, seed = null)
   box.appendChild(row);
 }
 
+// Fork picker: start the seat from a copy of another room's seat session
+// (fork_from, docs/기반문맥_포크_계약.md). Picking a base seat sets this row's
+// provider, model and effort to the base seat's, which the server requires.
+function buildForkPicker(row, provider, model, effort, syncModel) {
+  const box = el("details", "seat-fork");
+  box.appendChild(el("summary", "muted", "기반 세션에서 시작 (선택)"));
+  box.appendChild(el("p", "muted small-note", "공통 문서를 읽힌 기반 좌석의 세션을 복사해 첫 턴을 시작합니다. 같은 문서를 다시 읽지 않습니다. 같은 공급사·모델만 되고 agy는 포크하지 못합니다."));
+  const roomLabel = el("label", "", "기반 방");
+  const roomSel = el("select", "seat-fork-room");
+  roomLabel.appendChild(roomSel);
+  const seatLabel = el("label", "", "기반 좌석");
+  const seatSel = el("select", "seat-fork-seat");
+  seatLabel.appendChild(seatSel);
+  box.append(roomLabel, seatLabel);
+  const none = (text) => { const o = el("option", "", text); o.value = ""; return o; };
+  let seats = [];
+  box.ontoggle = () => {
+    if (!box.open || roomSel.options.length) return;
+    roomSel.appendChild(none("포크하지 않음"));
+    for (const r of state.rooms.filter((x) => !x.archived)) {
+      const o = el("option", "", r.title);
+      o.value = r.id;
+      roomSel.appendChild(o);
+    }
+    seatSel.replaceChildren(none("기반 방을 먼저 고르세요"));
+  };
+  roomSel.onchange = async () => {
+    seats = [];
+    seatSel.replaceChildren(none(roomSel.value ? "불러오는 중…" : "기반 방을 먼저 고르세요"));
+    if (!roomSel.value) return;
+    const picked = roomSel.value;
+    try {
+      const snap = await api("GET", "/api/rooms/" + picked + "?limit=1");
+      if (roomSel.value !== picked) return;
+      seats = snap.room.participants.filter((p) => !p.removed && p.session_id && p.provider !== "agy");
+      seatSel.replaceChildren(none(seats.length ? "좌석 선택" : "포크할 수 있는 세션이 있는 좌석이 없음"));
+      for (const p of seats) {
+        const o = el("option", "", p.label + " · " + p.model + (p.effort ? " · " + p.effort : "") + " · 문맥 " + fmtK(p.context_tokens));
+        o.value = p.id;
+        seatSel.appendChild(o);
+      }
+    } catch (err) {
+      seatSel.replaceChildren(none("불러오지 못함: " + err.message));
+    }
+  };
+  seatSel.onchange = () => {
+    const base = seats.find((p) => p.id === seatSel.value);
+    if (!base) return;
+    provider.value = base.provider;
+    provider.onchange();
+    if (![...model.options].some((o) => o.value === base.model)) {
+      model.value = "__custom__";
+      $(".seat-custom-model", row).value = base.model;
+    } else {
+      model.value = base.model;
+    }
+    syncModel();
+    effort.value = base.effort;
+  };
+  return box;
+}
+
 export function readSeatSpecs(box) {
-  return $$(".seat-spec", box).map((row) => ({
-    provider: $(".seat-provider", row).value,
-    model: $(".seat-model", row).value === "__custom__" ? $(".seat-custom-model", row).value.trim() : $(".seat-model", row).value,
-    effort: $(".seat-effort", row).hidden ? "" : $(".seat-effort", row).value,
-    label: $(".seat-label", row).value.trim(),
-    role: $(".role-input", row).value.trim(),
-    count: Number($(".seat-count", row).value),
-  }));
+  return $$(".seat-spec", box).map((row) => {
+    const spec = {
+      provider: $(".seat-provider", row).value,
+      model: $(".seat-model", row).value === "__custom__" ? $(".seat-custom-model", row).value.trim() : $(".seat-model", row).value,
+      effort: $(".seat-effort", row).hidden ? "" : $(".seat-effort", row).value,
+      label: $(".seat-label", row).value.trim(),
+      role: $(".role-input", row).value.trim(),
+      count: Number($(".seat-count", row).value),
+    };
+    const forkSeat = $(".seat-fork-seat", row);
+    if (forkSeat && forkSeat.value) spec.fork_from = { room: $(".seat-fork-room", row).value, seat: forkSeat.value };
+    return spec;
+  });
 }
 
 let pendingInitialPrompt = "";
@@ -414,6 +482,7 @@ export function openRoomDialog(room, initialPrompt = "") {
   f.turn_timeout_minutes.value = room ? room.turn_timeout_minutes || 0 : 0;
   f.persona.checked = room ? !!room.persona : false;
   f.blind_first_default.checked = room ? room.blind_first_default === true : true;
+  f.quiet_done.checked = room ? !!room.quiet_done : false;
   // Usage guards apply to an existing room (PATCH); a new room starts with the defaults.
   $("#room-guards").hidden = !room;
   for (const k of ["input_warn_tokens", "context_warn_percent", "seat_input_budget", "room_input_budget", "compact_window_tokens"]) f[k].value = room ? room[k] || 0 : 0;
@@ -442,6 +511,7 @@ export async function onRoomSubmit(e) {
     turn_timeout_minutes: Number(f.turn_timeout_minutes.value || 0),
     persona: f.persona.checked,
     blind_first_default: f.blind_first_default.checked,
+    quiet_done: f.quiet_done.checked,
   };
   try {
     if (f.dataset.editing) {

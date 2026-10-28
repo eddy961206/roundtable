@@ -222,6 +222,9 @@ export function buildSessionActions(participantId, messageId = "") {
 
 // Handoff: the seat writes a summary in its current session, then its next
 // turn starts a new session holding only that summary (rt handoff).
+// HANDOFF_HINT_TOKENS: from this context size the card shows the handoff
+// button outside the folded details (docs/AGENT_GUIDE.md 6.4: "수십만 토큰").
+const HANDOFF_HINT_TOKENS = 150000;
 function buildHandoffButton(roomId, participantId) {
   const button = el("button", "ghost", "인계 후 새 세션");
   button.type = "button";
@@ -566,7 +569,19 @@ function renderGuardBadges(card, p) {
   const pct = p.context_window > 0 ? Math.floor((p.context_tokens * 100) / p.context_window) : 0;
   if (warnPct && pct >= warnPct) {
     const b = el("span", "badge guard warn", "문맥 " + pct + "%");
-    b.title = "문맥이 모델 한도의 " + pct + "%입니다(경보 " + warnPct + "%). 작업이 바뀌면 세션 초기화나 새 세션(포크)을 고려하세요.";
+    b.title = "문맥이 모델 한도의 " + pct + "%입니다(경보 " + warnPct + "%). 작업이 바뀌면 인계 후 새 세션을 고려하세요.";
+    box.appendChild(b);
+  }
+  // A large session re-reads its whole context on every model call, also far
+  // below a 1M window's warning share, so the handoff sits on the card itself.
+  box.dataset.available = String(!!p.session_id && p.status !== "running");
+  if (p.session_id && (p.context_tokens >= HANDOFF_HINT_TOKENS || (warnPct && pct >= warnPct))) {
+    const b = buildHandoffButton(state.roomId, p.id);
+    b.classList.add("guard-handoff");
+    b.textContent = "인계 · 문맥 " + fmtK(p.context_tokens);
+    b.disabled = box.dataset.available !== "true";
+    b.title = p.status === "running" ? "실행이 끝난 뒤 인계할 수 있습니다"
+      : "문맥 " + fmtK(p.context_tokens) + " 토큰을 모델 호출마다 다시 읽습니다. 인계 요약을 남기고 다음 턴부터 새 세션으로 바꿉니다.";
     box.appendChild(b);
   }
   if (p.hold_until && p.hold_until > Date.now()) {

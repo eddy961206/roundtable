@@ -34,6 +34,7 @@
       <input id="room-search" type="search" placeholder="방 이름·폴더 검색…" aria-label="방 목록 검색">
     </div>
     <ul id="room-list" aria-label="채팅방 목록"></ul>
+    <div id="room-list-foot" class="room-list-foot"></div>
     <section id="provider-panel" aria-labelledby="usage-title">
       <div class="usage-panel-head">
         <h2 id="usage-title" tabindex="-1">남은 사용량</h2>
@@ -279,6 +280,7 @@
       <label title="한 턴이 이 시간을 넘으면 '턴 시간 상한 초과' 오류로 끝냅니다. 5~720분, 0은 기본 45분">턴 시간 상한(분) <input name="turn_timeout_minutes" type="number" min="0" max="720" placeholder="0 = 45"></label>
       <label class="inline"><input type="checkbox" name="persona"> 에이전트끼리 가벼운 티격태격 허용</label>
       <label class="inline" title="1라운드는 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개합니다"><input type="checkbox" name="blind_first_default"> 토론 1라운드 블라인드</label>
+      <label class="inline" title="받은 요청을 끝낸 좌석의 완료 신호([[REQUEST_DONE]])가 요청한 좌석을 다시 부르지 않습니다. 거절 신호는 그대로 부릅니다. 검수가 통과하면 작성 좌석이 '승인됐어'만 쓰며 문맥 전체를 다시 읽는 턴을 없앱니다. 수정이 필요하면 검수 좌석이 [[REQUEST:@작성]]으로 따로 요청합니다."><input type="checkbox" name="quiet_done"> 요청 완료 신호로 요청자를 다시 부르지 않기</label>
     </div>
     <div class="row" id="room-guards">
       <label title="좌석 누적 입력(캐시 포함)이 이 값의 배수를 넘을 때마다 안내합니다. 0은 기본 1천만, -1은 끔">입력 경고 간격(토큰) <input name="input_warn_tokens" type="number" min="-1" placeholder="0 = 1천만"></label>

@@ -312,6 +312,17 @@ kbd {
   margin: 0;
   padding: 0;
 }
+#room-list li.archived .room-item { opacity: 0.6; }
+.room-list-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 0 12px 8px;
+  font-size: 12px;
+}
+.room-list-foot:empty { display: none; }
+.room-list-foot label { display: inline-flex; gap: 4px; align-items: center; }
 .room-item {
   width: 100%;
   padding: 6px 8px;
@@ -1332,6 +1343,9 @@ pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
 .seat-spec .catalog-note { grid-column: 1 / -1; margin: 0; }
 .seat-spec select, .seat-spec input { width: 100%; min-width: 0; }
 .seat-spec > button { justify-self: start; align-self: end; }
+.seat-spec .seat-fork { grid-column: 1 / -1; }
+.seat-spec .seat-fork[open] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
+.seat-spec .seat-fork > summary, .seat-spec .seat-fork > p { grid-column: 1 / -1; margin: 0; }
 @media (max-width: 480px) { .seat-spec { grid-template-columns: minmax(0, 1fr); } }
 .pcard .status-line {
   font-size: 12px;
@@ -2948,8 +2962,13 @@ dialog.dlg-stats { width: min(1100px, 96vw); }
 .pcard .guard-badges { display: flex; flex-wrap: wrap; gap: 4px; }
 .pcard .guard-badges[hidden] { display: none; }
 .badge.guard.warn { color: var(--warn); background: var(--warn-bg); border-color: var(--warn); }
+.pcard .guard-handoff { padding: 1px 8px; min-height: 22px; font-size: 11px; border-color: var(--warn); color: var(--warn); }
 .badge.guard.danger { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); }
 
 /* In-page confirm/alert (util.js askConfirm/showAlert) */
 dialog.dlg-message { width: min(440px, 94vw); }
+.dlg-forward form { display: grid; gap: 10px; }
+.dlg-forward h3, .dlg-forward p { margin: 0; }
+.dlg-forward label { display: grid; gap: 4px; }
+.message-detail .forward-msg { margin-top: 6px; }
 .dlg-message-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }

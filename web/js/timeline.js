@@ -11,6 +11,7 @@ import { renderMessageDecisions } from "./decisions.js";
 import { updateHint } from "./composer.js";
 import { findWorkPart, focusWorkPartCard, isPartErrorAbandoned, isPartErrorResolved, reviewStepLabel } from "./work.js";
 import { buildSessionActions, updateSessionActions } from "./participants.js";
+import { openForwardDialog } from "./forward.js";
 import { timingTitle } from "./stats.js";
 import { activeTraceActivity, ensureAndRenderTrace, liveHtml, toggleTrace } from "./trace.js";
 
@@ -832,6 +833,13 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
         if (!actions) { actions = buildSessionActions(m.author, m.id); detail.appendChild(actions); }
         const seat = participant(m.author);
         updateSessionActions(actions, m.session_id, m.status === "streaming" || (seat && seat.status === "running" && seat.session_id === m.session_id));
+      }
+      if (m.status !== "streaming" && !detail.querySelector(".forward-msg")) {
+        const fwd = el("button", "ghost forward-msg", "다른 방으로 전달");
+        fwd.type = "button";
+        fwd.title = "이 답 원문을 다른 방의 좌석에게 그대로 보냅니다(rt forward)";
+        fwd.onclick = () => openForwardDialog(m);
+        detail.appendChild(fwd);
       }
       footEl.appendChild(detail);
     }

@@ -76,6 +76,22 @@ export async function deleteRoom(id) {
   return true;
 }
 
+// Archive hides a finished room from the list; its history and sessions stay.
+export async function setArchived(ids, archived) {
+  const failed = [];
+  for (const id of ids) {
+    try {
+      await api("PATCH", "/api/rooms/" + id, { archived });
+    } catch (err) {
+      failed.push((state.rooms.find((r) => r.id === id) || { title: id }).title + ": " + err.message);
+    }
+  }
+  await loadRooms();
+  const done = ids.length - failed.length;
+  announce("방 " + done + "개를 " + (archived ? "보관했습니다." : "보관 해제했습니다."));
+  if (failed.length) showAlert((archived ? "보관" : "보관 해제") + "하지 못한 방:\n" + failed.join("\n"));
+}
+
 export function exportRoom(id) {
   const a = document.createElement("a");
   a.href = "/api/rooms/" + id + "/export.md";
@@ -145,6 +161,7 @@ function buildRoomMenu(r) {
   const items = [
     ["이름 바꾸기", () => beginRename(r.id)],
     ["내보내기 (Markdown)", () => { closeRoomMenu(); exportRoom(r.id); }],
+    [r.archived ? "보관 해제" : "보관 (목록에서 숨김)", () => { closeRoomMenu(); setArchived([r.id], !r.archived); }],
     ["삭제…", async () => {
       closeRoomMenu();
       try { await deleteRoom(r.id); } catch (err) { showAlert("방을 삭제하지 못했습니다: " + err.message); }
@@ -242,9 +259,12 @@ export function renderRoomList() {
 
 function buildRoomListItems(ul) {
   const q = state.roomSearch.trim().toLowerCase();
+  // An archived room stays listed while it runs, so a running turn is never out of sight.
   const filtered = state.rooms.filter(
-    (r) => !q || (r.title || "").toLowerCase().includes(q) || (r.mode || "").toLowerCase().includes(q)
+    (r) => (!q || (r.title || "").toLowerCase().includes(q) || (r.mode || "").toLowerCase().includes(q))
+      && (state.showArchived || !r.archived || r.active)
   );
+  renderRoomListFoot(q, filtered);
   if (!filtered.length) {
     const emptyLi = el("li", "muted small-note", q ? "검색 결과 없음" : "생성된 방이 없습니다");
     emptyLi.style.padding = "8px 10px";
@@ -257,7 +277,7 @@ function buildRoomListItems(ul) {
   if (renamingId && !filtered.some((r) => r.id === renamingId)) { renamingId = ""; renameDraft = ""; }
   for (const r of filtered) {
     const isAct = r.id === state.roomId;
-    const li = el("li", isAct ? "active" : "");
+    const li = el("li", (isAct ? "active" : "") + (r.archived ? " archived" : ""));
     if (renamingId === r.id) {
       li.appendChild(buildRenameRow(r));
       ul.appendChild(li);
@@ -306,6 +326,35 @@ function buildRoomListItems(ul) {
       li.appendChild(buildRoomMenu(r));
     }
     ul.appendChild(li);
+  }
+}
+
+// Below the list: show archived rooms, and archive every room a search found
+// (e.g. all test rooms of one experiment) in one step.
+function renderRoomListFoot(q, shown) {
+  const foot = $("#room-list-foot");
+  if (!foot) return;
+  foot.replaceChildren();
+  const archivedCount = state.rooms.filter((r) => r.archived).length;
+  if (archivedCount) {
+    const label = el("label", "muted");
+    const box = el("input");
+    box.type = "checkbox";
+    box.checked = state.showArchived;
+    box.onchange = () => { state.showArchived = box.checked; renderRoomList(); };
+    label.append(box, "보관한 방 보기 (" + archivedCount + ")");
+    foot.appendChild(label);
+  }
+  const archivable = shown.filter((r) => !r.archived && !r.active);
+  if (q && archivable.length) {
+    const b = el("button", "ghost", "검색된 방 " + archivable.length + "개 보관");
+    b.type = "button";
+    b.title = "검색어와 맞는 방 가운데 실행 중이 아닌 방을 목록에서 숨깁니다. 기록과 세션은 남고 보관 해제할 수 있습니다.";
+    b.onclick = async () => {
+      if (!(await askConfirm("검색된 방 " + archivable.length + "개를 보관할까요? 목록에서만 숨기고 기록·세션은 그대로 둡니다.", { okText: "보관" }))) return;
+      await setArchived(archivable.map((r) => r.id), true);
+    };
+    foot.appendChild(b);
   }
 }
 
