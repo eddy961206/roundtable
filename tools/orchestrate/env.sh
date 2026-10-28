@@ -27,6 +27,29 @@ die() { echo "$*" >&2; exit 2; }
 # need VAR... fails with exit 2 when a required setting is empty.
 need() { local v; for v in "$@"; do [ -n "${!v}" ] || die "$v is not set (environment or $ORCH_ENV)"; done; }
 state_dir() { mkdir -p "$ORCH_STATE" && echo "$ORCH_STATE"; }
+# tea_get <api path>: GET through tea, printing the JSON reply. A failed, empty or non-JSON
+# reply is retried (ORCH_TEA_RETRIES, default 3, growing pause), then it fails with the
+# command, exit code, stderr and the start of stdout. tea sometimes returns an empty body
+# (2026-10-28 ci_wait died on #81·#82 with JSONDecodeError). A failure is never "nothing".
+# tea_raw is the same for text replies (job logs). Same rule as orchlib.tea_get.
+# POSTs stay direct "$ORCH_TEA" api -X POST calls: they are not idempotent, so not retried.
+tea_get() { _tea_try json "$1"; }
+tea_raw() { _tea_try raw "$1"; }
+_tea_try() {
+  local n out rc why errf tries=${ORCH_TEA_RETRIES:-3}
+  errf=$(mktemp)
+  for n in $(seq 1 "$tries"); do
+    out=$("$ORCH_TEA" api "$2" 2>"$errf"); rc=$?
+    if [ $rc -ne 0 ]; then why="exit $rc"
+    elif [ -z "${out//[[:space:]]/}" ]; then why="empty reply"
+    elif [ "$1" = json ] && ! py -c "import json,sys;json.loads(sys.stdin.read())" <<<"$out" 2>/dev/null; then why="not JSON"
+    else rm -f "$errf"; printf '%s\n' "$out"; return 0
+    fi
+    [ "$n" -lt "$tries" ] && sleep $((2 * n))
+  done
+  echo "tea api $2 failed after $tries tries ($why): command $ORCH_TEA api $2, exit $rc, stderr: $(head -c 300 "$errf" | tr '\n' ' '), stdout: ${out:0:200}" >&2
+  rm -f "$errf"; return 1
+}
 # Python helpers (orchlib.py) see the same resolved values.
 export $(compgen -v ORCH_)
 # winpath prints a path the way a model on this host reads it (Windows form under Git Bash).

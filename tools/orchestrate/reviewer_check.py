@@ -9,10 +9,10 @@ verdict APPROVED: a state, not an event, so an approval missed by the watch stil
 A failed tea call is an error (exit 1), never "no activity".
 """
 import argparse
-import json
 import os
-import subprocess
 import sys
+
+import orchlib
 
 
 def parse(argv, env):
@@ -35,13 +35,8 @@ def parse(argv, env):
 
 
 def api(tea, path):
-    r = subprocess.run([tea, 'api', path], capture_output=True, text=True, encoding='utf-8')
-    if r.returncode != 0:
-        raise SystemExit('tea api %s failed: %s' % (path, r.stderr.strip()[:300]))
-    try:
-        return json.loads(r.stdout) or []
-    except ValueError:
-        raise SystemExit('tea api %s: not JSON: %s' % (path, r.stdout[:300]))
+    # Retries a failed or empty reply, then exits with the cause (orchlib.tea_get).
+    return orchlib.tea_get({'ORCH_TEA': tea, 'ORCH_TEA_RETRIES': os.environ.get('ORCH_TEA_RETRIES')}, path) or []
 
 
 def activity(a, tea):

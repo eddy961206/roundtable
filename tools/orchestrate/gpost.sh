@@ -2,7 +2,8 @@
 # usage: gpost.sh comment <issue#> <body.md>
 #        gpost.sh pr <worktree> <branch> <title> <body.md>   (push + PR + reviewer request)
 # A PR is opened only after the push succeeded and the remote branch tip is the local HEAD.
-# Bodies always come from files (no inline shell quoting) and pass glint.py first.
+# Bodies always come from files (no inline shell quoting) and pass glint.py first. `pr` also
+# checks Go test names in the body against the worktree; for `comment` set ORCH_LINT_WORKTREE.
 # Needs ORCH_REPO (owner/name); ORCH_REVIEWER is requested on new PRs when set.
 . "$(dirname "$0")/env.sh"
 usage() { die "usage: gpost.sh comment <issue#> <body.md> | gpost.sh pr <worktree> <branch> <title> <body.md>"; }
@@ -38,8 +39,8 @@ pr)
   [ $# -eq 5 ] || usage
   wt=$2; br=$3; title=$4; body=$5
   need ORCH_REPO
-  py "$ORCH_DIR/glint.py" "$body" || exit 1
   [ -d "$wt" ] || die "no worktree: $wt"
+  py "$ORCH_DIR/glint.py" --worktree "$wt" "$body" || exit 1
   [ -n "$(git -C "$wt" status --short)" ] && die "dirty worktree $wt"
   git -C "$wt" -c credential.useHttpPath=false push -q -u origin "$br" || { echo "push failed; nothing posted" >&2; exit 1; }
   verify_pushed "$wt" "$br" || exit 1

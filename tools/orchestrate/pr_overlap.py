@@ -2,6 +2,7 @@
 
 usage: pr_overlap.py [--repo-dir DIR] [--prs 61,64] [--json] [--schema-regex RE]
                      [--integrate [--order 61,64] [--test-cmd CMD] [--test-timeout SEC]]
+       pr_overlap.py --plan <branch | path[,path#heading,...]> [--exclude 61,64] [--json]
 
 Reads open PRs of ORCH_REPO (tea), fetches their heads and bases into the private ref
 namespace refs/orch/* of the local clone (ORCH_REPO_DIR or --repo-dir), then reports:
@@ -14,6 +15,12 @@ namespace refs/orch/* of the local clone (ORCH_REPO_DIR or --repo-dir), then rep
   - --integrate: a temporary detached worktree on the base merges the PRs in order,
     then runs the test command (ORCH_INTEGRATE_TEST, default `go test ./...`); the
     worktree is always removed.
+  - --plan: before a task starts (assign_fix, a new room), which open PRs already touch the
+    files and Markdown sections the task will change. The spec is a branch (local, or on the
+    remote; its changes since the merge-base with the base) or a comma list of paths, where
+    `path#text` names the sections of path whose heading path contains text. Information
+    only: it never blocks. A 2026-10-28 replay of 44 PRs showed that serializing tasks on the
+    same file/section cut rebases 25 → 2 but delayed the last merge by 33~41 hours.
 Never pushes, never moves a branch, never touches the remote.
 """
 import argparse
@@ -333,6 +340,55 @@ def build(cfg, repo, prs=None, schema_regex=None, do_integrate=False, order=None
     return report
 
 
+def plan_changes(cfg, repo, spec, base, schema_re):
+    """(label, files, sections, wanted section texts) the planned task will touch."""
+    if ',' not in spec and '#' not in spec:  # a branch when it resolves, else one path
+        ref = 'refs/orch/plan/' + spec
+        got = orchlib.git(repo, 'fetch', '-q', '--no-tags', cfg['ORCH_REMOTE'], '+refs/heads/%s:%s' % (spec, ref), check=False)
+        head = rev(repo, ref) if got.returncode == 0 else rev(repo, spec)
+        if head:
+            mb = orchlib.git(repo, 'merge-base', base_ref(base), head).stdout.strip()
+            c = changes(repo, mb, head, schema_re)
+            return 'branch %s (%s)' % (spec, head[:7]), c['files'], c['sections'], []
+    files, wanted = set(), []
+    for item in filter(None, (x.strip() for x in spec.split(','))):
+        path, _, text = item.partition('#')
+        files.add(path)
+        if text:
+            wanted.append((path, text.strip()))
+    return 'paths', files, set(), wanted
+
+
+def plan(cfg, repo, spec, exclude=(), schema_regex=None):
+    """Open PRs that touch what the planned task touches: same files, same sections."""
+    schema_re = re.compile(schema_regex or cfg['ORCH_SCHEMA_REGEX'])
+    base = cfg['ORCH_BASE']
+    pulls = [p for p in orchlib.open_pulls(cfg) if p['number'] not in set(exclude)]
+    fetch(cfg, repo, [base] + [p['base']['ref'] for p in pulls], [p['number'] for p in pulls])
+    label, files, sections, wanted = plan_changes(cfg, repo, spec, base, schema_re)
+    rows = []
+    for i in analyze(cfg, repo, pulls, schema_re):
+        same = sorted(files & i['files'])
+        secs = sorted(sections & i['sections'])
+        secs += sorted((f, s) for f, s in i['sections'] if any(f == wf and wt in s for wf, wt in wanted))
+        if same or secs:
+            rows.append({'pr': i['number'], 'branch': i['branch'], 'files': same, 'sections': secs})
+    return {'plan': spec, 'label': label, 'base': base, 'files': files, 'sections': sections, 'overlaps': rows}
+
+
+def render_plan(report):
+    out = ['## 배정 전 겹침: %s (base %s, 파일 %d개)' % (report['label'], report['base'], len(report['files'])), '']
+    if not report['overlaps']:
+        out.append('같은 파일·절을 고치는 열린 PR 없음')
+        return '\n'.join(out)
+    out.append(orchlib.md_table(['PR', '브랜치', '같은 파일', '같은 절'], [
+        ('#%d' % r['pr'], r['branch'], short(r['files']) or '-', '; '.join('%s / %s' % fs for fs in r['sections'][:4]) or '-')
+        for r in report['overlaps']]))
+    out.append('')
+    out.append('정보용: 위 PR이 먼저 병합되면 이 작업은 재기반이 필요할 수 있다. 배정을 막지 않는다.')
+    return '\n'.join(out)
+
+
 def int_list(s):
     return [int(x) for x in s.split(',') if x.strip()]
 
@@ -348,7 +404,13 @@ def main(argv, cfg=None):
     p.add_argument('--order', type=int_list)
     p.add_argument('--test-cmd', default=cfg.get('ORCH_INTEGRATE_TEST', 'go test ./...'))
     p.add_argument('--test-timeout', type=int, default=1800)
+    p.add_argument('--plan')
+    p.add_argument('--exclude', type=int_list, default=[])
     a = p.parse_args(argv)
+    if a.plan:
+        report = plan(cfg, a.repo_dir, a.plan, a.exclude, a.schema_regex)
+        print(to_json(report) if a.json else render_plan(report))
+        return 0
     report = build(cfg, a.repo_dir, a.prs, a.schema_regex, a.integrate, a.order, a.test_cmd, a.test_timeout)
     print(to_json(report) if a.json else render(report))
     return 0

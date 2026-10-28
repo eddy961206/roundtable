@@ -39,6 +39,10 @@ roundtable 방(작성·검수 좌석)과 Gitea PR·리뷰를 오케스트레이�
 | `ORCH_CONFLICT_HOOK` | queue_review rebase 충돌 해결 명령 | 없음(충돌 시 중단) |
 | `ORCH_CI_CONTEXT` | ci_wait가 볼 상태 context 부분 문자열 | 없음(통합 state) |
 | `ORCH_LINT_EXTRA` | glint가 로컬 경로로 볼 추가 정규식 | 없음 |
+| `ORCH_LINT_WORKTREE` | glint가 본문의 Go 시험 이름을 찾을 worktree(`gpost.sh comment`용, `pr`·push_and_notify는 자동) | 없음(검사 안 함) |
+| `ORCH_TEA_RETRIES` | tea 조회(GET)가 실패·빈 응답·JSON 아님일 때 시도 횟수 | `3` |
+| `ORCH_HANDOFF_TOKENS` / `ORCH_HANDOFF_TIMEOUT` | assign_fix 자동 인계 기준 문맥(0=끔) / 인계 턴 대기 초 | `200000` / `1800` |
+| `ORCH_NOTIFY_CI` | push_and_notify가 CI 통과를 기다린 뒤 게시(`--ci`와 같음) | 없음(기다리지 않음) |
 | `ORCH_TEA` / `ORCH_RT_BIN` / `ORCH_RT_URL` | 실행 파일·서버 | `tea` / `roundtable` / `http://127.0.0.1:18787` |
 | `ORCH_STATE` | 게시 임시 JSON·리뷰 원문 저장 | `$HOME/.rt-orchestrate` |
 | `ORCH_PYTHON` | Python 실행 파일 | `python`, 없으면 `python3` |
@@ -53,6 +57,8 @@ roundtable 방(작성·검수 좌석)과 Gitea PR·리뷰를 오케스트레이�
 ## 도구
 
 모든 셸 스크립트는 인자·필수 설정이 틀리면 아무 호출도 하지 않고 종료 코드 2로 끝난다.
+
+Gitea 조회(GET)는 `env.sh`의 `tea_get`·`tea_raw`(Python 도구는 `orchlib.tea_get`)로 한다. 실패·빈 응답·JSON 아님이면 `ORCH_TEA_RETRIES`(기본 3)회까지 2초·4초 간격으로 다시 시도하고, 그래도 안 되면 명령·종료 코드·stderr·stdout 앞부분을 보여 주고 실패한다. 조회 실패를 "없음"으로 읽지 않는다. 게시(POST)는 두 번 나갈 수 있어 다시 시도하지 않는다. 2026-10-28 `ci_wait.sh`가 PR #81·#82 대기 중 tea의 빈 응답에 `JSONDecodeError`로 죽었다.
 
 ### `rtwait.sh` — 방의 답 기다리기
 
@@ -81,15 +87,17 @@ python tools/orchestrate/glint.py <본문.md> [...]
   - 로컬 절대 경로(`C:\…`, `C:/…`, `/c/…/`, `/home/<u>/`, `/Users/<u>/`, `ORCH_LINT_EXTRA`)
   - 빈 코드 조각: 단독 ``` `` ```, `head`·`base`·`커밋`·`commit`·`sha` 뒤의 연속 공백
   - 대리 작성 표식: `Generated with`, `Co-Authored-By`, `대신 작성`
-- 관측 한계: 정규식 검사다. 다른 표현의 초안 문구, 공백 없이 사라진 값, 상대 경로는 잡지 못한다. 규칙마다 첫 일치만 보고한다. PR 제목은 검사하지 않는다. `tea`가 저장소에 맞는 로그인을 찾지 못하면 기본 로그인으로 게시하며 `NOTE:` 줄을 남긴다. 게시 뒤 원문은 Gitea에서 다시 조회해 확인한다.
+  - 대상 worktree에 없는 시험 이름: `--worktree <폴더>`(또는 `ORCH_LINT_WORKTREE`)를 주면 본문 인라인 코드(백틱) 안의 `Test…` 이름마다 그 worktree의 추적 파일에 `func <이름>(`이 있는지 `git grep`으로 본다. `gpost.sh pr`과 `push_and_notify.sh`는 자기 worktree를 넘긴다. `git grep`이 실패하면(폴더 없음 등) "없음"이 아니라 종료 코드 2다. 10-28에 PR 4개 댓글을 손으로 확인했고, 그 전에는 없는 시험 이름을 댓글에 써서 고친 일이 있었다.
+- 관측 한계: 정규식 검사다. 다른 표현의 초안 문구, 공백 없이 사라진 값, 상대 경로는 잡지 못한다. 시험 이름은 Go `func Test…(` 형식만 찾는다(메서드·하위 시험 이름 `Test/x`의 `/x`는 보지 않는다). 규칙마다 첫 일치만 보고한다. PR 제목은 검사하지 않는다. `tea`가 저장소에 맞는 로그인을 찾지 못하면 기본 로그인으로 게시하며 `NOTE:` 줄을 남긴다. 게시 뒤 원문은 Gitea에서 다시 조회해 확인한다.
 
 ### `push_and_notify.sh` — 재기반·수정 뒤 push하고 PR에 알리기
 
 ```bash
-tools/orchestrate/push_and_notify.sh <worktree> <branch> <PR 번호> <본문.md> [--force]
+tools/orchestrate/push_and_notify.sh <worktree> <branch> <PR 번호> <본문.md> [--force] [--ci]
 ```
 
-- 순서: 본문 검사(`glint.py`) → push → 원격 브랜치 head 확인 → PR head 확인 → 댓글 → 재리뷰 요청(`ORCH_REVIEWER`).
+- 순서: 본문 검사(`glint.py`, 시험 이름은 이 worktree 기준) → push → 원격 브랜치 head 확인 → PR head 확인 → (`--ci`면) CI 결과 대기 → 댓글 → 재리뷰 요청(`ORCH_REVIEWER`).
+- `--ci`(또는 `ORCH_NOTIFY_CI=1`): `ci_wait.sh`로 push한 head의 CI(`ORCH_CI_CONTEXT`)를 기다린다. `success`일 때만 댓글·재리뷰 요청을 보낸다. 실패면 실패 job 로그의 FAIL 줄을 보여 주고, 끝까지 pending이면 그 사실을 알리고 둘 다 게시하지 않은 채 종료 코드 1로 끝난다(push는 이미 됨). CI가 10분 안팎 걸리므로 백그라운드 명령으로 실행한다. 10-28 #61은 재리뷰 요청 직후 승인을 받았는데, 그 head의 Linux CI가 불안정 시험으로 실패해 재승인이 필요했다.
 - 앞 단계가 하나라도 실패하면 뒤 단계는 하지 않고 종료 코드 1로 끝난다. 인자 오류는 2다.
 - `--force`는 `--force-with-lease`로 push한다(재기반 뒤). 원격 추적 브랜치가 오래됐으면 lease가 거절되어 아무것도 게시하지 않는다. 그때는 fetch한 뒤 다시 실행한다.
 - worktree는 그 branch를 체크아웃한 깨끗한 상태여야 한다.
@@ -105,7 +113,8 @@ tools/orchestrate/assign_fix.sh <PR 번호> <리뷰 id> <작성 방> <branch> ["
 
 - 먼저 방의 작업 폴더(workspace)가 있는지 확인한다. 없으면 게시하지 않고 `rt update_room`으로 폴더를 바꾸라고 알린다.
 - 작성 좌석에게만 보낸다. 켜진 좌석이 하나면 그 좌석, 여럿이면 이름에 `writer`·`작성`이 든 좌석 하나다. 맞는 좌석이 하나가 아니면 보내지 않고 `TARGET=<좌석 id>`를 요구한다. 대상을 빼면 같은 방의 검수 좌석도 턴을 시작해 "작성이 끝나면 검수하겠다"는 답에 세션 전체를 다시 읽는다(2026-10-28 실측: 한 번에 입력 13만~34만 토큰).
-- 같은 작성 방에 리뷰를 다시 맡기기 전에 `rt seats --rooms <작성 방>`으로 작성 좌석의 `ctx`를 본다. 수십만이면 먼저 `rt handoff`로 새 세션을 만든다(`docs/AGENT_GUIDE.md` 6.4). 이 스크립트는 인계하지 않는다.
+- 자동 인계: 작성 좌석의 마지막 문맥(`context_tokens`)이 `ORCH_HANDOFF_TOKENS`(기본 200000, 0이면 끔)보다 크면 먼저 `rt handoff --note "곧 받을 일: PR #N 리뷰 R 대응"`을 보낸다. 그 요약 턴이 `done`으로 끝난 것을 `rt wait`로 확인한 뒤에야 리뷰를 보낸다. 인계가 거절되거나(실행 중·보류 등) 요약 턴이 실패·시간 초과(`ORCH_HANDOFF_TIMEOUT`, 기본 1800초)면 리뷰를 보내지 않고 종료 코드 1이다. 모델 호출마다 문맥 전체를 다시 읽는다. 10-28에 손으로 인계한 Opus 작성 좌석 3개는 42만~46만 토큰이었다(`docs/AGENT_GUIDE.md` 6.4).
+- `ORCH_REPO_DIR`가 있으면 보내기 전에 `pr_overlap.py --plan <branch> --exclude <PR>`로 같은 파일·Markdown 절을 고치는 다른 열린 PR을 stderr에 보여 준다. 정보용이라 배정을 막지 않는다. 이 확인이 실패해도 그 사실만 알리고 진행한다.
 - Gitea에서 리뷰 원문을 가져와 `$ORCH_STATE/rv<리뷰id>_pr<번호>.md`에 저장한다. 고정 지시 + `ORCH_WRITER_RULES` + 리뷰 원문을 작성 방에 보내고 `방:seq`를 출력한다. 이 값을 `rtwait.sh`에 넘긴다.
 - 관측 한계: 리뷰 본문만 보낸다. 줄 단위 리뷰 댓글(`pulls/<n>/reviews/<id>/comments`)은 포함하지 않는다. 작업 폴더의 존재만 확인하며 그 폴더가 해당 branch에 있는지는 확인하지 않는다.
 
@@ -130,6 +139,7 @@ tools/orchestrate/ci_wait.sh <PR 번호>
 ```
 
 - PR의 현재 head 커밋 상태를 `ORCH_CI_INTERVAL`(기본 30초)마다 최대 `ORCH_CI_TRIES`(기본 80)회 조회한다. pending·none을 벗어나면 `#<번호> head=<sha7> <context>=<상태>`를 출력한다. 끝까지 pending이면 종료 코드 3이다.
+- 상태가 `failure`·`error`면 그 상태의 `target_url` 끝 번호(job id)로 `actions/jobs/<id>/logs`를 받아 `--- FAIL`·`FAIL`·`panic:` 줄을 최대 40줄 보여 준다. 로그를 못 받으면 그 사실을 stderr에 남긴다.
 - 관측 한계: Gitea 상태 알림을 받을 수단이 없어 폴링한다. 백그라운드 명령으로 실행한다. 대기 중 head가 바뀌면 다음 조회부터 새 head를 본다. `ORCH_CI_CONTEXT`가 없으면 통합 state를 쓴다. 통합 state는 상태가 하나라도 pending이면 pending이다.
 
 ### `reviewer_check.py`·`reviewer_watch.sh` — 상대 개발자 반응 감시
@@ -150,7 +160,10 @@ tools/orchestrate/reviewer_watch.sh 2026-10-27T05:00:00Z
 ```bash
 python tools/orchestrate/pr_overlap.py [--repo-dir <clone>] [--prs 61,64] [--json]
 python tools/orchestrate/pr_overlap.py --integrate [--order 61,64,66] [--test-cmd "go test ./..."]
+python tools/orchestrate/pr_overlap.py --plan <branch | 경로[,경로#절 제목 일부,...]> [--exclude 61]
 ```
+
+- `--plan`: 작업을 배정하기 전에(assign_fix, 새 방 시작) 그 작업이 고칠 파일·Markdown 절을 이미 고치는 열린 PR을 보여 준다. 값이 브랜치(원격 또는 로컬)면 base와의 merge-base 이후 바뀐 파일·절을 쓴다. 아니면 쉼표로 이은 경로 목록이고, `경로#글자`는 제목 경로에 그 글자가 든 절을 뜻한다. 출력은 PR·브랜치·같은 파일·같은 절 표와 "먼저 병합되면 재기반이 필요할 수 있다"는 안내다. 정보용이며 배정을 막지 않는다. 10-28 PR 44개 기록 재생에서, 같은 파일·절 작업을 직렬화하면 재기반은 25회 → 2회로 줄었지만 마지막 병합이 33~41시간 늦어졌다.
 
 - `ORCH_REPO`의 열린 PR을 읽는다. 각 PR의 `refs/pull/<n>/head`와 base 브랜치를 로컬 clone의 전용 이름공간 `refs/orch/pull/<n>`·`refs/orch/base/<branch>`로 fetch한다. 로컬 브랜치, `origin/*`, 원격은 바꾸지 않는다.
 - 출력 표는 아래와 같다. `--json`은 같은 내용을 JSON으로 낸다.
@@ -188,6 +201,7 @@ python tools/orchestrate/after_merge.py <병합된 PR 번호> --assign [--dry-ru
   - Gitea `mergeable=false`
   - 병합된 PR 브랜치 위에 쌓였는지. 병합된 head를 품었지만 병합 커밋은 품지 않은 경우만 센다. 병합 뒤 base로 재기반한 브랜치는 병합 커밋 방식에서도 병합된 head를 품기 때문이다.
 - 같은 기준으로 병합된 PR 브랜치 위에 쌓인 로컬 브랜치도 함께 적는다.
+- 줄 충돌은 "줄 충돌" 칸에 `문서 줄만`(충돌 파일이 모두 `.md`·`.markdown`·`.rst`·`.txt`)과 `코드 포함`으로 나눈다. 표 아래에 두 묶음을 따로 적는다. 문서 줄만 충돌한 PR은 문맥이 큰 작성 좌석에 맡기는 것보다 오케스트레이터가 직접 재기반하는 편이 싸다(10-28 #79 병합 뒤 `docs/ARCHITECTURE.md` 두 행 충돌을 직접 풀었다).
 - `--assign`은 영향받은 브랜치 가운데 `ORCH_BRANCH_ROOMS`에 있는 것에만 재기반 지시를 보낸다(`ORCH_REBASE_TEMPLATE`, `$merged_pr`·`$branch`·`$reasons`·`$worktree` 등을 치환한다). 보낸 것마다 `방:seq`를 출력한다.
 - 보내기 전에 대상 worktree의 점유를 검사한다. worktree는 대응표의 `worktree`, 없으면 `--repo-dir`의 worktree 목록에서 그 브랜치가 체크아웃된 폴더다. 점유 중이거나 worktree를 모르면 보내지 않고 `SKIP`을 출력하며 종료 코드 1로 끝난다. `--dry-run`은 보내지 않고 지시문을 출력한다.
 - 관측 한계:

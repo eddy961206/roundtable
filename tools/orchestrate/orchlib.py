@@ -11,6 +11,7 @@ import os
 import posixpath
 import re
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -105,14 +106,39 @@ def read_blobs(repo, specs):
     return blobs
 
 
+def tea_get(cfg, path, raw=False):
+    """GET one Gitea API path through tea. Returns parsed JSON, or the text when raw.
+
+    A failed call (non-zero exit, empty reply, or a non-JSON reply when JSON is expected)
+    is retried ORCH_TEA_RETRIES times (default 3) with a growing pause, because tea now
+    and then returns an empty body under load (2026-10-28 ci_wait on #81·#82). After the
+    last try it exits with the command, exit code, stderr and the start of stdout. A
+    failure is never read as "nothing there". Only GETs are retried: a POST is not
+    idempotent."""
+    tries = int(cfg.get('ORCH_TEA_RETRIES') or 3)
+    cmd = [cfg['ORCH_TEA'], 'api', path]
+    for n in range(1, tries + 1):
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+        why = None
+        if r.returncode != 0:
+            why = 'exit %d' % r.returncode
+        elif not r.stdout.strip():
+            why = 'empty reply'
+        elif not raw:
+            try:
+                return json.loads(r.stdout)
+            except ValueError:
+                why = 'not JSON'
+        else:
+            return r.stdout
+        if n < tries:
+            time.sleep(2 * n)
+    raise SystemExit('tea api %s failed after %d tries (%s): command %s, exit %d, stderr: %s, stdout: %s' % (
+        path, tries, why, ' '.join(cmd), r.returncode, r.stderr.strip()[:300] or '-', r.stdout.strip()[:200] or '-'))
+
+
 def tea_api(cfg, path):
-    r = subprocess.run([cfg['ORCH_TEA'], 'api', path], capture_output=True, text=True, encoding='utf-8')
-    if r.returncode != 0:
-        raise SystemExit('tea api %s failed: %s' % (path, r.stderr.strip()[:300]))
-    try:
-        return json.loads(r.stdout)
-    except ValueError:
-        raise SystemExit('tea api %s: not JSON: %s' % (path, r.stdout[:300]))
+    return tea_get(cfg, path)
 
 
 def open_pulls(cfg):

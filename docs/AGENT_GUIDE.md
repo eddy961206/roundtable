@@ -81,13 +81,14 @@ roundtable 방과 Gitea PR을 오케스트레이터 한 명이 이어 붙일 때
 | 도구 | 언제 쓰나 |
 |---|---|
 | `rtwait.sh <방>:<seq> ...` | `rt wait`를 백그라운드로 돌리고 끝난 방의 마지막 답 끝부분만 볼 때. |
-| `gpost.sh comment\|pr` + `glint.py` | Gitea에 댓글·PR을 파일 본문으로 게시할 때. 게시 전에 초안 문구·로컬 경로·빈 코드 조각을 막는다. |
-| `assign_fix.sh <PR> <리뷰id> <작성방> <branch>` | 상대 개발자의 리뷰를 작성 방에 수정 지시로 넘길 때. 작성 좌석 하나에게만 보낸다(이름에 `writer`·`작성`, 아니면 `TARGET=<좌석 id>`). 작성 좌석 문맥이 크면 먼저 `rt handoff`(6.4). |
+| `gpost.sh comment\|pr` + `glint.py` | Gitea에 댓글·PR을 파일 본문으로 게시할 때. 게시 전에 초안 문구·로컬 경로·빈 코드 조각을 막고, worktree를 알면(`pr`, `push_and_notify.sh`, `ORCH_LINT_WORKTREE`) 본문 백틱 안 `Test…` 이름이 그 worktree에 `func <이름>(`으로 있는지 본다. |
+| `assign_fix.sh <PR> <리뷰id> <작성방> <branch>` | 상대 개발자의 리뷰를 작성 방에 수정 지시로 넘길 때. 작성 좌석 하나에게만 보낸다(이름에 `writer`·`작성`, 아니면 `TARGET=<좌석 id>`). 작성 좌석 문맥이 `ORCH_HANDOFF_TOKENS`(기본 20만, 0=끔)를 넘으면 먼저 `rt handoff`를 보내고 요약 턴이 끝난 뒤 배정한다. `ORCH_REPO_DIR`가 있으면 같은 파일·절을 고치는 열린 PR을 정보로 보여 준다. |
 | `queue_review.sh <label> <worktree> <작성방> <검수방> "<초점>"` | 작성이 끝난 worktree를 재기반하고 검수 방에 검수를 요청할 때. 검수 좌석 하나에게만 보낸다(이름에 `reviewer`·`검수`, 아니면 `TARGET=<좌석 id>`). |
-| `ci_wait.sh <PR>` | PR head의 CI 결과를 기다릴 때(병합하지 않음). |
+| `ci_wait.sh <PR>` | PR head의 CI 결과를 기다릴 때(병합하지 않음). 실패면 job 로그의 FAIL 줄을 보여 준다. |
+| `push_and_notify.sh <worktree> <branch> <PR> <본문> [--force] [--ci]` | 수정·재기반 뒤 push하고 PR에 알릴 때. `--ci`면 그 head의 CI가 통과한 뒤에만 댓글·재리뷰 요청을 보낸다. |
 | `reviewer_check.py` / `reviewer_watch.sh <since>` | 상대 개발자의 새 댓글·리뷰를 확인하거나 기다릴 때. |
-| `pr_overlap.py [--integrate]` | 병합 전에 열린 PR끼리 줄 충돌·같은 파일·같은 절·스키마 번호 충돌을 볼 때. |
-| `after_merge.py <PR> [--assign]` | 병합 직후 영향받는 열린 PR을 찾고 재기반 지시를 보낼 때. |
+| `pr_overlap.py [--integrate]` | 병합 전에 열린 PR끼리 줄 충돌·같은 파일·같은 절·스키마 번호 충돌을 볼 때. `--plan <branch 또는 경로,경로#절>`은 배정 전에 같은 파일·절을 고치는 열린 PR을 보여 준다(정보용, 막지 않음). |
+| `after_merge.py <PR> [--assign]` | 병합 직후 영향받는 열린 PR을 찾고 재기반 지시를 보낼 때. 줄 충돌을 `문서 줄만`·`코드 포함`으로 나눈다. 문서 줄만 충돌한 PR은 작성 좌석 대신 오케스트레이터가 직접 재기반하는 편이 싸다. |
 | `worktree_claims.py check\|claim\|release\|list` | 한 worktree에 두 방이 동시에 일하지 않게 막을 때. |
 
 ## 4. 좌석이 메시지를 받는 규칙
