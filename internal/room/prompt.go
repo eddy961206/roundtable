@@ -172,6 +172,11 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 // at once, so a longer wait costs no time.
 var waitRule = map[string]string{
 	"codex": "- 시험·빌드처럼 오래 걸릴 수 있는 명령은 exec_command의 yield_time_ms를 30000으로 주세요(먼저 끝나면 바로 돌아옵니다). 그래도 실행 중이면 빈 write_stdin에 yield_time_ms 300000을 줘서 끝날 때까지 한 번에 기다리세요. 1초 간격으로 반복 확인하지 마세요.\n",
+	// agy moves a command past WaitMsBeforeAsync (max 10 s) to a background task and
+	// wakes the model when it ends. Without this rule a Flash seat looped schedule timers
+	// and manage_task status for a 10-minute test: 75 waits, 4.95M input vs 28k with the
+	// rule, same result and time (2026-10-28 T3, docs/토큰효율_측정_20261028.md).
+	"agy": "- 시험·빌드처럼 오래 걸리는 명령이 백그라운드 작업으로 넘어가면, manage_task로 상태를 확인하거나 schedule 타이머를 걸지 마세요. \"실행 중, 끝나면 결과를 보고\" 한 줄만 쓰고 기다리세요. 명령이 끝나면 결과 알림으로 다시 깨어납니다.\n",
 }
 
 // forkMovedNote leads a forked first turn whose CLI directory differs from the base room's.
