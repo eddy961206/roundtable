@@ -97,6 +97,7 @@ type page struct {
 	Messages []apiMessage      `json:"messages"`
 	Queue    []apiTurn         `json:"queue"`
 	Requests []json.RawMessage `json:"requests"`
+	Asks     []askView         `json:"asks"`
 	History  struct {
 		HasMore   bool  `json:"has_more"`
 		BeforeSeq int64 `json:"before_seq"`
@@ -205,6 +206,27 @@ type readMessage struct {
 	Chars       int              `json:"chars,omitempty"`      // the summarized answer's original length in characters
 }
 
+type askQuestion struct {
+	Title   string   `json:"title"`
+	Options []string `json:"options,omitempty"`
+}
+
+// askView is a seat's question to the person (room/asks.go). status: waiting
+// (the asking reply still runs), open (it ended, no answer), answered (rt_answer)
+// or closed (the seat began its next reply first). seq is the asking reply.
+type askView struct {
+	ID        string        `json:"id"`
+	Seat      string        `json:"seat"`
+	Seq       int64         `json:"seq"`
+	Status    string        `json:"status"`
+	Questions []askQuestion `json:"questions"`
+	Answer    string        `json:"answer,omitempty"`
+	AnswerSeq int64         `json:"answer_seq,omitempty"`
+	ClosedSeq int64         `json:"closed_seq,omitempty"`
+}
+
+func (a askView) unanswered() bool { return a.Status == "waiting" || a.Status == "open" }
+
 // omitted_chars counts what was cut from the messages held. omitted_messages
 // counts selected messages left out whole; first_seq is then the oldest seq held.
 type readResult struct {
@@ -215,6 +237,9 @@ type readResult struct {
 	OmittedChars    int64         `json:"omitted_chars"`
 	OmittedMessages int           `json:"omitted_messages,omitempty"`
 	FirstSeq        int64         `json:"first_seq,omitempty"`
+	// asks are the seat questions asked in the selected replies, and every
+	// one still unanswered however old (answer with rt_answer).
+	Asks []askView `json:"asks,omitempty"`
 	// unsettled is the lowest selected seq still streaming or left out whole,
 	// counted even when the message is not in the array; 0 when none.
 	unsettled int64
@@ -334,6 +359,11 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 		result.Messages[i].ReplyTo = seq
 	}
 	slices.Reverse(result.Messages)
+	for _, a := range latest.Asks {
+		if a.Seq > after || a.unanswered() {
+			result.Asks = append(result.Asks, a)
+		}
+	}
 	if result.OmittedMessages > 0 {
 		result.Truncated = true
 		result.FirstSeq = result.Messages[0].Seq

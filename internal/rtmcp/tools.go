@@ -69,19 +69,22 @@ func (s *Server) tools() []tool {
 		{Name: "rt_post", Description: "메시지 전송. 결과의 seq는 보낸 메시지 번호. target은 좌석 id(rt_list_rooms의 participants[].id)이며 생략하면 방 규칙대로 전달. wait_seconds(0~600) 생략·0이면 기다리지 않음. 지정하면 이 메시지로 시작된 턴과 연쇄 호출 턴이 끝날 때까지 대기하고 답변도 반환. 실행 중인 대상에 끼워 넣은 입력(steering)이면 그 답의 seq가 보낸 seq보다 낮을 수 있음. 시간 초과(timed_out)는 실행 취소가 아니며, 그때 결과의 resume_after_seq를 rt_read의 after_seq로 써서 이어 읽음", InputSchema: object(map[string]schema{
 			"room": id, "text": text, "target": id, "wait_seconds": integer(0, &limit),
 		}, "room", "text")},
-		{Name: "rt_read", Description: "메시지를 오래된 순으로 조회. after_seq가 있으면 그보다 큰 seq만, 생략하면 최신 메시지까지. max_chars(기본 20000, 본문 합계의 Unicode 문자 수)는 최신 메시지부터 채움: 경계 메시지는 앞을 줄여 truncated, 담지 못한 오래된 메시지는 빼고 omitted_messages(개수)·first_seq(담긴 첫 seq)로 알림. reply_to는 그 답이 응답한 메시지의 seq", InputSchema: object(map[string]schema{
+		{Name: "rt_read", Description: "메시지를 오래된 순으로 조회. after_seq가 있으면 그보다 큰 seq만, 생략하면 최신 메시지까지. max_chars(기본 20000, 본문 합계의 Unicode 문자 수)는 최신 메시지부터 채움: 경계 메시지는 앞을 줄여 truncated, 담지 못한 오래된 메시지는 빼고 omitted_messages(개수)·first_seq(담긴 첫 seq)로 알림. reply_to는 그 답이 응답한 메시지의 seq. asks는 조회한 답이 사용자에게 한 질문과, 오래됐어도 아직 답하지 않은(waiting·open) 질문(rt_answer 참고)", InputSchema: object(map[string]schema{
 			"room": id, "after_seq": integer(0, nil), "max_chars": integer(1, nil),
 		}, "room")},
-		{Name: "rt_wait", Description: "여러 방 중 하나 이상이 끝날 때까지 대기. rooms는 \"방ID:after_seq,방ID:after_seq\"(after_seq는 rt_post 결과의 seq; 생략하면 대기 시작 시점 이후 답만 셈). 방이 끝났다는 뜻은 실행·대기 중인 턴이 없고 after_seq 뒤에 좌석 답이 있다는 것. 결과 ready[]는 끝난 방마다 rt_read와 같은 형식(after_seq 뒤 메시지, 방마다 max_chars 예산, next_seq), waiting은 남은 방을 다음 rt_wait의 rooms로 그대로 쓸 수 있는 값. timeout_seconds(1~3600, 기본 600)가 지나면 timed_out:true. 폴링 없이 서버 SSE로 깨어남. 긴 대기는 셸 백그라운드 실행을 권장. summary:true면 좌석 답마다 판정 줄(판정·결론·verdict)과 마커·신호 줄([[...]], WORK:DONE)만 text에 남기고 summarized:true·chars(원래 글자 수)를 붙임. 원문이 필요하면 rt_read", InputSchema: object(map[string]schema{
+		{Name: "rt_wait", Description: "여러 방 중 하나 이상이 끝날 때까지 대기. rooms는 \"방ID:after_seq,방ID:after_seq\"(after_seq는 rt_post 결과의 seq; 생략하면 대기 시작 시점 이후 답만 셈). 방이 끝났다는 뜻은 실행·대기 중인 턴이 없고 after_seq 뒤에 좌석 답이 있다는 것. 결과 ready[]는 끝난 방마다 rt_read와 같은 형식(after_seq 뒤 메시지, 방마다 max_chars 예산, next_seq), waiting은 남은 방을 다음 rt_wait의 rooms로 그대로 쓸 수 있는 값. timeout_seconds(1~3600, 기본 600)가 지나면 timed_out:true. 폴링 없이 서버 SSE로 깨어남. 긴 대기는 셸 백그라운드 실행을 권장. summary:true면 좌석 답마다 판정 줄(판정·결론·verdict)과 마커·신호 줄([[...]], WORK:DONE)만 text에 남기고 summarized:true·chars(원래 글자 수)를 붙임. 원문이 필요하면 rt_read. 좌석이 턴 중 사용자에게 새 질문을 하면 방이 끝나기 전이라도 asked:true로 돌아옴. asking[]은 아직 끝나지 않은 방의 답하지 않은 질문(방·asks), ready 방의 질문은 그 방 결과의 asks. 답은 rt_answer", InputSchema: object(map[string]schema{
 			"rooms": waitList, "timeout_seconds": integer(1, &waitLimit), "max_chars": integer(1, nil), "summary": {Type: "boolean"},
 		}, "rooms")},
 		{Name: "rt_usage", Description: "방별 토큰 사용량 합계와 좌석별 내역. rooms는 쉼표로 이은 방ID. 공급사별 차이를 맞춘 값: input_tokens(처리한 입력 전체)=cached_tokens(캐시 읽기)+uncached_tokens(나머지, 캐시 쓰기 포함), output_tokens, cost_usd(보고하는 공급사만), max_context_tokens(턴의 가장 큰 단일 호출), turns·errors·duration_ms. totals는 지정한 방 전체 합", InputSchema: object(map[string]schema{"rooms": usageList}, "rooms")},
-		{Name: "rt_seats", Description: fmt.Sprintf("여러 방의 활성 좌석 상태를 한 번에 조회. rooms(쉼표로 이은 방ID)를 생략하면 보관하지 않은 최근 방 limit개(기본 %d, 최대 %d). 좌석마다 status(idle·queued·running), ctx(마지막 호출 문맥 토큰)·window(모델 문맥 창), session(이어 쓰는 CLI 세션 유무), turns, held(입력 예산 보류 사유), last_seq·last(최근 %d개 메시지 안의 마지막 답: 상태와 판정·신호 줄, 판정 줄이 없으면 끝 몇 줄). ctx가 수십만이면 다음 일을 배정하기 전에 rt_handoff를 고려", defaultListRooms, maxListRooms, seatsWindow), InputSchema: object(map[string]schema{"rooms": usageList, "limit": integer(1, &roomLimit)})},
+		{Name: "rt_seats", Description: fmt.Sprintf("여러 방의 활성 좌석 상태를 한 번에 조회. rooms(쉼표로 이은 방ID)를 생략하면 보관하지 않은 최근 방 limit개(기본 %d, 최대 %d). 좌석마다 status(idle·queued·running), ctx(마지막 호출 문맥 토큰)·window(모델 문맥 창), session(이어 쓰는 CLI 세션 유무), turns, held(입력 예산 보류 사유), last_seq·last(최근 %d개 메시지 안의 마지막 답: 상태와 판정·신호 줄, 판정 줄이 없으면 끝 몇 줄). asks(그 좌석이 사용자에게 한 질문 중 답하지 않은 것, rt_answer 참고). ctx가 수십만이면 다음 일을 배정하기 전에 rt_handoff를 고려", defaultListRooms, maxListRooms, seatsWindow), InputSchema: object(map[string]schema{"rooms": usageList, "limit": integer(1, &roomLimit)})},
 		{Name: "rt_archive_rooms", Description: "여러 방을 한꺼번에 보관(archived:true, 기본)하거나 보관 해제(false). 보관한 방은 rt_list_rooms·rt_seats·화면 목록에서 빠지지만 기록·세션은 그대로이고 계속 쓸 수 있음(삭제가 아님). 실행·대기 중인 턴이 있는 방은 보관하지 않고 failed에 사유를 남김. 결과 archived·failed", InputSchema: object(map[string]schema{"rooms": usageList, "archived": {Type: "boolean"}}, "rooms")},
 		{Name: "rt_version", Description: "실행 중인 Roundtable 빌드와 공개 브랜치 비교(GET /api/version). state: behind면 update_available:true이고 behind_by·commits(최근 5개, 최신순)가 새 커밋. up_to_date·ahead·diverged·unknown_revision(원격에 없는 로컬 커밋)·local_build(빌드에 커밋 정보 없음)·pending·off·error. running.modified는 커밋하지 않은 변경이 있던 빌드. checked_at은 마지막 확인 시각(ms). 서버가 주기적으로 확인한 값을 읽기만 하며 GitHub를 직접 부르지 않음", InputSchema: object(map[string]schema{})},
 		{Name: "rt_discuss", Description: "토론 시작. blind_first 생략 시 방의 기본 설정 사용. 좌석들이 이미 같은 질문에 답했다면 블라인드 1라운드는 독립 답을 다시 받느라 호출을 좌석 수(N)만큼 더 쓰므로 blind_first:false를 고려", InputSchema: object(map[string]schema{
 			"room": id, "rounds": integer(1, nil), "blind_first": {Type: "boolean"},
 		}, "room", "rounds")},
+		{Name: "rt_answer", Description: "좌석이 턴 중 사용자에게 한 질문(Codex request_user_input_async)에 답함. 질문은 rt_read·rt_wait 결과의 asks와 rt_wait의 asking, rt_seats 좌석의 asks에 id·seat·seq(질문한 답)·status·questions[{title, options}]로 나옴. status: waiting(질문한 턴이 아직 실행 중; 좌석은 답을 기다리지 않고 계속 진행함), open(턴이 끝났고 답 없음), answered(답함), closed(답 없이 좌석이 다음 답을 시작해 질문이 지나감). waiting·open만 답할 수 있음. choice(1부터)는 질문이 하나이고 선택지가 있을 때 그 선택지를, 아니면 text로 자유 답. 둘 중 하나만 지정. 답은 그 좌석을 대상으로 한 사용자 메시지로 전달되며(Codex는 실행 중 끼워 넣기를 못 하므로 다음 턴), 결과의 seq를 rt_wait의 after_seq로 씀", InputSchema: object(map[string]schema{
+			"room": id, "id": id, "choice": integer(1, nil), "text": text,
+		}, "room", "id")},
 		{Name: "rt_requests", Description: "참가자 간 요청 목록과 상태 조회", InputSchema: object(map[string]schema{"room": id}, "room")},
 		{Name: "rt_cancel_request", Description: "참가자 간 요청 취소", InputSchema: object(map[string]schema{"room": id, "request": id}, "room", "request")},
 		{Name: "rt_forward", Description: "다른 방의 메시지(from_room의 seq)를 원문 그대로 이 방(room)에 전달. 오케스트레이터가 검수 원문 등을 읽고 다시 쓰지 않아도 됨(그 토큰을 아낌). target(좌석 id)을 주면 그 좌석에게만, 생략하면 활성 좌석 전원. 받는 좌석의 이력에는 출처(방 제목·방ID#seq·작성자)와 note(선택, 300자 이내 한 줄 메모)가 붙음. 원문 속 @멘션과 [[REQUEST]] 등 마커는 인용으로 보고 실행하지 않음. 작업 폴더 점유·대상 확인은 rt_post와 같음. 결과의 seq는 rt_wait의 after_seq로 씀", InputSchema: object(map[string]schema{
@@ -214,6 +217,7 @@ type arguments struct {
 	QuietDone          bool               `json:"quiet_done"`
 	MaxChain           int                `json:"max_chain"`
 	Archived           *bool              `json:"archived"`
+	Choice             int                `json:"choice"`
 }
 
 const (
@@ -364,6 +368,22 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 		var result json.RawMessage
 		err := s.api(ctx, "POST", base+"/markers", map[string]any{"seq": a.Seq}, &result)
 		return result, err
+	case "rt_answer":
+		var answered struct {
+			Message struct {
+				Seq int64 `json:"seq"`
+			} `json:"message"`
+			Ask   askView `json:"ask"`
+			Error string  `json:"error"`
+		}
+		if err := s.api(ctx, "POST", base+"/asks/"+a.ID+"/answer", map[string]any{"choice": a.Choice, "text": a.Text}, &answered); err != nil {
+			return nil, err
+		}
+		out := map[string]any{"seq": answered.Message.Seq, "ask": answered.Ask}
+		if answered.Error != "" {
+			out["error"] = answered.Error
+		}
+		return out, nil
 	case "rt_cancel_request":
 		var result json.RawMessage
 		err := s.api(ctx, "POST", base+"/requests/"+a.Request+"/cancel", map[string]any{}, &result)

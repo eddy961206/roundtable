@@ -62,6 +62,7 @@ type roomState struct {
 	deleted   bool // late invocation callbacks must not recreate a deleted room
 	stopGen   int  // prevents a stopped turn from scheduling follow-up work
 	resetGen  int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
+	openAsks  int  // asks neither answered nor closed (asks.go); RoomSummary.Asks
 
 	workBusy          map[string]bool   // plan creation, submit checks or cleanup running git outside h.mu
 	participantEvents map[string]string // last serialized seat state sent to subscribers
@@ -129,6 +130,7 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		}
 		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
 		backfillInput(rs)
+		rs.openAsks = countOpenAsks(rs.msgs)
 		rs.requests, err = store.loadRequests(r.ID)
 		if err != nil {
 			return nil, err
@@ -316,6 +318,7 @@ type RoomSummary struct {
 	Messages  int    `json:"messages"`
 	Active    bool   `json:"active"`
 	Archived  bool   `json:"archived,omitempty"`
+	Asks      int    `json:"asks,omitempty"` // seat questions to the person still waiting or open (asks.go)
 }
 
 func (h *Hub) Rooms() []RoomSummary {
@@ -330,7 +333,7 @@ func (h *Hub) Rooms() []RoomSummary {
 }
 
 func (rs *roomState) summary() RoomSummary {
-	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0, Archived: rs.room.Archived}
+	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0, Archived: rs.room.Archived, Asks: rs.openAsks}
 }
 
 func sortSummaries(s []RoomSummary) {
@@ -344,6 +347,7 @@ func sortSummaries(s []RoomSummary) {
 // Snapshot is everything the page needs to render a room.
 type Snapshot struct {
 	Requests   []Request               `json:"requests"`
+	Asks       []AskView               `json:"asks"` // every seat question in the room, oldest first (asks.go)
 	Decisions  []Decision              `json:"decisions"`
 	Room       *Room                   `json:"room"`
 	Messages   []*Message              `json:"messages"`
@@ -952,6 +956,12 @@ func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentID
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
 	}
+	return h.acceptUser(rs, text, target, fwd, attachmentIDs)
+}
+
+// acceptUser stores and routes a user message. Caller holds h.mu.
+func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource, attachmentIDs []string) (*Message, error) {
+	id := rs.room.ID
 	if target != "" {
 		p := rs.room.participant(target)
 		if p == nil || p.Removed || !p.Enabled {
@@ -1512,6 +1522,7 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	t, p, prov := pr.t, pr.p, pr.prov
 	msg := rs.nextMessage("agent", p.ID, "")
 	msg.Status, msg.TurnID, msg.Reason, msg.Round, msg.Model = "streaming", t.ID, t.Reason, t.Round, p.Model
+	h.closeAsks(rs, p.ID, msg)
 	// Discussion/work grouping can use synthetic IDs with no trigger message.
 	for _, trigger := range rs.msgs {
 		if trigger.ID == t.Group {
@@ -1557,6 +1568,15 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		observed := time.Since(started).Milliseconds()
 		h.mu.Lock()
 		if rs.deleted || tracePersistenceError != nil {
+			h.mu.Unlock()
+			return
+		}
+		if e.Kind == agent.KindAsk {
+			// The reply holds the question; the trace view has no row for it.
+			if err := h.recordAsk(rs, msg, e); err != nil {
+				tracePersistenceError = err
+				cancel()
+			}
 			h.mu.Unlock()
 			return
 		}

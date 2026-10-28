@@ -31,6 +31,7 @@ Roundtable은 서로 다른 공급사의 AI CLI가 한 방에서 대화·리뷰�
 8. 409 "작업 폴더 사용 중"은 같은 폴더의 다른 방이 끝난 뒤 다시 보낸다. 한도 오류 보류(`held_until`)·입력 예산 보류(`budget_held`) 안내가 나오면 같은 좌석으로 곧장 재시도하지 말고 안내의 다음 행동을 따른다.
 9. 작성·검수 방은 `create_room --quiet_done true`로 만든다. 검수 통과(`[[REQUEST_DONE]]`) 뒤 작성 좌석이 "승인됐어"만 쓰며 문맥 전체를 다시 읽는 턴이 없어진다. 수정은 검수 좌석의 `[[REQUEST:@작성]]`으로 그대로 돈다.
 10. 끝난 방은 `rt archive_rooms --rooms <방>,...`으로 보관한다(목록에서만 숨김, 기록·세션 유지). 삭제는 사람에게 확인받는다.
+11. 좌석(Codex)이 턴 중 사용자에게 질문하면 `rt wait`가 `asked:true`로 일찍 돌아오고, 질문은 `asks`·`asking`(`rt read`·`rt wait`·`rt seats`)에 `id`·`status`·선택지로 나온다. 좌석은 답을 기다리지 않고 진행한다. `rt answer --room <방> --id <질문 id> --choice N`(또는 `--text`)으로 답하되, 권한·파괴적 작업 승인은 사람에게 확인받은 뒤 답한다.
 
 ## 기본 흐름
 1. `roundtable rt list_rooms --limit 5` — 방과 좌석 id 확인. 좌석 상태·문맥 크기·마지막 답 요약은 `roundtable rt seats --rooms <방>,...`. 알맞은 방이 없으면 `create_room`(같은 프로젝트의 여러 작업이면 안내서의 기반 세션 포크).

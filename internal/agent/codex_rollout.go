@@ -2,6 +2,8 @@ package agent
 
 import (
 	"bufio"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -51,7 +53,11 @@ func (w *rolloutWatcher) scan(thread string, emit func(Event)) {
 			rf = &rolloutFile{path: path, id: meta.id, parent: meta.parent, name: meta.name}
 			w.known[path] = rf
 		}
-		if rf.id == "" || !w.threads[rf.parent] || rf.id == thread {
+		if rf.id == thread {
+			w.tailAsks(rf, emit)
+			continue
+		}
+		if rf.id == "" || !w.threads[rf.parent] {
 			continue
 		}
 		w.threads[rf.id] = true
@@ -187,6 +193,66 @@ func (w *rolloutWatcher) tail(rf *rolloutFile, emit func(Event)) {
 			emit(x)
 		}
 	}
+}
+
+// tailAsks reads the turn's own rollout for questions to the person. codex exec
+// --json prints request_user_input_async only as a plain agent_message (title and
+// "- option" lines); the rollout keeps the call id and the structured questions.
+// A resumed thread's rollout holds earlier turns, so lines before since are skipped.
+func (w *rolloutWatcher) tailAsks(rf *rolloutFile, emit func(Event)) {
+	f, err := os.Open(rf.path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if _, err := f.Seek(rf.offset, 0); err != nil {
+		return
+	}
+	r := takeTranscriptReader(f)
+	defer putTranscriptReader(r)
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			break // incomplete trailing line stays for the next scan
+		}
+		rf.offset += int64(len(line))
+		if x, ok := rolloutAsk(line, w.since); ok {
+			emit(x)
+		}
+	}
+}
+
+// rolloutAsk converts a request_user_input_async call written at or after since.
+func rolloutAsk(line string, since time.Time) (Event, bool) {
+	if !strings.Contains(line, `"request_user_input_async"`) {
+		return Event{}, false
+	}
+	m := parseLine(line)
+	p := obj(m, "payload")
+	if str(m, "type") != "response_item" || str(p, "type") != "function_call" || str(p, "name") != "request_user_input_async" {
+		return Event{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, str(m, "timestamp"))
+	if err != nil || at.Before(since) {
+		return Event{}, false
+	}
+	var args struct {
+		Questions []AskQuestion `json:"questions"`
+	}
+	err = json.Unmarshal([]byte(str(p, "arguments")), &args)
+	if err == nil && len(args.Questions) == 0 {
+		err = fmt.Errorf("questions가 비어 있음")
+	}
+	if err != nil {
+		// The CLI accepted the call, so the person was asked; say so in the trace.
+		x := ev(KindStatus)
+		x.Text = fmt.Sprintf("사용자 질문(%s)의 인자를 해석하지 못함: %v", str(p, "call_id"), err)
+		return x, true
+	}
+	x := ev(KindAsk)
+	x.ID = str(p, "call_id")
+	x.Meta = map[string]any{"questions": args.Questions}
+	return x, true
 }
 
 // rolloutEvents converts one line of a Codex rollout file into subagent events.

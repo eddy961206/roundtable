@@ -20,7 +20,15 @@ const (
 	KindError         = "error"          // Text = error message
 	KindUsage         = "usage"          // Meta = tokens/cost/context_tokens/context_window
 	KindLimits        = "limits"         // Meta = Limits snapshot of the vendor account
+	KindAsk           = "ask"            // ID = question call id, Meta["questions"] = []AskQuestion; the room keeps it on the reply, not in the trace
 )
+
+// AskQuestion is one question an agent asked the person mid-turn (Codex
+// request_user_input_async). Options are suggested answers; free text is allowed.
+type AskQuestion struct {
+	Title   string   `json:"title"`
+	Options []string `json:"options,omitempty"`
+}
 
 // Limits is the vendor account's remaining allowance as the CLI reports it.
 type Limits struct {

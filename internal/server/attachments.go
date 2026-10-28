@@ -79,6 +79,29 @@ func (s *Server) applyMarkers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"message": msg})
 }
 
+// answerAsk answers a seat's question (room/asks.go): the answer goes to the
+// seat as a user message addressed to it.
+func (s *Server) answerAsk(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Choice int    `json:"choice"`
+		Text   string `json:"text"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	msg, ask, err := s.hub.AnswerAsk(r.PathValue("id"), r.PathValue("ask"), body.Choice, body.Text)
+	if err != nil && msg == nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if err != nil { // the answer was sent, but the question's status could not be stored
+		writeJSON(w, 200, map[string]any{"message": msg, "ask": ask, "error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": msg, "ask": ask})
+}
+
 func (s *Server) cancelRequest(w http.ResponseWriter, r *http.Request) {
 	request, err := s.hub.CancelRequest(r.PathValue("id"), r.PathValue("rid"))
 	if err != nil {

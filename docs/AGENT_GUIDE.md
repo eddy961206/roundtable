@@ -33,7 +33,7 @@
 | 명령 | 언제 쓰나 |
 |---|---|
 | `list_rooms [--limit N] [--include_archived true]` | 방 id·좌석 id·`enabled`를 찾을 때. 좌석은 이름이 아니라 id로 부른다. 보관한 방은 실행 중이 아니면 빠진다. |
-| `seats [--rooms <방>,...] [--limit N]` | 여러 방의 좌석 상태를 한 번에 볼 때. 좌석마다 `status`(idle·queued·running), `ctx`(마지막 호출 문맥)·`window`, `session`(이어 쓰는 세션 유무), `turns`, `last_seq`·`last`(최근 40개 메시지 안의 마지막 답: 상태와 판정·신호 줄, 판정 줄이 없으면 끝 3줄)가 나온다. `--rooms`를 빼면 보관하지 않은 최근 방 `limit`개(기본 20). 다음 일을 배정하기 전 인계할 좌석을 고를 때 쓴다. |
+| `seats [--rooms <방>,...] [--limit N]` | 여러 방의 좌석 상태를 한 번에 볼 때. 좌석마다 `status`(idle·queued·running), `ctx`(마지막 호출 문맥)·`window`, `session`(이어 쓰는 세션 유무), `turns`, `last_seq`·`last`(최근 40개 메시지 안의 마지막 답: 상태와 판정·신호 줄, 판정 줄이 없으면 끝 3줄), `asks`(그 좌석이 사용자에게 한 질문 중 답하지 않은 것, 아래 **좌석의 사용자 질문**)가 나온다. `--rooms`를 빼면 보관하지 않은 최근 방 `limit`개(기본 20). 다음 일을 배정하기 전 인계할 좌석을 고를 때 쓴다. |
 | `create_room --title --workspace --mode --participants '<JSON>' [--turn_timeout_minutes N] [--quiet_done true] [--max_chain N]` | 작업 하나에 방 하나를 만들 때. `participants[]`는 `provider`·`model`·`effort`·`label`·`role`·`fork_from`. 결과의 좌석 id를 적어 둔다. 긴 작성 턴이 예상되면 턴 시간 상한(5~720분, 기본 45)을 늘린다. 재기반과 전체 검사·변형 시험을 한 턴에 맡기면 Argon도 45분을 넘긴다(2026-10-28 세 방, 120분으로 늘려 끝냄). write 방 좌석은 턴마다 끝나는 시각과 "그 10분 전을 넘길 긴 명령은 시작하지 말고 커밋 뒤 진행 중으로 끝내라"는 안내를 받는다. 작성·검수 방이면 `--quiet_done true`와 왕복에 맞는 `--max_chain`(1~20, 기본 4)을 준다(6.2). |
 | `post --room --text [--target <좌석>] [--wait_seconds N]` | 지시를 보낼 때. 여러 방이면 `--wait_seconds` 없이 보내고 `seq`를 모은다. |
 | `read --room [--after_seq N] [--max_chars N]` | 답 원문을 읽을 때. `after_seq`보다 큰 seq만 나온다. 생략하면 최신부터 20000자다. |
@@ -45,6 +45,7 @@
 | `requests --room` / `cancel_request --room --request` | 좌석 간 `[[REQUEST]]`의 상태를 보거나, 잘못 나간 요청을 취소할 때. |
 | `handoff --room --seat [--note "한 줄"] [--fresh true]` | 한 좌석의 세션이 길어졌을 때(문맥 경보, 작업이 바뀌는 지점). 좌석이 지금 세션에서 인계 요약(근거 위치·결정·남은 일·다음 할 일)을 쓰고, 다음 턴부터 그 요약과 이후 메시지만 든 새 세션을 쓴다. 기반에서 포크한 좌석은 기반을 다시 포크한다(`--fresh true`면 기반 없이). 결과의 `seq`로 `wait`. 조용한 좌석만 받는다: 실행·대기 중인 턴, 미완료 파트, 토론, 한도·예산 보류, 이미 인계됨, 세션 없음, 기반 방 삭제(`--fresh true` 필요)면 사유와 함께 거절한다. 요약 턴은 끼어들기·요청·마커를 처리하지 않고, 인계 뒤 첫 턴이 전달될 때까지 매 턴 새 세션이 요약부터 시작한다. 2026-10-28 A/B에서 다음 검수·수정 턴 입력이 43% 줄었고 결함 발견·수정 결과는 같았다(`docs/토큰효율_측정_20261028.md`). |
 | `cancel_turn --room --seat` | 좌석의 실행 중인 턴 하나만 멈출 때(중복 턴 등). 좌석은 켜진 채로 남아 요청을 계속 받는다. |
+| `answer --room --id <질문 id> (--choice N \| --text "답")` | 좌석이 턴 중 사용자에게 한 질문(`asks`)에 답할 때. `--choice`는 질문이 하나이고 선택지가 있을 때 1부터 센 선택지, 그 밖에는 `--text`. 답은 그 좌석을 대상으로 한 사용자 메시지로 간다. 결과의 `seq`로 `wait`. |
 | `apply_markers --room --seq N` | 오류로 끝난 답(`pending_markers` 있음)이 끝까지 쓰였음을 확인한 뒤 그 답의 마커를 한 번 실행할 때. |
 | `decisions --room` / `update_decision --room --id --status active\|dropped` | 좌석이 남긴 결정 카드(`proposed`)를 확인하고 확정·거절할 때. AGREE는 검증이 아니다. |
 | `archive_rooms --rooms <방>,... [--archived false]` | 끝난 방을 목록에서 숨길 때(보관). 기록·세션은 남고 계속 쓸 수 있다. 실행·대기 중인 방은 `failed`에 사유가 남는다. `--archived false`는 보관 해제. 되돌릴 수 없는 삭제 대신 이것을 쓴다(6.5). |
@@ -55,6 +56,14 @@
 - `read`를 `--after_seq` 없이 부르면 최신 메시지부터 `max_chars`까지만 담는다. 빠진 오래된 메시지는 `omitted_messages`(개수)와 `first_seq`(담긴 첫 seq)로 알린다. 답의 `reply_to`는 그 답이 응답한 메시지의 seq다.
 - `wait`는 한 방이라도 끝나면(실행·대기 턴이 없고 seq 뒤에 좌석 답이 있음) 돌아온다. `ready[]`에 끝난 방의 새 메시지, `waiting`에 남은 방이 있다. 끝났다는 것은 성공했다는 뜻이 아니다. 답의 상태(`done`·`error`)를 본다. `after_seq`를 빼면 대기 시작 뒤의 답만 세므로 이미 도착한 답을 놓친다.
 - `list_rooms`를 주기적으로 부르는 대기 스크립트는 쓰지 않는다.
+
+**좌석의 사용자 질문**
+- Codex 좌석은 턴 중 `request_user_input_async` 도구로 사용자에게 묻는다. 이 도구는 답을 기다리지 않고 바로 돌아오므로 좌석은 그대로 진행한다. `codex exec --json` 출력에는 질문이 평범한 답 문단(질문 다음 줄에 `- 선택지`)으로만 나온다. 서버는 Codex rollout 파일에서 호출 id와 질문·선택지를 읽어 그 답 메시지의 `asks`에 남긴다. roundtable 화면은 이 질문을 따로 그리지 않고 답 본문으로만 보여 준다.
+- 질문은 `read`·`wait`(`ready[]` 방마다)의 `asks`, `wait`의 `asking[]`(아직 끝나지 않은 방), `seats` 좌석의 `asks`에 `id`·`seat`·`seq`(질문한 답)·`status`·`questions[{title, options}]`로 나온다. `read`는 조회 범위 안의 답이 한 질문과, 범위 밖이어도 아직 답하지 않은 질문을 담는다.
+- `status`: `waiting`(질문한 턴이 실행 중이고 답 없음), `open`(그 턴이 끝났고 답 없음), `answered`(`answer`로 답함, `answer`·`answer_seq`), `closed`(답 없이 그 좌석의 다음 답이 시작돼 질문이 지나감, `closed_seq`). 그사이 좌석이 받은 다른 메시지가 사실상 답이었을 수도 있다. `answer`는 `waiting`·`open`만 받는다.
+- 좌석이 새 질문을 하면 `wait`는 방이 끝나기 전이라도 `asked:true`로 돌아온다. `ready[]`는 비어 있을 수 있고 `waiting`은 그대로이므로 답한 뒤(또는 답하지 않기로 한 뒤) 같은 `waiting` 값으로 다시 기다린다. 대기 시작 때 이미 있던 질문으로는 다시 깨지 않는다.
+- 권한·파괴적 작업 승인처럼 사람이 정할 질문은 오케스트레이터가 대신 고르지 말고 사람에게 확인받은 뒤 답한다.
+- Codex는 실행 중인 턴에 입력을 끼워 넣지 못한다. `waiting` 중에 답하면 그 턴이 끝난 뒤 다음 턴으로 전달된다. Claude·agy·OpenCode 좌석의 질문 도구는 다루지 않는다.
 
 ### 3.2 HTTP로만 되는 것
 

@@ -124,6 +124,7 @@ type Message struct {
 	Attachments      []Attachment   `json:"attachments,omitempty"`
 	Requests         []string       `json:"requests,omitempty"`
 	Decisions        []string       `json:"decisions,omitempty"`       // decision cards recorded by this reply's markers
+	Asks             []Ask          `json:"asks,omitempty"`            // questions this reply asked the person (asks.go)
 	Forward          *ForwardSource `json:"forward,omitempty"`         // a copy of another room's message (Hub.Forward)
 	PendingMarkers   int            `json:"pending_markers,omitempty"` // marker lines a failed turn left unapplied (Hub.ApplyMarkers)
 	MarkersApplied   bool           `json:"markers_applied,omitempty"` // a person applied this failed turn's markers: the answer counts as complete

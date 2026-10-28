@@ -36,6 +36,8 @@ type seatRow struct {
 	Held    string `json:"held,omitempty"`
 	LastSeq int64  `json:"last_seq,omitempty"`
 	Last    string `json:"last,omitempty"`
+	// Asks are this seat's questions to the person still waiting or open.
+	Asks []askView `json:"asks,omitempty"`
 }
 
 // seats lists every active seat of the given rooms (or of the newest limit
@@ -69,6 +71,7 @@ func (s *Server) seats(ctx context.Context, rooms string, limit int) (any, error
 			} `json:"room"`
 			Messages []apiMessage `json:"messages"`
 			Queue    []apiTurn    `json:"queue"`
+			Asks     []askView    `json:"asks"`
 		}
 		path := fmt.Sprintf("/api/rooms/%s?limit=%d", id, seatsWindow)
 		if err := s.api(ctx, "GET", path, nil, &p); err != nil {
@@ -92,6 +95,11 @@ func (s *Server) seats(ctx context.Context, rooms string, limit int) (any, error
 			if m, ok := last[sp.ID]; ok {
 				row.LastSeq = m.Seq
 				row.Last = m.Status + ": " + clipLine(strings.ReplaceAll(summarizeText(m.Text), "\n", " / "), 120)
+			}
+			for _, a := range p.Asks {
+				if a.Seat == sp.ID && a.unanswered() {
+					row.Asks = append(row.Asks, a)
+				}
 			}
 			rows = append(rows, row)
 		}
