@@ -34,13 +34,13 @@
 |---|---|
 | `list_rooms [--limit N] [--include_archived true]` | 방 id·좌석 id·`enabled`를 찾을 때. 좌석은 이름이 아니라 id로 부른다. 보관한 방은 실행 중이 아니면 빠진다. |
 | `seats [--rooms <방>,...] [--limit N]` | 여러 방의 좌석 상태를 한 번에 볼 때. 좌석마다 `status`(idle·queued·running), `ctx`(마지막 호출 문맥)·`window`, `session`(이어 쓰는 세션 유무), `turns`, `last_seq`·`last`(최근 40개 메시지 안의 마지막 답: 상태와 판정·신호 줄, 판정 줄이 없으면 끝 3줄)가 나온다. `--rooms`를 빼면 보관하지 않은 최근 방 `limit`개(기본 20). 다음 일을 배정하기 전 인계할 좌석을 고를 때 쓴다. |
-| `create_room --title --workspace --mode --participants '<JSON>' [--turn_timeout_minutes N] [--quiet_done true]` | 작업 하나에 방 하나를 만들 때. `participants[]`는 `provider`·`model`·`effort`·`label`·`role`·`fork_from`. 결과의 좌석 id를 적어 둔다. 긴 작성 턴이 예상되면 턴 시간 상한(5~720분, 기본 45)을 늘린다. 작성·검수 방이면 `--quiet_done true`를 준다(6.2). |
+| `create_room --title --workspace --mode --participants '<JSON>' [--turn_timeout_minutes N] [--quiet_done true] [--max_chain N]` | 작업 하나에 방 하나를 만들 때. `participants[]`는 `provider`·`model`·`effort`·`label`·`role`·`fork_from`. 결과의 좌석 id를 적어 둔다. 긴 작성 턴이 예상되면 턴 시간 상한(5~720분, 기본 45)을 늘린다. 작성·검수 방이면 `--quiet_done true`와 왕복에 맞는 `--max_chain`(1~20, 기본 4)을 준다(6.2). |
 | `post --room --text [--target <좌석>] [--wait_seconds N]` | 지시를 보낼 때. 여러 방이면 `--wait_seconds` 없이 보내고 `seq`를 모은다. |
 | `read --room [--after_seq N] [--max_chars N]` | 답 원문을 읽을 때. `after_seq`보다 큰 seq만 나온다. 생략하면 최신부터 20000자다. |
 | `wait --rooms <방>:<seq>,... [--timeout_seconds N] [--summary true]` | 여러 방 중 먼저 끝난 방을 기다릴 때. 서버 SSE로 깨어나 폴링이 없다. `--summary true`면 좌석 답마다 판정 줄(`판정`·`결론`·`verdict` 뒤 `:`)과 마커·신호 줄만 받고 `chars`로 원래 길이를 본다. 판정 줄이 없는 답(진행 보고 등)은 끝 산문 3줄이 판정 대신 남는다. |
 | `forward --room <받는 방> --from_room <방> --seq N [--target <좌석>] [--note "한 줄"]` | 다른 방의 답(검수 결과 등)을 원문 그대로 넘길 때. 받는 좌석 이력에 출처(방·#seq·작성자)가 붙고, 원문 속 @멘션·마커는 실행되지 않는다. 받은 좌석이 원문을 답에 인용할 때는 ``` 코드 블록 안에 둔다. 코드 블록 밖에 다시 적은 `[[REQUEST]]`·`[[ATTACH]]`·`[[DECISION]]` 줄은 그 좌석 자신의 마커로 실행된다. |
 | `usage --rooms <방>,...` | 좌석·방별 토큰(`input`=`cached`+`uncached`, `output`, `max_context_tokens`, `turns`, `errors`)을 볼 때. `messages.jsonl`을 직접 파싱하지 않는다. |
-| `update_room --room [--title] [--note] [--workspace] [--mode] [--seat_input_budget N] [--room_input_budget N] [--input_warn_tokens N] [--context_warn_percent N] [--turn_timeout_minutes N] [--compact_window_tokens N] [--quiet_done true\|false] [--archived true\|false]` | 방 메모(협업 규칙)를 바꾸거나, 지워진 worktree 대신 새 작업 폴더를 줄 때. 좌석·방 누적 입력 상한(0=없음), 누적 입력 경고 간격(0=1천만, -1=끔), 문맥 경보 비율(0=70, -1=끔), Claude 좌석 자동 압축 기준 `compact_window_tokens`(0=CLI 기본, 100000~1000000)도 여기서 정한다. 압축 기준은 긴 세션의 입력을 줄이지만 턴이 길어진다(A/B -38% 입력, +57% 시간). |
+| `update_room --room [--title] [--note] [--workspace] [--mode] [--seat_input_budget N] [--room_input_budget N] [--input_warn_tokens N] [--context_warn_percent N] [--turn_timeout_minutes N] [--compact_window_tokens N] [--quiet_done true\|false] [--archived true\|false] [--max_chain N]` | 방 메모(협업 규칙)를 바꾸거나, 지워진 worktree 대신 새 작업 폴더를 줄 때. 좌석·방 누적 입력 상한(0=없음), 누적 입력 경고 간격(0=1천만, -1=끔), 문맥 경보 비율(0=70, -1=끔), Claude 좌석 자동 압축 기준 `compact_window_tokens`(0=CLI 기본, 100000~1000000)도 여기서 정한다. 압축 기준은 긴 세션의 입력을 줄이지만 턴이 길어진다(A/B -38% 입력, +57% 시간). |
 | `discuss --room --rounds N [--blind_first false]` | 여러 모델 의견을 라운드로 겨루게 할 때. 이미 같은 질문에 답했으면 `--blind_first false`. |
 | `requests --room` / `cancel_request --room --request` | 좌석 간 `[[REQUEST]]`의 상태를 보거나, 잘못 나간 요청을 취소할 때. |
 | `handoff --room --seat [--note "한 줄"] [--fresh true]` | 한 좌석의 세션이 길어졌을 때(문맥 경보, 작업이 바뀌는 지점). 좌석이 지금 세션에서 인계 요약(근거 위치·결정·남은 일·다음 할 일)을 쓰고, 다음 턴부터 그 요약과 이후 메시지만 든 새 세션을 쓴다. 기반에서 포크한 좌석은 기반을 다시 포크한다(`--fresh true`면 기반 없이). 결과의 `seq`로 `wait`. 조용한 좌석만 받는다: 실행·대기 중인 턴, 미완료 파트, 토론, 한도·예산 보류, 이미 인계됨, 세션 없음, 기반 방 삭제(`--fresh true` 필요)면 사유와 함께 거절한다. 요약 턴은 끼어들기·요청·마커를 처리하지 않고, 인계 뒤 첫 턴이 전달될 때까지 매 턴 새 세션이 요약부터 시작한다. 2026-10-28 A/B에서 다음 검수·수정 턴 입력이 43% 줄었고 결함 발견·수정 결과는 같았다(`docs/토큰효율_측정_20261028.md`). |
@@ -63,7 +63,6 @@
 | 기능 | 요청 | 비고 |
 |---|---|---|
 | 기존 방에 좌석 추가 | `POST /api/rooms/{방}/participants` `{"provider","model","effort","label","role","count","fork_from"}` | 결과는 방 전체 JSON이다. 새 좌석 id는 `participants[]` 끝에 있다. 새 좌석의 첫 턴은 방 기록 전체를 받는다(4절). |
-| 연쇄 한도 바꾸기 | `PATCH /api/rooms/{방}` `{"max_chain":8}` | 1 이상. 방 생성 때 `POST /api/rooms`에 `max_chain`을 줄 수도 있다. 기본 4. |
 | 좌석 켜기·끄기, 이름·모델·추론 수준·역할 | `PATCH /api/rooms/{방}` `{"participants":[{"id":"<좌석>","enabled":true}]}` | 모델·추론 수준은 실행 중에 바꿀 수 없다. 모델을 바꾸면 다음 턴은 새 세션이다. |
 | 토론 라운드·블라인드 기본값 | `PATCH /api/rooms/{방}` `{"discussion_rounds":2,"blind_first_default":false}` | |
 | 좌석 하나 중지 | `POST /api/rooms/{방}/participants/{좌석}/stop` | **좌석을 끈다(`enabled=false`).** 7절 참고. |
@@ -182,10 +181,8 @@ roundtable 방과 Gitea PR을 오케스트레이터 한 명이 이어 붙일 때
 만드는 명령 예시:
 
 ```bash
-roundtable rt --url http://127.0.0.1:8787 create_room --title "작업 X" --workspace <작업 X worktree> --mode write --quiet_done true \
+roundtable rt --url http://127.0.0.1:8787 create_room --title "작업 X" --workspace <작업 X worktree> --mode write --quiet_done true --max_chain 8 \
   --participants '[{"provider":"codex","label":"w1","effort":"high"},{"provider":"agy","model":"gemini-4-argon","label":"r1"}]'
-# max_chain은 HTTP로만 바꾼다. patch.json = {"max_chain":8}
-curl -s -X PATCH http://127.0.0.1:8787/api/rooms/<방> -H "Content-Type: application/json" --data-binary @patch.json
 roundtable rt update_room --room <방> --note - < note.txt
 roundtable rt post --room <방> --target <w1 좌석 id> --text - < task.md
 ```
@@ -255,7 +252,7 @@ roundtable rt post --room <방> --target <w1 좌석 id> --text - < task.md
 | 이어 쓰는 좌석의 턴이 연속으로 실패하거나, `rt usage`의 `max_context_tokens`가 모델 문맥 한도 근처 | 세션 문맥이 한도까지 커졌다. | 같은 지시로 재시도하지 않는다. 턴이 아직 성공하면 `rt handoff`로 새 세션으로 바꾼다. 요약 턴마저 실패하면 새 좌석(또는 새 방)으로 바꾸고, 필요한 상태만 지시에 요약해 준다. |
 | `[[REQUEST:@좌석]]`이 "비활성 또는 삭제된 좌석"·"일치하는 활성 좌석 없음"으로 거절 | 좌석 중지 API를 썼다. `POST .../participants/{좌석}/stop`은 턴만 멈추지 않고 그 좌석을 `enabled=false`로 끈다. | `PATCH /api/rooms/{방}` `{"participants":[{"id":"<좌석>","enabled":true}]}`로 다시 켠다. 그리고 멈춘 일을 새 메시지로 다시 보낸다(취소된 요청은 자동으로 다시 돌지 않는다). 턴만 멈추려면 `rt cancel_turn --room --seat`(또는 `DELETE /api/rooms/{방}/turns/{턴}`)을 쓴다. |
 | 사람 메시지가 "활성 대상 없음"으로 거절 | `--target` 좌석이 꺼져 있다. | 위와 같이 좌석을 켠다. |
-| "연쇄 한도(N)에 도달해 멈췄어" 시스템 메시지 | 작성·검수 왕복이 `max_chain`을 넘었다. | 의도한 왕복이면 `PATCH {"max_chain":8}` 뒤 멈춘 좌석에게 직접 보낸다. 의도하지 않았으면 메모의 왕복 규칙을 확인한다. |
+| "연쇄 한도(N)에 도달해 멈췄어" 시스템 메시지 | 작성·검수 왕복이 `max_chain`을 넘었다. | 의도한 왕복이면 `rt update_room --room <방> --max_chain 8` 뒤 멈춘 좌석에게 직접 보낸다. 의도하지 않았으면 메모의 왕복 규칙을 확인한다. |
 | 포크 첫 턴이 "기반 좌석 …가 실행 중이라" 실패 | 기반 턴이 끝나지 않았다. | 기반 턴이 끝난 뒤 다시 보낸다. |
 | `rt wait`·`rtwait.sh`가 SSE 끊김 오류로 끝남 | 서버가 재기동됐다. | 답이 없는 것으로 보지 않는다. 같은 `방:seq`로 다시 기다린다. |
 | 서버 교체 스크립트가 다른 세션의 실행 중인 턴을 끊음 | 상태 조회 실패를 "유휴"로 해석하고 프로세스를 직접 내린 사고가 있었다. | `<새 빌드> install <서버 exe>` 다음 `<서버 exe> restart --url <서버> --timeout 30m`만 쓴다. 서버가 유휴 확인과 종료를 한 잠금 안에서 한다. 시간 안에 유휴가 되지 않으면 이전 서버를 그대로 둔다. |

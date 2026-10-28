@@ -31,7 +31,7 @@ const instructions = "Roundtable: 서로 다른 공급사의 AI CLI 좌석이 �
 	"- 409 작업 폴더 사용 중은 같은 폴더의 다른 방이 끝난 뒤 다시 보낸다. 좌석의 held_until(한도 오류)·budget_held(입력 예산) 보류 안내가 있으면 같은 좌석으로 곧장 재시도하지 않는다.\n" +
 	"- rt_post의 timed_out은 대기만 종료하며 실행 중인 턴을 취소하지 않는다. timed_out이면 같은 메시지를 다시 보내지 말고 결과의 resume_after_seq를 after_seq로 주어 rt_read로 이어 읽는다(live:true면 기존 답의 seq가 보낸 seq보다 작아 보낸 seq로는 그 답이 빠진다).\n" +
 	"- 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.\n" +
-	"- 좌석 추가·max_chain·좌석 켜기는 HTTP 전용이다. 기능 색인·전달 규칙·공급사별 능력·실패 대처는 Roundtable 저장소의 docs/AGENT_GUIDE.md(https://github.com/eddy961206/roundtable/blob/main/docs/AGENT_GUIDE.md)를 읽는다."
+	"- 좌석 추가·좌석 켜기는 HTTP 전용이다. 기능 색인·전달 규칙·공급사별 능력·실패 대처는 Roundtable 저장소의 docs/AGENT_GUIDE.md(https://github.com/eddy961206/roundtable/blob/main/docs/AGENT_GUIDE.md)를 읽는다."
 
 type Server struct {
 	base     string
