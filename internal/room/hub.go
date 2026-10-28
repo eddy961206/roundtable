@@ -1504,6 +1504,10 @@ func (h *Hub) keepSession(rs *roomState, pr *prepared, id string) {
 func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	pr.started = time.Now()
 	rs.addTurnNotices(pr)
+	// Room seats only: work-plan part and review turns run their own fixed prompts.
+	if pr.part == nil && pr.opts.Mode == agent.ModeWrite {
+		pr.opts.Prompt += deadlineNote(pr.started, rs.room.turnTimeout())
+	}
 	h.beginRequests(rs, pr)
 	t, p, prov := pr.t, pr.p, pr.prov
 	msg := rs.nextMessage("agent", p.ID, "")
@@ -1651,6 +1655,11 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if err == nil {
 		res, err = prov.Run(ctx, opts, emit)
 	}
+	// Read before taking h.mu: git status may take a while in a large worktree.
+	uncommitted := ""
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && opts.Mode == agent.ModeWrite {
+		uncommitted = uncommittedNote(opts.Workspace)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// Running past the room's turn limit is a timeout error, not a user stop.
@@ -1695,7 +1704,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	case tracePersistenceError != nil:
 		msg.Status, msg.Error = "error", fmt.Sprintf("실행 기록 저장 실패: %v", tracePersistenceError)
 	case timedOut:
-		msg.Status, msg.Error, msg.ErrorKind = "error", timeoutError(rs.room), "turn_timeout"
+		msg.Status, msg.Error, msg.ErrorKind = "error", timeoutError(rs.room)+uncommitted, "turn_timeout"
 	case interrupted:
 		msg.Status, msg.Error = "cancelled", "중단됨"
 	case err != nil:
