@@ -51,6 +51,7 @@ func NewCommunity(hub *room.Hub, allow []*net.IPNet) *Community {
 	c.mux.HandleFunc("GET /community/v1/me", c.me)
 	c.mux.HandleFunc("GET /community/v1/job", c.job)
 	c.mux.HandleFunc("POST /community/v1/job/{turn}/result", c.result)
+	c.mux.HandleFunc("POST /community/v1/job/{turn}/progress", c.progress)
 	return c
 }
 
@@ -135,6 +136,23 @@ func (c *Community) result(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := c.hub.RemoteFinish(bearer(r), r.PathValue("turn"), res); err != nil {
+		writeRemoteErr(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// progress takes the answer a worker has written so far; 409 tells it the
+// turn is gone and it should stop its CLI.
+func (c *Community) progress(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if err := c.hub.RemoteProgress(bearer(r), r.PathValue("turn"), body.Text); err != nil {
 		writeRemoteErr(w, err)
 		return
 	}

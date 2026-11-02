@@ -348,6 +348,47 @@ func TestTaskIsNotLiveSteering(t *testing.T) {
 	}
 }
 
+// A worker's progress reports stream into the reply like a local CLI's
+// deltas; once the turn is stopped here, the next report tells the worker so.
+func TestRemoteProgressStreamsAndStopReachesWorker(t *testing.T) {
+	h, r, token := remoteHub(t)
+	seat := r.Participants[0].ID
+	h.mu.Lock()
+	h.rooms[r.ID].room.participant(seat).RemoteSeenAt = nowMs()
+	h.mu.Unlock()
+	if _, err := h.PostUser(r.ID, "길게 생각해 줘", seat); err != nil {
+		t.Fatal(err)
+	}
+	job, err := h.RemoteNext(context.Background(), token, 3*time.Second)
+	if err != nil || job == nil {
+		t.Fatalf("%+v %v", job, err)
+	}
+	streaming := func() string {
+		snap, _ := h.Snapshot(r.ID)
+		for _, m := range snap.Messages {
+			if m.Kind == "agent" && m.Status == "streaming" {
+				return m.Text
+			}
+		}
+		return "(none)"
+	}
+	if err := h.RemoteProgress(token, job.Turn, "첫 문단을"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return streaming() == "첫 문단을" })
+	if err := h.RemoteProgress(token, job.Turn, "첫 문단을 쓰는 중"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return streaming() == "첫 문단을 쓰는 중" })
+	if err := h.Stop(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, h, r.ID)
+	if err := h.RemoteProgress(token, job.Turn, "더 쓴 내용"); !errors.Is(err, ErrRemoteTurnGone) {
+		t.Fatalf("a stopped turn's progress must tell the worker to stop: %v", err)
+	}
+}
+
 func waitFor(t *testing.T, ok func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

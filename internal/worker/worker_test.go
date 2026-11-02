@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -152,6 +154,70 @@ func TestWorkerRetriesResultWithoutRunningAgain(t *testing.T) {
 	cli.mu.Unlock()
 	if runs != 1 || uploads != 3 {
 		t.Fatalf("runs %d uploads %d: the turn must run once and its result be uploaded until accepted", runs, uploads)
+	}
+}
+
+// slowCLI writes a little and then runs until it is cancelled.
+type slowCLI struct {
+	localCLI
+	stopped chan error
+}
+
+func (c *slowCLI) Run(ctx context.Context, o agent.RunOptions, emit func(agent.Event)) (agent.Result, error) {
+	emit(agent.Event{Kind: agent.KindTextDelta, Text: "쓰는 중"})
+	<-ctx.Done()
+	c.stopped <- ctx.Err()
+	return agent.Result{Text: "쓰는 중"}, ctx.Err()
+}
+
+// A running turn reports its answer so far; when the host answers that the
+// turn is gone (cancelled there), the worker stops its CLI at once instead of
+// spending the person's tokens until the turn limit.
+func TestWorkerReportsProgressAndStopsCancelledTurn(t *testing.T) {
+	var mu sync.Mutex
+	var reports []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/community/v1/me":
+			_, _ = w.Write([]byte(`{"room":"r","seat":"s"}`))
+		case "/community/v1/job":
+			_, _ = w.Write([]byte(`{"turn":"t1","room":"r","seat":"s","prompt":"길게","mode":"chat","timeout_seconds":600}`))
+		case "/community/v1/job/t1/progress":
+			var body struct{ Text string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			reports = append(reports, body.Text)
+			if len(reports) >= 2 {
+				w.WriteHeader(http.StatusConflict) // the host stopped the turn
+				_, _ = w.Write([]byte(`{"error":"취소됨"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case "/community/v1/job/t1/result":
+			w.WriteHeader(http.StatusConflict)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	cli := &slowCLI{stopped: make(chan error, 1)}
+	cfg := Config{URL: srv.URL, Token: "rtc_test", Provider: cli, Scratch: t.TempDir(), MaxMode: agent.ModeChat, Once: true, Client: &http.Client{}, Log: log.New(io.Discard, "", 0), reportGap: 20 * time.Millisecond}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), cfg) }()
+	select {
+	case err := <-cli.stopped:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the CLI stopped with %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the CLI kept running after the host stopped the turn")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reports) < 2 || reports[0] != "쓰는 중" {
+		t.Fatalf("progress reports %q", reports)
 	}
 }
 

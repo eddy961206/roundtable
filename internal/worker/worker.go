@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"roundtable/internal/agent"
@@ -36,7 +37,13 @@ type Config struct {
 	Client    *http.Client
 	Log       *log.Logger
 	retryBase time.Duration // first wait before re-uploading a result; 0 is a second
+	reportGap time.Duration // time between progress reports; 0 is reportEvery
 }
+
+// reportEvery is how often a running turn reports its answer so far. The
+// report doubles as the cancel check: the host answers 409 for a turn it no
+// longer runs, and the worker stops its CLI at once.
+const reportEvery = 2 * time.Second
 
 var modeRank = map[string]int{agent.ModeChat: 0, agent.ModeRead: 1, agent.ModeWrite: 2}
 
@@ -128,13 +135,61 @@ func (c Config) execute(ctx context.Context, job room.RemoteJob) room.RemoteResu
 	defer cancel()
 	c.Log.Printf("턴 %s 시작: %q @%s (%s 모드)", job.Turn, job.RoomTitle, job.Seat, mode)
 	started := time.Now()
-	res, err := c.Provider.Run(runCtx, agent.RunOptions{Prompt: prompt, SessionID: job.SessionID, Model: c.Model, Effort: c.Effort, Mode: mode, Workspace: workspace, ScratchDir: c.Scratch, Timeout: timeout}, func(agent.Event) {})
+	var mu sync.Mutex
+	var text strings.Builder
+	emit := func(e agent.Event) { // the answer as the CLI streams it, built like the host's reply
+		mu.Lock()
+		defer mu.Unlock()
+		switch e.Kind {
+		case agent.KindTextDelta:
+			text.WriteString(e.Text)
+		case agent.KindText:
+			if text.Len() > 0 {
+				text.WriteString("\n\n")
+			}
+			text.WriteString(e.Text)
+		}
+	}
+	reported := make(chan struct{})
+	go func() {
+		defer close(reported)
+		c.report(runCtx, cancel, job.Turn, func() string { mu.Lock(); defer mu.Unlock(); return text.String() })
+	}()
+	res, err := c.Provider.Run(runCtx, agent.RunOptions{Prompt: prompt, SessionID: job.SessionID, Model: c.Model, Effort: c.Effort, Mode: mode, Workspace: workspace, ScratchDir: c.Scratch, Timeout: timeout}, emit)
+	cancel()
+	<-reported
 	out := room.RemoteResult{Text: res.Text, SessionID: res.SessionID, Usage: normalizeUsage(c.Provider.ID(), res.Usage)}
 	if err != nil {
 		out.Error = err.Error()
 	}
 	c.Log.Printf("턴 %s 끝: %s, 답 %d자, 오류=%v", job.Turn, time.Since(started).Round(time.Second), len([]rune(res.Text)), err)
 	return out
+}
+
+// report sends the answer so far every reportGap while the turn runs. A turn
+// the host no longer runs (4xx) or a revoked token cancels the CLI; a network
+// failure is only skipped, since the final upload retries anyway.
+func (c Config) report(ctx context.Context, cancel context.CancelFunc, turn string, current func() string) {
+	gap := c.reportGap
+	if gap == 0 {
+		gap = reportEvery
+	}
+	tick := time.NewTicker(gap)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		err := c.call(ctx, http.MethodPost, "/community/v1/job/"+url.PathEscape(turn)+"/progress", map[string]string{"text": current()}, nil)
+		var status httpError
+		if errors.Is(err, ErrUnauthorized) || (errors.As(err, &status) && status.code < 500) {
+			c.Log.Printf("턴 %s를 호스트가 더 이상 실행하지 않아 이 PC의 CLI를 멈춤: %v", turn, err)
+			cancel()
+			return
+		}
+	}
 }
 
 // deliver uploads a finished answer until the host takes it or says the turn

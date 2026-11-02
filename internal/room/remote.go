@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"roundtable/internal/agent"
@@ -73,6 +74,7 @@ type RemoteJob struct {
 	// less a minute to post the answer before this server gives up.
 	TimeoutSeconds int `json:"timeout_seconds"`
 	done           chan RemoteResult
+	progress       chan string // the answer so far; holds only the newest report
 }
 
 // RemoteResult is what the worker reports for a job.
@@ -324,17 +326,50 @@ func (h *Hub) RemoteFinish(token, turn string, res RemoteResult) error {
 	}
 	sl := h.remote[remoteKey(rs.room.ID, p.ID)]
 	if sl == nil || sl.job == nil || sl.job.Turn != turn || !sl.claimed {
-		return fmt.Errorf("이 좌석이 가져간 진행 중 턴이 아님: %s (취소됐거나 시간이 지났을 수 있음)", turn)
+		return fmt.Errorf("%w: %s", ErrRemoteTurnGone, turn)
 	}
 	sl.job.done <- res // buffered; the slot drops the job once runRemote reads it
 	sl.job = nil
 	return nil
 }
 
+// RemoteProgress takes the answer a worker has written so far. An error tells
+// the worker the turn is no longer its own (cancelled here, timed out, or
+// taken by a newer token), so it stops its CLI instead of spending more tokens.
+func (h *Hub) RemoteProgress(token, turn, text string) error {
+	if len(text) > maxRemoteText {
+		return fmt.Errorf("답이 너무 김: 최대 %dKB", maxRemoteText>>10)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	rs, p, err := h.remoteSeat(token)
+	if err != nil {
+		return err
+	}
+	sl := h.remote[remoteKey(rs.room.ID, p.ID)]
+	if sl == nil || sl.job == nil || sl.job.Turn != turn || !sl.claimed {
+		return fmt.Errorf("%w: %s", ErrRemoteTurnGone, turn)
+	}
+	select { // keep only the newest report; runRemote reads it soon
+	case <-sl.job.progress:
+	default:
+	}
+	sl.job.progress <- text
+	return nil
+}
+
+// ErrRemoteTurnGone is a progress or result for a turn this server no longer
+// runs for the seat.
+var ErrRemoteTurnGone = errors.New("이 좌석이 가져간 진행 중 턴이 아님(취소됐거나 시간이 지났을 수 있음)")
+
 // runRemote offers the turn to the seat's worker and waits for its answer,
-// the turn's own deadline or cancellation, or the claim timeout.
-func (h *Hub) runRemote(ctx context.Context, job *RemoteJob) (agent.Result, error) {
+// the turn's own deadline or cancellation, or the claim timeout. Progress
+// reports become text deltas of the streaming reply (emit), as a local CLI's
+// stream does.
+func (h *Hub) runRemote(ctx context.Context, job *RemoteJob, emit func(agent.Event)) (agent.Result, error) {
 	job.done = make(chan RemoteResult, 1)
+	job.progress = make(chan string, 1)
+	shown := "" // the part of the answer already streamed into the reply
 	h.mu.Lock()
 	sl := h.slot(remoteKey(job.Room, job.Seat))
 	sl.job, sl.claimed = job, false
@@ -352,6 +387,13 @@ func (h *Hub) runRemote(ctx context.Context, job *RemoteJob) (agent.Result, erro
 	defer claimTimer.Stop()
 	for {
 		select {
+		case text := <-job.progress:
+			// A report that does not extend what is shown (the CLI rewrote its
+			// answer) waits for the final result instead of garbling the reply.
+			if len(text) > len(shown) && strings.HasPrefix(text, shown) {
+				emit(agent.Event{Kind: agent.KindTextDelta, Text: text[len(shown):]})
+				shown = text
+			}
 		case res := <-job.done:
 			if res.Error != "" {
 				return agent.Result{Text: res.Text, SessionID: res.SessionID, Usage: res.Usage}, errors.New("원격 worker 실행 오류: " + res.Error)

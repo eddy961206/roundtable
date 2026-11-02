@@ -1781,7 +1781,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	case pr.remote != nil:
 		job := *pr.remote
 		job.Prompt = opts.Prompt
-		res, err = h.runRemote(ctx, &job)
+		res, err = h.runRemote(ctx, &job, emit)
 		if res.Usage != nil {
 			emit(agent.Event{Kind: agent.KindUsage, Meta: res.Usage})
 		}
