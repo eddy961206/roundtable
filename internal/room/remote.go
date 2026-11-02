@@ -282,9 +282,12 @@ func (h *Hub) RemoteNext(ctx context.Context, token string, wait time.Duration) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	sl.polling--
-	if h.rooms[rs.room.ID] == rs && !p.Removed {
-		h.remoteSeen(rs, p)
+	// The token may have been re-issued, or the seat removed, while this poll
+	// waited: a revoked poll must not take the next job (PR #4 review).
+	if _, _, err := h.remoteSeat(token); err != nil {
+		return nil, err
 	}
+	h.remoteSeen(rs, p)
 	return sl.claim(), nil
 }
 

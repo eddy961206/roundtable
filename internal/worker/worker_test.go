@@ -118,6 +118,43 @@ func TestWorkerRunsOneTurn(t *testing.T) {
 	}
 }
 
+// PR #4 review (P2): when the result upload fails on the network, the worker
+// keeps the finished answer and retries the upload. Polling again would hand
+// it the same claimed turn and run it a second time (in write mode, twice).
+func TestWorkerRetriesResultWithoutRunningAgain(t *testing.T) {
+	var mu sync.Mutex
+	uploads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.URL.Path == "/community/v1/me":
+			_, _ = w.Write([]byte(`{"room":"r","seat":"s"}`))
+		case r.URL.Path == "/community/v1/job":
+			_, _ = w.Write([]byte(`{"turn":"t1","room":"r","seat":"s","prompt":"한 번만 실행","mode":"chat","timeout_seconds":60}`))
+		case r.URL.Path == "/community/v1/job/t1/result":
+			uploads++
+			if uploads < 3 {
+				w.WriteHeader(http.StatusServiceUnavailable) // the host is restarting
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	cli := &localCLI{}
+	cfg := Config{URL: srv.URL, Token: "rtc_test", Provider: cli, Scratch: t.TempDir(), MaxMode: agent.ModeChat, Once: true, Client: &http.Client{}, Log: log.New(io.Discard, "", 0), retryBase: time.Millisecond}
+	if err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	cli.mu.Lock()
+	runs := len(cli.opts)
+	cli.mu.Unlock()
+	if runs != 1 || uploads != 3 {
+		t.Fatalf("runs %d uploads %d: the turn must run once and its result be uploaded until accepted", runs, uploads)
+	}
+}
+
 func TestWorkerConfigChecks(t *testing.T) {
 	cli := &localCLI{}
 	for name, c := range map[string]Config{

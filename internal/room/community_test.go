@@ -279,6 +279,75 @@ func TestRemoteSeatCatchesUpAfterAway(t *testing.T) {
 	}
 }
 
+// PR #4 review (P1): a poll that started with a token re-issued while it
+// waited must not receive the next job. Rotation revokes waiting polls too.
+func TestReissuedTokenRevokesWaitingPoll(t *testing.T) {
+	h, r, old := remoteHub(t)
+	seat := r.Participants[0].ID
+	polled := make(chan error, 1)
+	go func() {
+		job, err := h.RemoteNext(context.Background(), old, 3*time.Second)
+		if job != nil {
+			err = errors.New("the revoked poll got job " + job.Turn)
+		}
+		polled <- err
+	}()
+	waitFor(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		sl := h.remote[remoteKey(r.ID, seat)]
+		return sl != nil && sl.polling == 1
+	})
+	fresh, err := h.IssueRemoteToken(r.ID, seat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.rooms[r.ID].room.participant(seat).RemoteSeenAt = nowMs() // the seat still counts as online
+	h.mu.Unlock()
+	if _, err := h.PostUser(r.ID, "새 토큰 이후의 일", seat); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-polled; !errors.Is(err, ErrRemoteAuth) {
+		t.Fatalf("the waiting poll of a replaced token: %v", err)
+	}
+	job, err := h.RemoteNext(context.Background(), fresh, 3*time.Second)
+	if err != nil || job == nil || !strings.Contains(job.Prompt, "새 토큰 이후의 일") {
+		t.Fatalf("the new token must still get the job: %+v %v", job, err)
+	}
+	if err := h.RemoteFinish(fresh, job.Turn, RemoteResult{Text: "새 worker가 답함"}); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, h, r.ID)
+}
+
+// PR #4 review (P2): a task for a seat that is running a steerable turn waits
+// for its own turn. Injected as live steering, the seat would never get the
+// request id and the task could not be finished.
+func TestTaskIsNotLiveSteering(t *testing.T) {
+	h, r, ps := controlledHub(t, "claude")
+	ps[0].steer = true
+	postQueueMessage(t, h, r.ID, "먼저 하던 일", "claude")
+	first := nextCall(t, ps[0])
+	m, task, err := h.AssignTask(r.ID, "claude", "실행 중에 맡긴 과제")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Live {
+		t.Fatal("a task was injected into the running turn")
+	}
+	finishCall(first, "먼저 하던 일 끝")
+	second := nextCall(t, ps[0])
+	if !strings.Contains(second.opts.Prompt, "[요청 "+task.ID+" from @user") {
+		t.Fatalf("the next turn must carry the task's request id: %s", second.opts.Prompt)
+	}
+	finishCall(second, "했어\n[[REQUEST_DONE:"+task.ID+"]]")
+	waitIdle(t, h, r.ID)
+	if got := h.rooms[r.ID].request(task.ID).Status; got != "done" {
+		t.Fatalf("task status %s", got)
+	}
+}
+
 func waitFor(t *testing.T, ok func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

@@ -1061,7 +1061,9 @@ func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource,
 		m.Requests = []string{task.ID}
 	}
 	var liveRun *running
-	if target != "" && len(attachments) == 0 && fwd == nil {
+	// A task is never live steering: the running turn has claimed its requests
+	// already, so the seat would never get the task's request id (PR #4 review).
+	if target != "" && len(attachments) == 0 && fwd == nil && task == nil {
 		if run := rs.runningFor(target); run != nil && run.steer != nil && len(run.steer) < cap(run.steer) {
 			// h.mu serializes all senders; the provider can only free capacity.
 			liveRun = run

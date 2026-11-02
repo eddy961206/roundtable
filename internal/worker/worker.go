@@ -35,6 +35,7 @@ type Config struct {
 	Once      bool // stop after one turn (tests, a first check)
 	Client    *http.Client
 	Log       *log.Logger
+	retryBase time.Duration // first wait before re-uploading a result; 0 is a second
 }
 
 var modeRank = map[string]int{agent.ModeChat: 0, agent.ModeRead: 1, agent.ModeWrite: 2}
@@ -97,12 +98,8 @@ func Run(ctx context.Context, c Config) error {
 			continue
 		}
 		backoff = time.Second
-		res := c.execute(ctx, job)
-		if err := c.call(ctx, http.MethodPost, "/community/v1/job/"+url.PathEscape(job.Turn)+"/result", res, nil); err != nil {
-			if errors.Is(err, ErrUnauthorized) {
-				return err
-			}
-			c.Log.Printf("턴 %s 결과를 올리지 못함(서버에서 취소·시간 초과됐을 수 있음): %v", job.Turn, err)
+		if err := c.deliver(ctx, job.Turn, c.execute(ctx, job)); err != nil {
+			return err
 		}
 		if c.Once {
 			return nil
@@ -139,6 +136,48 @@ func (c Config) execute(ctx context.Context, job room.RemoteJob) room.RemoteResu
 	c.Log.Printf("턴 %s 끝: %s, 답 %d자, 오류=%v", job.Turn, time.Since(started).Round(time.Second), len([]rune(res.Text)), err)
 	return out
 }
+
+// deliver uploads a finished answer until the host takes it or says the turn
+// is gone (a 4xx: cancelled or timed out there). A network failure or 5xx
+// keeps the answer and retries: polling again would hand back the same claimed
+// turn and run it a second time, in write mode repeating its changes (PR #4 review).
+func (c Config) deliver(ctx context.Context, turn string, res room.RemoteResult) error {
+	wait := c.retryBase
+	if wait == 0 {
+		wait = time.Second
+	}
+	for {
+		err := c.call(ctx, http.MethodPost, "/community/v1/job/"+url.PathEscape(turn)+"/result", res, nil)
+		var status httpError
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, ErrUnauthorized):
+			return err
+		case errors.As(err, &status) && status.code < 500:
+			c.Log.Printf("턴 %s 결과를 서버가 받지 않음(서버에서 취소·시간 초과됐을 수 있음): %v", turn, err)
+			return nil
+		case ctx.Err() != nil:
+			return ctx.Err()
+		}
+		c.Log.Printf("턴 %s 결과를 올리지 못해 %s 뒤 다시 올림: %v", turn, wait, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, time.Minute)
+	}
+}
+
+// httpError is a refused request; code tells a gone turn (4xx) from a host
+// that may come back (5xx).
+type httpError struct {
+	code int
+	msg  string
+}
+
+func (e httpError) Error() string { return fmt.Sprintf("HTTP %d: %s", e.code, e.msg) }
 
 // normalizeUsage reports usage the way non-Codex providers do: Codex counts
 // cache reads inside input_tokens, the room counts them beside it.
@@ -195,9 +234,9 @@ func (c Config) call(ctx context.Context, method, path string, body, into any) e
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(data, &e) == nil && e.Error != "" {
-			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, e.Error)
+			return httpError{resp.StatusCode, e.Error}
 		}
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return httpError{resp.StatusCode, strings.TrimSpace(string(data))}
 	}
 	if into == nil {
 		return nil
