@@ -484,6 +484,8 @@ type RoomPatch struct {
 	SpeakIntervalSeconds *int               `json:"speak_interval_seconds,omitempty"`
 	DailySpeakLimit      *int               `json:"daily_speak_limit,omitempty"`
 	AgentsPaused         *bool              `json:"agents_paused,omitempty"`
+	AutoChatMinutes      *int               `json:"auto_chat_minutes,omitempty"`
+	AutoChatHours        *string            `json:"auto_chat_hours,omitempty"`
 	Participants         []ParticipantPatch `json:"participants,omitempty"`
 }
 
@@ -566,6 +568,12 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 	}
 	if patch.AgentsPaused != nil {
 		next.AgentsPaused = *patch.AgentsPaused
+	}
+	if patch.AutoChatMinutes != nil {
+		next.AutoChatMinutes = *patch.AutoChatMinutes
+	}
+	if patch.AutoChatHours != nil {
+		next.AutoChatHours = strings.TrimSpace(*patch.AutoChatHours)
 	}
 	if err := validateGuards(&next); err != nil {
 		return nil, err
@@ -1481,7 +1489,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		cap = max(cap, p.HistoryFrom)
 	}
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
-	if len(hist) == 0 && t.Reason != "discussion" && t.Reason != "handoff" && len(rs.pendingNotices(p.ID, "")) == 0 {
+	if len(hist) == 0 && t.Reason != "discussion" && t.Reason != "handoff" && t.Reason != "auto" && len(rs.pendingNotices(p.ID, "")) == 0 {
 		// No CLI call is needed to acknowledge own/filtered messages. Keep
 		// unfinished replies as holes for a later cap to deliver exactly once.
 		p.LastSeen, p.Unseen = seen, unseen
@@ -1498,7 +1506,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
-	if t.Reason == "handoff" {
+	if t.Reason == "handoff" || t.Reason == "auto" {
 		prompt += "\n\n" + t.prompt
 	}
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
@@ -1969,7 +1977,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if workDone && msg.Status == "done" && pr.stopGen == rs.stopGen {
 		h.submitAsync(rs, pr.part.ID)
 	}
-	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" {
+	// An auto chat turn calls nobody: the banter grows one quiet interval at a
+	// time, never as a chain of turns (community.go).
+	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" && t.Reason != "auto" {
 		h.chainMentions(rs, msg, t)
 	}
 	if pr.stopGen == rs.stopGen && t.Reason == "discussion" {

@@ -640,6 +640,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
     }
     if (m.reason === "discussion") meta.push('<span class="badge">🗣 토론 ' + m.round + "R</span>");
     else if (m.reason === "mention") meta.push('<span class="badge">@호출</span>');
+    else if (m.reason === "auto") meta.push('<span class="badge" title="공간이 조용해서 사람 호출 없이 말한 차례입니다(자율 잡담)">☕ 자율 잡담</span>');
     else if (m.reason === "part") meta.push('<span class="badge">🔨 파트 작업</span>');
     else if (m.reason === "review") meta.push('<span class="badge">🔍 교차 리뷰</span>');
     if (m.part) {

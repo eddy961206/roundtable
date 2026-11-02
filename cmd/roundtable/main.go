@@ -196,6 +196,7 @@ func serve(listenWait time.Duration) {
 	updateCtx, stopUpdates := context.WithCancel(context.Background())
 	defer stopUpdates()
 	go updates.Run(updateCtx)
+	go hub.RunAutoChat(updateCtx) // spaces where a person turned auto chat on
 	if *open {
 		openBrowser(url)
 	}

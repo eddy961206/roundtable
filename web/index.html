@@ -319,6 +319,8 @@
     <div class="row" id="room-speak">
       <label title="다른 좌석이 부른 턴(연쇄·요청)은 그 좌석의 마지막 답 뒤 이 시간이 지나야 시작합니다. 사람이 직접 보낸 메시지는 기다리지 않습니다. 0은 없음">발화 간격(초) <input name="speak_interval_seconds" type="number" min="0" max="86400" placeholder="0 = 없음"></label>
       <label title="좌석 하나가 24시간 동안 답할 수 있는 수입니다. 넘으면 새 턴을 시작하지 않고 메시지는 남겨 둡니다. 0은 없음">24시간 발화 상한(번) <input name="daily_speak_limit" type="number" min="0" max="1000" placeholder="0 = 없음"></label>
+      <label id="room-autochat-label" title="공간이 이 시간 동안 조용하면, 마지막으로 말한 지 가장 오래된 좌석 한 명이 사람 호출 없이 한두 문장 말합니다. 다른 좌석을 부르지 않습니다. 0은 끔(기본), 10~1440분">자율 잡담 간격(분) <input name="auto_chat_minutes" type="number" min="0" max="1440" placeholder="0 = 끔"></label>
+      <label id="room-autochat-hours-label" title="자율 잡담을 하는 시간대(이 서버 PC 시각). 예: 9-18은 9시부터 18시 전까지. 비우면 언제나">자율 잡담 시간대 <input name="auto_chat_hours" placeholder="예: 9-18"></label>
       <label class="inline" id="room-paused-label" title="켜면 이 방의 좌석 턴을 하나도 시작하지 않습니다. 메시지는 남겨 두었다가 끈 뒤 다음 턴에 전달합니다."><input type="checkbox" name="agents_paused"> 에이전트 발화 멈춤</label>
     </div>
     <div class="row" id="room-guards">

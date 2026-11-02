@@ -3,6 +3,7 @@ package room
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -386,6 +387,59 @@ func TestRemoteProgressStreamsAndStopReachesWorker(t *testing.T) {
 	waitIdle(t, h, r.ID)
 	if err := h.RemoteProgress(token, job.Turn, "더 쓴 내용"); !errors.Is(err, ErrRemoteTurnGone) {
 		t.Fatalf("a stopped turn's progress must tell the worker to stop: %v", err)
+	}
+}
+
+// Auto chat is off until a person turns it on; then a space quiet for the set
+// minutes gets one line from the seat that spoke least recently, which calls
+// nobody, and nothing happens outside the hours or while agents are paused.
+func TestAutoChatSpeaksInQuietSpaceOnly(t *testing.T) {
+	h, r, ps := controlledHub(t, "claude", "codex")
+	later := func(d time.Duration) time.Time { return time.Now().Add(d) }
+	h.AutoChatTick(later(time.Hour))
+	noMoreCalls(t, ps[0]) // off by default
+	if _, err := h.UpdateRoom(r.ID, RoomPatch{AutoChatMinutes: ref(10)}); err != nil {
+		t.Fatal(err)
+	}
+	h.AutoChatTick(later(5 * time.Minute))
+	noMoreCalls(t, ps[0]) // not quiet long enough
+	h.AutoChatTick(later(11 * time.Minute))
+	call := nextCall(t, ps[0])
+	if !strings.Contains(call.opts.Prompt, "자율 잡담") {
+		t.Fatalf("the auto turn must say why it speaks: %s", call.opts.Prompt)
+	}
+	finishCall(call, "@codex 커피 한잔 어때요")
+	noMoreCalls(t, ps[1]) // an auto turn calls nobody
+	waitIdle(t, h, r.ID)
+	snap, _ := h.Snapshot(r.ID)
+	if got := snap.Messages[len(snap.Messages)-1]; got.Reason != "auto" {
+		t.Fatalf("the reply must be marked as auto chat: %+v", got)
+	}
+	h.AutoChatTick(later(5 * time.Minute))
+	noMoreCalls(t, ps[1]) // the space just spoke
+	h.AutoChatTick(later(11 * time.Minute))
+	finishCall(nextCall(t, ps[1]), "좋아요") // the seat that spoke least recently
+	waitIdle(t, h, r.ID)
+
+	hour := later(11 * time.Minute).Hour()
+	away := fmt.Sprintf("%d-24", hour+1)
+	if hour == 23 {
+		away = "0-23"
+	}
+	if _, err := h.UpdateRoom(r.ID, RoomPatch{AutoChatHours: ref(away)}); err != nil {
+		t.Fatal(err)
+	}
+	h.AutoChatTick(later(11 * time.Minute))
+	noMoreCalls(t, ps[0])
+	if _, err := h.UpdateRoom(r.ID, RoomPatch{AutoChatHours: ref(""), AgentsPaused: ref(true)}); err != nil {
+		t.Fatal(err)
+	}
+	h.AutoChatTick(later(11 * time.Minute))
+	noMoreCalls(t, ps[0])
+	for _, bad := range []RoomPatch{{AutoChatMinutes: ref(5)}, {AutoChatHours: ref("18-9")}, {AutoChatHours: ref("아침")}} {
+		if _, err := h.UpdateRoom(r.ID, bad); err == nil {
+			t.Fatalf("accepted %+v", bad)
+		}
 	}
 }
 

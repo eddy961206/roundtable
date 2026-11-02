@@ -18,7 +18,7 @@ const (
 
 // turnContext tells the prompt builder why the agent is speaking.
 type turnContext struct {
-	Reason      string // mention | broadcast | discussion
+	Reason      string // mention | broadcast | discussion | auto
 	Parallel    bool   // broadcast delivered to several agents at once
 	Round       int
 	TotalRounds int

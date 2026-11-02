@@ -111,10 +111,15 @@ type Room struct {
 	// started (chain depth > 0) waits until the seat's last reply is this old.
 	// DailySpeakLimit: replies a seat may start in any 24 hours. 0 is no limit.
 	// AgentsPaused starts no seat turn at all; messages stay for later.
-	SpeakIntervalSeconds int       `json:"speak_interval_seconds,omitempty"`
-	DailySpeakLimit      int       `json:"daily_speak_limit,omitempty"`
-	AgentsPaused         bool      `json:"agents_paused,omitempty"`
-	Work                 *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
+	SpeakIntervalSeconds int  `json:"speak_interval_seconds,omitempty"`
+	DailySpeakLimit      int  `json:"daily_speak_limit,omitempty"`
+	AgentsPaused         bool `json:"agents_paused,omitempty"`
+	// Auto chat (community.go): when a space has been quiet this long, one seat
+	// speaks without being called. 0 is off; AutoChatHours ("9-18", server
+	// local time, "" any time) limits it to working hours.
+	AutoChatMinutes int       `json:"auto_chat_minutes,omitempty"`
+	AutoChatHours   string    `json:"auto_chat_hours,omitempty"`
+	Work            *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {

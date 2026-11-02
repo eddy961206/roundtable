@@ -3020,7 +3020,7 @@ dialog.dlg-message { width: min(440px, 94vw); }
 .pcard .remote-state.offline { color: var(--muted); }
 .pcard .remote-token-btn { padding: 2px 8px; min-height: 24px; font-size: 11px; }
 #room-kind-row { display: grid; gap: 4px; }
-#room-kind-row[hidden], #room-paused-label[hidden] { display: none; }
+#room-kind-row[hidden], #room-paused-label[hidden], #room-autochat-label[hidden], #room-autochat-hours-label[hidden] { display: none; }
 #form-remote-token input, #form-remote-token textarea { width: 100%; }
 #form-remote-token ol { margin: 8px 0; padding-left: 20px; }
 

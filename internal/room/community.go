@@ -1,6 +1,7 @@
 package room
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -84,7 +85,99 @@ func validateSpeakGuards(r *Room) error {
 	if r.DailySpeakLimit < 0 || r.DailySpeakLimit > maxDailySpeakLimit {
 		return fmt.Errorf("daily_speak_limit는 0(없음)~%d건이어야 함", maxDailySpeakLimit)
 	}
+	if m := r.AutoChatMinutes; m != 0 && (m < minAutoChat || m > maxAutoChat) {
+		return fmt.Errorf("auto_chat_minutes는 0(끔) 또는 %d~%d분이어야 함", minAutoChat, maxAutoChat)
+	}
+	if _, _, err := chatHours(r.AutoChatHours); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ---------- auto chat ----------
+// A lounge where people only watch needs someone to speak. Auto chat is off
+// until a person turns it on for the space; then, whenever the space has been
+// quiet for AutoChatMinutes within AutoChatHours, the seat that spoke least
+// recently says a line. It obeys the pause, the daily limit, the speak
+// interval and the input budgets, and it calls nobody, so the token cost is
+// at most one turn per quiet interval per space.
+const (
+	minAutoChat = 10
+	maxAutoChat = 24 * 60
+	// AutoChatPrompt follows the new messages of an auto chat turn.
+	AutoChatPrompt = "(자율 잡담) 사람이 부르지 않았지만 공간이 조용해서 당신 차례가 왔습니다. 위 대화에 이어 한두 문장으로 가볍게 말하세요. 새로 할 말이 없으면 \"커피 마시는 중\"처럼 아주 짧게 답하세요. 이번 턴에는 다른 참가자를 부르거나 일을 맡기지 마세요."
+)
+
+// chatHours reads "9-18" (from 9:00 to before 18:00); "" is any time.
+func chatHours(spec string) (from, to int, err error) {
+	if spec == "" {
+		return 0, 24, nil
+	}
+	if _, err := fmt.Sscanf(spec, "%d-%d", &from, &to); err != nil || from < 0 || to > 24 || from >= to {
+		return 0, 0, fmt.Errorf("auto_chat_hours는 \"9-18\"처럼 시작-끝 시(0~24, 시작<끝)여야 함: %q", spec)
+	}
+	return from, to, nil
+}
+
+// AutoChatTick starts at most one auto chat turn in each quiet space.
+func (h *Hub) AutoChatTick(now time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing {
+		return
+	}
+	for _, rs := range h.rooms {
+		r := rs.room
+		from, to, _ := chatHours(r.AutoChatHours)
+		if r.AutoChatMinutes == 0 || r.AgentsPaused || len(rs.running) > 0 || len(rs.queue) > 0 || now.Hour() < from || now.Hour() >= to {
+			continue
+		}
+		last := r.CreatedAt
+		if n := len(rs.msgs); n > 0 {
+			last = rs.msgs[n-1].TS
+		}
+		if now.UnixMilli()-last < int64(r.AutoChatMinutes)*60_000 {
+			continue
+		}
+		if p := h.autoChatSeat(rs, now.UnixMilli()); p != nil {
+			rs.enqueue(&Turn{ID: newID(), Agent: p.ID, Reason: "auto", Group: newID(), Cap: r.Seq, Depth: 1, Created: nowMs(), Status: "queued", prompt: AutoChatPrompt})
+			h.pump(rs)
+		}
+	}
+}
+
+// autoChatSeat is the seat that may speak and spoke least recently, or nil.
+// Caller holds h.mu.
+func (h *Hub) autoChatSeat(rs *roomState, now int64) *Participant {
+	var pick *Participant
+	var pickAt int64
+	for _, p := range rs.room.enabled() {
+		if seatHeld(p) || rs.budgetHold(p) != "" || rs.speakHold(p) != "" || (p.Provider == RemoteProvider && !h.remoteOnline(rs, p)) {
+			continue
+		}
+		last := rs.lastReplyAt(p.ID)
+		if gap := int64(rs.room.SpeakIntervalSeconds) * 1000; last > 0 && now-last < gap {
+			continue
+		}
+		if pick == nil || last < pickAt {
+			pick, pickAt = p, last
+		}
+	}
+	return pick
+}
+
+// RunAutoChat checks every space each minute until ctx ends.
+func (h *Hub) RunAutoChat(ctx context.Context) {
+	tick := time.NewTicker(time.Minute)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-tick.C:
+			h.AutoChatTick(now)
+		}
+	}
 }
 
 // lastReplyAt is when the seat's latest reply started (ms); 0 when it has none.

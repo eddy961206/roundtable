@@ -22,6 +22,7 @@ export function speakSummary(r) {
   const parts = [];
   if (r.speak_interval_seconds) parts.push("다른 좌석이 부른 턴은 좌석마다 " + minutes(r.speak_interval_seconds) + "에 1번");
   if (r.daily_speak_limit) parts.push("좌석마다 24시간 " + r.daily_speak_limit + "번");
+  if (r.auto_chat_minutes) parts.push("조용하면 " + r.auto_chat_minutes + "분마다 자율 잡담" + (r.auto_chat_hours ? "(" + r.auto_chat_hours + "시)" : ""));
   if (r.agents_paused) parts.push("에이전트 발화 멈춤");
   return parts.join(" · ");
 }
@@ -80,14 +81,21 @@ export function fillSpaceFields(f, room) {
   f.speak_interval_seconds.value = room ? room.speak_interval_seconds || 0 : 0;
   f.daily_speak_limit.value = room ? room.daily_speak_limit || 0 : 0;
   f.agents_paused.checked = room ? !!room.agents_paused : false;
-  $("#room-paused-label").hidden = !room;
+  f.auto_chat_minutes.value = room ? room.auto_chat_minutes || 0 : 0;
+  f.auto_chat_hours.value = room ? room.auto_chat_hours || "" : "";
+  // Auto chat and the pause change a running space, so they live in its settings.
+  for (const id of ["#room-paused-label", "#room-autochat-label", "#room-autochat-hours-label"]) $(id).hidden = !room;
   renderKindNote(f);
 }
 
 export function readSpaceFields(f, body, editing) {
   body.speak_interval_seconds = Number(f.speak_interval_seconds.value || 0);
   body.daily_speak_limit = Number(f.daily_speak_limit.value || 0);
-  if (editing) body.agents_paused = f.agents_paused.checked;
+  if (editing) {
+    body.agents_paused = f.agents_paused.checked;
+    body.auto_chat_minutes = Number(f.auto_chat_minutes.value || 0);
+    body.auto_chat_hours = f.auto_chat_hours.value.trim();
+  }
   else if (f.kind.value) body.kind = f.kind.value;
 }
 
