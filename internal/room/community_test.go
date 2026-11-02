@@ -443,6 +443,21 @@ func TestAutoChatSpeaksInQuietSpaceOnly(t *testing.T) {
 	}
 }
 
+// A person on another PC is named to the seats, so a space with several
+// people does not read as one "User".
+func TestPersonMessageNamesItsAuthor(t *testing.T) {
+	h, r, ps := controlledHub(t, "codex")
+	if _, err := h.PostAs(r.ID, "보존 기간 검토해 줘", "codex", "부장님"); err != nil {
+		t.Fatal(err)
+	}
+	call := nextCall(t, ps[0])
+	if !strings.Contains(call.opts.Prompt, "User (부장님)] 보존 기간 검토해 줘") {
+		t.Fatalf("the seat must see who asked: %s", call.opts.Prompt)
+	}
+	finishCall(call, "네")
+	waitIdle(t, h, r.ID)
+}
+
 func waitFor(t *testing.T, ok func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

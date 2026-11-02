@@ -286,6 +286,11 @@ func speakIntervalText(seconds int) string {
 // and a request from "user" the seat closes with [[REQUEST_DONE]]. The done
 // result becomes a proposed decision card the person confirms or drops.
 func (h *Hub) AssignTask(roomID, to, text string) (*Message, Request, error) {
+	return h.AssignTaskAs(roomID, to, text, "")
+}
+
+// AssignTaskAs is a task from a person on another PC (people.go).
+func (h *Hub) AssignTaskAs(roomID, to, text, by string) (*Message, Request, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, Request{}, fmt.Errorf("과제 내용이 비어 있음")
@@ -309,7 +314,7 @@ func (h *Hub) AssignTask(roomID, to, text string) (*Message, Request, error) {
 		return nil, Request{}, fmt.Errorf("@%s은 파트 %s 작업 중이라 과제를 받을 수 없음", to, part.ID)
 	}
 	task := Request{ID: newID(), From: "user", To: to, Text: text, Status: "pending"}
-	m, err := h.acceptUser(rs, "과제: "+text, to, nil, nil, &task)
+	m, err := h.acceptUser(rs, "과제: "+text, to, nil, nil, &task, by)
 	if err != nil {
 		return nil, Request{}, err
 	}

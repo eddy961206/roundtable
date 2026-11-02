@@ -3,10 +3,15 @@
 // or a coffee table (lounge) and show their state and latest words. The view
 // reads only what the page already holds (room, messages, decisions): it sends
 // no request and costs no token. Clicking an avatar picks it as the target.
-import { $, $$, el } from "./util.js";
-import { toggleDrawer } from "./layout.js";
-import { participantLabel, state } from "./state.js";
-import { setTarget } from "./composer.js";
+//
+// The page that shows it passes a source (bindSpaceView): the host page reads
+// its room state, the people page (people.js) its own snapshot. This module
+// imports nothing else of either page.
+import { $, el } from "./util.js";
+
+// src: { room(), messages(): newest-last array, decisions(): array, target(),
+// label(id), pick(id), showDecisions(), alwaysOpen }
+let src = null;
 
 const W = 900; // floor width in scene pixels
 const D = 600; // floor depth
@@ -33,10 +38,12 @@ function load(key) {
   try { return localStorage.getItem(key); } catch { return null; }
 }
 
-export function bindSpaceView() {
+export function bindSpaceView(source) {
+  src = source;
   const btn = $("#btn-space-view");
-  open = load("rt.spaceView") === "1";
-  btn.onclick = () => setOpen(!open);
+  open = src.alwaysOpen || load("rt.spaceView") === "1";
+  if (btn) btn.onclick = () => setOpen(!open);
+  $("#sv-close").hidden = !!src.alwaysOpen;
   $("#sv-close").onclick = () => setOpen(false);
   $("#sv-left").onclick = () => turn(-30);
   $("#sv-right").onclick = () => turn(30);
@@ -78,10 +85,12 @@ function setOpen(next) {
 
 function syncButton() {
   const btn = $("#btn-space-view");
-  btn.setAttribute("aria-pressed", String(open));
-  btn.textContent = open ? "대화 보기" : "3D 보기";
-  btn.title = open ? "대화 목록으로 돌아갑니다" : "이 방을 3D 사무실로 봅니다. 좌석의 상태와 마지막 말이 보입니다. 토큰을 쓰지 않습니다.";
-  $("#space-view").hidden = !open || !state.room;
+  if (btn) {
+    btn.setAttribute("aria-pressed", String(open));
+    btn.textContent = open ? "대화 보기" : "3D 보기";
+    btn.title = open ? "대화 목록으로 돌아갑니다" : "이 방을 3D 사무실로 봅니다. 좌석의 상태와 마지막 말이 보입니다. 토큰을 쓰지 않습니다.";
+  }
+  $("#space-view").hidden = !open || !src.room();
 }
 
 function turn(deg) {
@@ -98,15 +107,14 @@ function applyCamera() {
   const floor = world && world.querySelector(".sv-floor");
   if (!floor || !stage.clientWidth) return;
   const size = stage.clientWidth + "x" + stage.clientHeight;
-  if (size !== fitSize) {
+  const measure = size !== fitSize;
+  if (measure) {
     world.style.transition = "none";
     world.style.transform = `translate(-50%, -50%) rotateX(${TILT}deg) rotateZ(${START_YAW}deg)`;
     const r = floor.getBoundingClientRect();
     // Room above the floor for the avatars of the back row and their words.
     fit = Math.min(1.2, (stage.clientWidth - 32) / r.width, (stage.clientHeight - 80) / r.height);
     fitSize = size;
-    void world.offsetWidth;
-    world.style.transition = "";
   }
   const k = (fit * zoom).toFixed(3);
   // scale3d, not scale: after the tilt the floor has depth, and an unscaled depth
@@ -117,10 +125,16 @@ function applyCamera() {
   // Avatars and their words grow back when the room is shrunk to fit, so a
   // name stays readable (about 11px or more) on a phone.
   world.style.setProperty("--sv-ui", Math.min(1.6, Math.max(1, 0.75 / k)).toFixed(2));
+  if (measure) {
+    // A new fit lands at once: animating from the measuring pose would show
+    // the room zooming in from far too big on every load.
+    void world.offsetWidth;
+    world.style.transition = "";
+  }
 }
 
 export function scheduleSpaceView() {
-  if (!open || frame) return;
+  if (!src || !open || frame) return;
   frame = requestAnimationFrame(() => {
     frame = 0;
     renderSpaceView();
@@ -129,7 +143,7 @@ export function scheduleSpaceView() {
 
 function renderSpaceView() {
   syncButton();
-  const r = state.room;
+  const r = src.room();
   if (!open || !r) return;
   const kind = r.kind === "lounge" ? "lounge" : "work";
   const seats = r.participants.filter((p) => !p.removed);
@@ -234,13 +248,13 @@ function plain(text) {
 // how recent it is (0 = the newest message of the room).
 function latestWords() {
   const out = new Map();
-  const ids = state.order.slice(-RECENT);
-  for (let i = ids.length - 1; i >= 0; i--) {
-    const m = state.messages.get(ids[i]);
+  const recent = src.messages().slice(-RECENT);
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const m = recent[i];
     if (!m || (m.kind !== "agent" && m.kind !== "user")) continue;
     const who = m.kind === "user" ? "user" : m.author;
     if (out.has(who)) continue;
-    out.set(who, { m, age: ids.length - 1 - i });
+    out.set(who, { m, age: recent.length - 1 - i });
   }
   return out;
 }
@@ -263,7 +277,7 @@ function remoteOnline(p, now) {
 
 // approvals lists task result cards waiting for a person, of one seat or all.
 function approvals(seat) {
-  return [...state.decisions.values()].filter((d) => d.task && d.status === "proposed" && (!seat || d.by === seat));
+  return src.decisions().filter((d) => d.task && d.status === "proposed" && (!seat || d.by === seat));
 }
 
 function chips(p, now, st) {
@@ -338,18 +352,18 @@ function renderAgents(holder, kind, seats) {
     const st = seatState(p, now);
     counts[st] = (counts[st] || 0) + 1;
     const [x, y] = seatSpot(i, seats.length, kind);
-    const cls = ["st-" + st, p.status === "running" ? "running" : "", p.provider === "remote" ? "remote" : "", state.target === p.id ? "selected" : ""].filter(Boolean).join(" ");
+    const cls = ["st-" + st, p.status === "running" ? "running" : "", p.provider === "remote" ? "remote" : "", src.target() === p.id ? "selected" : ""].filter(Boolean).join(" ");
     const a = avatar(holder, p.id);
-    const label = participantLabel(p.id);
+    const label = src.label(p.id);
     paintAvatar(a, { x, y, label, color: `var(--${p.provider}, var(--accent))`, cls, words: wordsOf(words.get(p.id)), chipList: chips(p, now, st), initial: label.slice(0, 1).toUpperCase() });
-    a.setAttribute("aria-label", label + " · " + STATE_WORDS[st] + (state.target === p.id ? " · 다음 메시지 대상" : "") + " · 누르면 이 좌석에게 보냅니다");
-    a.setAttribute("aria-pressed", String(state.target === p.id));
-    a.onclick = () => setTarget(p.id, true);
+    a.setAttribute("aria-label", label + " · " + STATE_WORDS[st] + (src.target() === p.id ? " · 다음 메시지 대상" : "") + " · 누르면 이 좌석에게 보냅니다");
+    a.setAttribute("aria-pressed", String(src.target() === p.id));
+    a.onclick = () => src.pick(p.id);
   });
   const me = avatar(holder, "user");
   paintAvatar(me, { x: 90, y: 525, label: "나", color: "var(--user)", cls: "human", words: wordsOf(words.get("user")), chipList: [], initial: "나" });
   me.setAttribute("aria-label", "나(사람) · 누르면 대상 지정을 풀고 전체에게 보냅니다");
-  me.onclick = () => setTarget("", true);
+  me.onclick = () => src.pick("");
   for (const a of [...holder.children]) if (!keep.has(a.dataset.seat)) a.remove();
   return counts;
 }
@@ -362,7 +376,7 @@ function renderAttention(counts) {
   const bar = $("#sv-attn");
   const pending = approvals().length;
   const items = [];
-  if (pending) items.push(["❗ 승인 대기 " + pending + "건", "accent", "과제 결과를 승인하거나 반려합니다", showDecisions]);
+  if (pending) items.push(["❗ 승인 대기 " + pending + "건", "accent", "과제 결과를 승인하거나 반려합니다", () => src.showDecisions()]);
   if (counts.held) items.push(["⏸ 보류 " + counts.held, "danger", "예산·발화 상한·멈춤으로 새 턴을 시작하지 않는 좌석"]);
   if (counts.away) items.push(["📡 연결 끊김 " + counts.away, "danger", "worker가 연결돼 있지 않은 원격 좌석"]);
   if (counts.running) items.push(["● 답하는 중 " + counts.running, "ok", "지금 답을 쓰는 좌석"]);
@@ -381,15 +395,4 @@ function renderAttention(counts) {
     }
     return item;
   }));
-}
-
-function showDecisions() {
-  const expand = $$(".panel-expand-right").find((b) => b.offsetParent);
-  if (expand) expand.click();
-  else if (!document.body.classList.contains("show-right") && $("#btn-right").offsetParent) toggleDrawer("right");
-  const card = $("#decisions .dec-item.status-proposed");
-  if (!card) return;
-  card.scrollIntoView({ block: "center" });
-  const confirm = card.querySelector(".dec-confirm");
-  if (confirm) confirm.focus();
 }

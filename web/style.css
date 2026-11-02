@@ -3138,3 +3138,57 @@ dialog.dlg-message { width: min(440px, 94vw); }
   .sv-legend { display: none; }
   .sv-attn-item { font-size: 12px; }
 }
+
+/* People page (web/people.html, js/people.js): a person from another PC. */
+body.people-page { display: flex; flex-direction: column; min-height: 100vh; margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+.pp-head { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.pp-head #pp-logout { margin-left: auto; }
+.pp-login { display: grid; place-items: center; flex: 1; padding: 16px; }
+.pp-login[hidden], .pp-app[hidden], .pp-composer[hidden] { display: none; }
+.pp-card { width: min(420px, 100%); display: grid; gap: 12px; padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.pp-card h1 { margin: 0; font-size: 20px; }
+.pp-card input { width: 100%; }
+.pp-error { margin: 0; color: var(--danger); font-size: 13px; }
+.pp-error[hidden] { display: none; }
+.pp-app { flex: 1; display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; }
+.pp-spaces { border-right: 1px solid var(--border); padding: 12px; background: var(--panel); }
+.pp-spaces h2, .pp-side h2 { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+.pp-spaces ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.pp-space { width: 100%; display: flex; align-items: center; gap: 6px; text-align: left; }
+.pp-space.active { border-color: var(--accent); color: var(--accent); }
+.pp-main { display: flex; flex-direction: column; min-width: 0; }
+.space-view.pp-view { position: relative; inset: auto; height: min(72vh, 760px); min-height: 420px; z-index: auto; }
+.pp-empty { padding: 24px; }
+.pp-side { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; padding: 12px 16px 16px; align-items: start; }
+.pp-side > section, .pp-composer { min-width: 0; }
+.pp-composer { grid-column: 2; display: grid; gap: 6px; }
+.pp-composer select, .pp-composer textarea { width: 100%; }
+.pp-composer-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.pp-approvals, .pp-feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.pp-feed { max-height: 260px; overflow-y: auto; }
+.pp-card-item { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 13px; }
+.pp-card-item.waiting { border-color: var(--warn); }
+.pp-card-text { font-weight: 600; margin-bottom: 2px; }
+.pp-card-actions { display: flex; gap: 6px; margin-top: 6px; }
+.pp-msg { padding: 6px 8px; border-radius: 8px; background: var(--panel); border: 1px solid var(--border); font-size: 13px; }
+.pp-msg.user { border-color: var(--user-border); background: var(--user-bubble); }
+.pp-msg.system { color: var(--muted); }
+.pp-msg-head { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; font-size: 12px; }
+.pp-msg-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .pp-app { grid-template-columns: 1fr; }
+  .pp-spaces { border-right: 0; border-bottom: 1px solid var(--border); }
+  .pp-spaces ul { display: flex; overflow-x: auto; }
+  .pp-space { width: auto; white-space: nowrap; }
+  .pp-side { grid-template-columns: 1fr; }
+  .pp-composer { grid-column: 1; }
+  .space-view.pp-view { height: 56vh; min-height: 340px; }
+}
+
+/* Host: invite people (community.js openPeopleDialog). */
+.people-list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 6px; }
+.people-item { display: flex; align-items: center; gap: 8px; }
+.people-item button { margin-left: auto; }
+.people-issued { display: grid; gap: 6px; margin-top: 10px; }
+.people-issued[hidden] { display: none; }
+#form-people input, #form-people select { width: 100%; }

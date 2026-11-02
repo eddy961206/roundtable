@@ -159,8 +159,9 @@ type Message struct {
 	ID               string         `json:"id"`
 	Seq              int64          `json:"seq"`
 	TS               int64          `json:"ts"`
-	Kind             string         `json:"kind"`   // user | agent | system
-	Author           string         `json:"author"` // "user" or participant id
+	Kind             string         `json:"kind"`         // user | agent | system
+	Author           string         `json:"author"`       // "user" or participant id
+	By               string         `json:"by,omitempty"` // a person on another PC who wrote this user message (people.go)
 	Text             string         `json:"text"`
 	Status           string         `json:"status"`           // done | streaming | error | cancelled
 	Target           string         `json:"target,omitempty"` // user message addressed to one agent only

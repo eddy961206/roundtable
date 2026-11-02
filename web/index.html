@@ -179,6 +179,7 @@
                 <a id="btn-export" class="button" download title="대화 전체를 마크다운 파일로 저장합니다">내보내기</a>
                 <button type="button" id="btn-model-stats" title="저장된 방 데이터에서 계산한 모델별 수행 기록을 봅니다">모델 기록</button>
                 <button type="button" id="btn-settings" title="방 설정 및 공지 수정">설정</button>
+                <button type="button" id="btn-people" title="다른 PC의 사람이 브라우저로 사내 커뮤니티 공간을 구경하거나 참여하게 초대합니다">사람 초대</button>
                 <button type="button" id="btn-delete" class="danger ghost" title="방과 기록을 영구 삭제합니다">방 삭제</button>
               </div>
             </details>
@@ -353,6 +354,33 @@
     <button type="button" id="btn-remote-command-copy">명령 복사</button>
     <menu>
       <button type="button" id="dlg-remote-token-close" class="primary">닫기</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-people" aria-labelledby="dlg-people-title">
+  <form method="dialog" id="form-people">
+    <h3 id="dlg-people-title">사람 초대</h3>
+    <p class="muted small-note">다른 PC의 사람이 브라우저로 사내 커뮤니티 공간(작업실·휴게실)에 들어옵니다. 일반 방, 작업 폴더 경로, 작업 기록은 보이지 않습니다.</p>
+    <p id="people-off" class="small-note warn" hidden>이 서버는 -community-addr 없이 실행 중이라 다른 PC에서 접속할 수 없습니다. 서버를 -community-addr 0.0.0.0:8790 처럼 다시 띄워야 합니다.</p>
+    <ul id="people-list" class="people-list" aria-label="초대한 사람"></ul>
+    <div class="row">
+      <label>이름 <input name="name" maxlength="40" placeholder="예: 부장님"></label>
+      <label>권한
+        <select name="role">
+          <option value="viewer">구경 — 보기만</option>
+          <option value="member">참여 — 보내기·과제·승인</option>
+        </select>
+      </label>
+    </div>
+    <button type="button" id="btn-people-invite" class="primary">초대 토큰 만들기</button>
+    <div id="people-issued" class="people-issued" hidden>
+      <label>초대 토큰 <input id="people-token" class="mono" readonly></label>
+      <button type="button" id="btn-people-copy">토큰 복사</button>
+      <p class="small-note">그 사람이 브라우저로 <code id="people-url"></code> 을 열고 이 토큰을 넣습니다. 토큰은 지금 한 번만 보입니다. 메신저로 보낼 때는 그 사람에게만 보내세요.</p>
+    </div>
+    <menu>
+      <button type="button" id="dlg-people-close" class="primary">닫기</button>
     </menu>
   </form>
 </dialog>

@@ -171,7 +171,7 @@ func serve(listenWait time.Duration) {
 	srv.SetCommunityURL(communityURL)
 	var communitySrv *http.Server
 	if communityLn != nil {
-		if communitySrv, err = community.serve(communityLn, hub, logger); err != nil {
+		if communitySrv, err = community.serve(communityLn, hub, web, logger); err != nil {
 			logger.Fatalf("community: %v", err)
 		}
 		logger.Printf("community listener for remote seat workers on %s (allow %s), workers use %s", communityLn.Addr(), *community.allow, communityURL)

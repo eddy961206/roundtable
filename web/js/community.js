@@ -67,6 +67,14 @@ export function bindSpaceControls() {
   $("#btn-assign").onclick = () => sendTask();
   $("#btn-remote-token-copy").onclick = () => copyField("#remote-token-value", "토큰을 복사했습니다.");
   $("#btn-remote-command-copy").onclick = () => copyField("#remote-token-command", "worker 명령을 복사했습니다.");
+  $("#btn-people").onclick = () => openPeopleDialog();
+  $("#btn-people-invite").onclick = () => invitePerson();
+  $("#btn-people-copy").onclick = () => copyField("#people-token", "초대 토큰을 복사했습니다.");
+  $("#dlg-people-close").onclick = () => {
+    $("#people-token").value = ""; // shown once; do not leave it in the page
+    $("#people-issued").hidden = true;
+    $("#dlg-people").close();
+  };
   $("#dlg-remote-token-close").onclick = () => {
     $("#remote-token-value").value = ""; // the token is shown once; do not leave it in the page
     $("#dlg-remote-token").close();
@@ -178,6 +186,63 @@ async function copyField(sel, done) {
     announce(done);
   } catch (err) {
     showAlert("복사하지 못했습니다: " + err.message);
+  }
+}
+
+// ---------- people on other PCs (people.go, people.html) ----------
+async function openPeopleDialog() {
+  $("#people-issued").hidden = true;
+  $("#form-people").name.value = "";
+  $("#dlg-people").showModal();
+  await renderPeople();
+}
+
+async function renderPeople() {
+  const ul = $("#people-list");
+  try {
+    const res = await api("GET", "/api/community/people");
+    $("#people-off").hidden = !!res.community_url;
+    if (!res.people.length) {
+      ul.replaceChildren(el("li", "muted", "아직 초대한 사람이 없습니다"));
+      return;
+    }
+    ul.replaceChildren(...res.people.map((p) => {
+      const li = el("li", "people-item");
+      li.append(el("strong", "", p.name), el("span", "badge", p.role === "member" ? "참여" : "구경"), el("span", "muted small-note", new Date(p.at).toLocaleDateString()));
+      const out = el("button", "ghost danger", "초대 취소");
+      out.type = "button";
+      out.title = "이 사람의 토큰과 로그인을 바로 끊습니다";
+      out.onclick = async () => {
+        if (!(await askConfirm(p.name + "의 초대를 취소할까요? 그 사람의 토큰과 로그인이 바로 끊깁니다.", { okText: "초대 취소", danger: true }))) return;
+        try {
+          await api("DELETE", "/api/community/people/" + encodeURIComponent(p.id));
+          announce(p.name + "의 초대를 취소했습니다.");
+          await renderPeople();
+        } catch (err) {
+          showAlert("초대를 취소하지 못했습니다: " + err.message);
+        }
+      };
+      li.appendChild(out);
+      return li;
+    }));
+  } catch (err) {
+    ul.replaceChildren(el("li", "warn", "목록을 읽지 못했습니다: " + err.message));
+  }
+}
+
+async function invitePerson() {
+  const f = $("#form-people");
+  const name = f.name.value.trim();
+  if (!name) return f.name.focus();
+  try {
+    const res = await api("POST", "/api/community/people", { name, role: f.role.value });
+    $("#people-token").value = res.token;
+    $("#people-url").textContent = res.community_url || "http://<이 PC 주소>:<community 포트>";
+    $("#people-issued").hidden = false;
+    f.name.value = "";
+    await renderPeople();
+  } catch (err) {
+    showAlert("초대하지 못했습니다: " + err.message);
   }
 }
 

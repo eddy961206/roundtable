@@ -49,6 +49,7 @@ type Hub struct {
 	workRoot        string                 // <data>/worktrees: part and integration worktrees live outside user repos
 	remote          map[string]*remoteSlot // remote seat jobs by room/seat (remote.go)
 	remoteTokens    map[string]remoteToken // connection token hash -> seat
+	people          []personRecord         // people invited from other PCs (people.go)
 	Log             *log.Logger
 }
 
@@ -109,6 +110,9 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, listSubs: map[chan []byte]struct{}{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]string{}, workRoot: workRoot, remote: map[string]*remoteSlot{}, Log: logger}
 	if h.remoteTokens, err = store.loadRemoteTokens(); err != nil {
 		return nil, fmt.Errorf("remote_tokens.json: %w", err)
+	}
+	if h.people, err = store.loadPeople(); err != nil {
+		return nil, fmt.Errorf("people.json: %w", err)
 	}
 	rooms, msgs, _, err := store.loadRooms(false, true)
 	if err != nil {
@@ -1009,12 +1013,12 @@ func (h *Hub) enabledIDs(rs *roomState) []string {
 // target addresses one agent; if that agent is running and can steer, the text
 // is injected live, otherwise a priority turn is queued.
 func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Message, error) {
-	return h.postUser(id, text, target, nil, attachmentIDs)
+	return h.postUser(id, text, target, nil, attachmentIDs, "")
 }
 
 // postUser accepts a user message; fwd marks a forwarded copy (forward.go),
-// whose quoted @mentions are not parsed.
-func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentIDs []string) (*Message, error) {
+// whose quoted @mentions are not parsed. by names a person on another PC (people.go).
+func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentIDs []string, by string) (*Message, error) {
 	text = strings.TrimSpace(text)
 	if text == "" && len(attachmentIDs) == 0 {
 		return nil, fmt.Errorf("빈 메시지")
@@ -1028,13 +1032,13 @@ func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentID
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
 	}
-	return h.acceptUser(rs, text, target, fwd, attachmentIDs, nil)
+	return h.acceptUser(rs, text, target, fwd, attachmentIDs, nil, by)
 }
 
 // acceptUser stores and routes a user message. A task (AssignTask) is saved
 // with the message as its source before the target's turn can start and claim
 // it. Caller holds h.mu.
-func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource, attachmentIDs []string, task *Request) (*Message, error) {
+func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource, attachmentIDs []string, task *Request, by string) (*Message, error) {
 	id := rs.room.ID
 	if target != "" {
 		p := rs.room.participant(target)
@@ -1065,6 +1069,7 @@ func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource,
 	}
 	m.Mentions = &mentioned
 	m.Forward = fwd
+	m.By = by
 	if task != nil {
 		m.Requests = []string{task.ID}
 	}

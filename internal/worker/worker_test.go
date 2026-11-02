@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"roundtable/internal/agent"
@@ -62,7 +63,7 @@ func TestWorkerRunsOneTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	allow, _ := server.ParseAllow(server.DefaultCommunityAllow)
-	ts := httptest.NewServer(server.NewCommunity(hub, allow))
+	ts := httptest.NewServer(server.NewCommunity(hub, allow, fstest.MapFS{"people.html": {Data: []byte("<html>people</html>")}}))
 	t.Cleanup(ts.Close)
 	cli := &localCLI{}
 	cfg := Config{URL: ts.URL, Token: token, Provider: cli, Workspace: t.TempDir(), Scratch: t.TempDir(), MaxMode: agent.ModeRead, Once: true, Client: &http.Client{}, Log: log.New(io.Discard, "", 0)}

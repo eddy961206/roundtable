@@ -42,7 +42,7 @@ func TestCommunityListenerGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := NewCommunity(hub, allow)
+	c := NewCommunity(hub, allow, fstest.MapFS{"people.html": {Data: []byte("<html>people</html>")}})
 	send := func(remote, method, path, token string, headers ...string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(`{}`))
 		req.RemoteAddr = remote

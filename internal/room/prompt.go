@@ -75,6 +75,9 @@ func speaker(m *Message, r *Room) string {
 		if m.Forward != nil {
 			return "User (" + forwardLabel(m.Forward) + ")"
 		}
+		if m.By != "" {
+			return "User (" + m.By + ")"
+		}
 		return "User"
 	case "system":
 		return "System"

@@ -53,7 +53,7 @@ func (h *Hub) Forward(toRoom, fromRoom string, seq int64, target, note string) (
 	case strings.TrimSpace(text) == "":
 		return nil, fmt.Errorf("#%d은 본문이 없어 전달할 것이 없음", seq)
 	}
-	return h.postUser(toRoom, text, target, &fwd, nil)
+	return h.postUser(toRoom, text, target, &fwd, nil, "")
 }
 
 // forwardLabel is how a receiving seat sees the source in its history.

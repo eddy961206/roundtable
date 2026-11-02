@@ -2,7 +2,7 @@
 import { $, $$, announce, askConfirm, esc, fmtElapsed, showAlert } from "./util.js";
 import { api } from "./api.js";
 import { hooks } from "./hooks.js";
-import { activeParticipants, openSeq, state } from "./state.js";
+import { activeParticipants, openSeq, participantLabel, state } from "./state.js";
 import { bindPanels, closeDrawers, closeMoreMenu, initTheme, toggleDrawer, toggleTheme } from "./layout.js";
 import { refreshLimits, refreshProviderVersions, renderProviderStatus, renderUsagePanel, scheduleUsageRefresh, usageTimer } from "./usage.js";
 import { openModelStatsDialog } from "./stats.js";
@@ -148,7 +148,15 @@ function bindUI() {
   $("#dlg-room-cancel").onclick = () => $("#dlg-room").close();
   bindDecisionControls();
   bindSpaceControls();
-  bindSpaceView();
+  bindSpaceView({
+    room: () => state.room,
+    messages: () => state.order.map((id) => state.messages.get(id)),
+    decisions: () => [...state.decisions.values()],
+    target: () => state.target,
+    label: participantLabel,
+    pick: (id) => setTarget(id, true),
+    showDecisions: showDecisionsPanel,
+  });
   $("#form-room").onsubmit = onRoomSubmit;
   $("#btn-add-seat-spec").onclick = () => addSeatSpec($("#room-seat-specs"));
   $("#btn-copy-room-seats").onclick = () => {
@@ -502,4 +510,17 @@ if (typeof document !== "undefined") {
   boot().catch((e) => {
     document.body.innerHTML = "<pre style='padding:20px'>시작 실패: " + esc(e.message) + "</pre>";
   });
+}
+
+// The 3D view's approval shortcut: open the right panel (or drawer) at the
+// first card waiting for approval, with focus on its approve button.
+function showDecisionsPanel() {
+  const expand = $$(".panel-expand-right").find((b) => b.offsetParent);
+  if (expand) expand.click();
+  else if (!document.body.classList.contains("show-right") && $("#btn-right").offsetParent) toggleDrawer("right");
+  const card = $("#decisions .dec-item.status-proposed");
+  if (!card) return;
+  card.scrollIntoView({ block: "center" });
+  const confirm = card.querySelector(".dec-confirm");
+  if (confirm) confirm.focus();
 }

@@ -420,7 +420,7 @@ function replyChipHtml(m) {
   if (m.kind !== "agent" || !m.reply_to) return [];
   const target = state.messages.get(m.reply_to);
   const label = target && target.seq ? "#" + target.seq : "원 메시지";
-  const who = target ? (target.kind === "user" ? "나" : participantLabel(target.author)) : "";
+  const who = target ? (target.kind === "user" ? target.by || "나" : participantLabel(target.author)) : "";
   const out = [
     '<button type="button" class="reply-chip" data-reply-to="' +
       esc(m.reply_to) +
@@ -601,7 +601,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
       seqChipHtml(m) +
       "</div>";
   } else {
-    const who = m.kind === "user" ? "나" : participantLabel(m.author);
+    const who = m.kind === "user" ? m.by || "나" : participantLabel(m.author); // by: a person on another PC (people.js)
     const meta = [];
     meta.push('<span class="who ' + esc(authorProvider(m.author)) + '">' + esc(who) + "</span>");
     meta.push(seqChipHtml(m));

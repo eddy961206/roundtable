@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"strconv"
@@ -12,11 +13,12 @@ import (
 	"roundtable/internal/room"
 )
 
-// Community is the network listener for remote seat workers
-// (docs/사내에이전트_커뮤니티_설계.md). It serves only /community/v1, never the
-// local /api, so a colleague's PC can run its seat's turns but cannot read
-// other rooms, start CLIs here or change settings. Every request needs the
-// seat's connection token, and the peer address must be on the allow list.
+// Community is the network listener for other PCs
+// (docs/사내에이전트_커뮤니티_설계.md). It serves /community/v1 for remote seat
+// workers (the seat's connection token) and the people page with /people for
+// invited people (people.go), never the local /api: a colleague's PC cannot
+// read ordinary rooms, start CLIs here or change settings. The peer address
+// must be on the allow list.
 type Community struct {
 	hub   *room.Hub
 	allow []*net.IPNet
@@ -46,8 +48,10 @@ func ParseAllow(list string) ([]*net.IPNet, error) {
 	return out, nil
 }
 
-func NewCommunity(hub *room.Hub, allow []*net.IPNet) *Community {
+func NewCommunity(hub *room.Hub, allow []*net.IPNet, web fs.FS) *Community {
 	c := &Community{hub: hub, allow: allow, mux: http.NewServeMux()}
+	pp := &people{hub: hub, web: web, sessions: map[string]session{}}
+	pp.routes(c.mux)
 	c.mux.HandleFunc("GET /community/v1/me", c.me)
 	c.mux.HandleFunc("GET /community/v1/job", c.job)
 	c.mux.HandleFunc("POST /community/v1/job/{turn}/result", c.result)
@@ -62,13 +66,19 @@ func (c *Community) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "허용되지 않은 주소", http.StatusForbidden)
 		return
 	}
+	worker := strings.HasPrefix(r.URL.Path, "/community/v1/")
 	// Workers are programs, not pages: a browser request from any site is refused.
-	if r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "" {
+	if worker && (r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "") {
 		http.Error(w, "브라우저 요청은 받지 않음", http.StatusForbidden)
 		return
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
+	if !worker { // the people page: its own scripts only, never inside another site's frame
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+	}
 	c.mux.ServeHTTP(w, r)
 }
 
@@ -179,6 +189,38 @@ func (s *Server) assignTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, map[string]any{"message": m, "request": task})
+}
+
+// invitePerson makes a person for the community listener; the token is shown
+// only in this response (people.go).
+func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+		Role string `json:"role"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	p, token, err := s.hub.InvitePerson(body.Name, body.Role)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 201, map[string]any{"person": p, "token": token, "community_url": s.communityURL})
+}
+
+func (s *Server) listPeople(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"people": s.hub.People(), "community_url": s.communityURL})
+}
+
+func (s *Server) revokePerson(w http.ResponseWriter, r *http.Request) {
+	if err := s.hub.RevokePerson(r.PathValue("pid")); err != nil {
+		writeErr(w, 404, err)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
 // remoteToken issues a remote seat's connection token; it is shown only in

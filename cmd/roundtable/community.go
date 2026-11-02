@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -63,13 +64,13 @@ func (f communityFlags) listen() (net.Listener, string, error) {
 	return ln, url, nil
 }
 
-func (f communityFlags) serve(ln net.Listener, hub *room.Hub, logger *log.Logger) (*http.Server, error) {
+func (f communityFlags) serve(ln net.Listener, hub *room.Hub, web fs.FS, logger *log.Logger) (*http.Server, error) {
 	allow, err := server.ParseAllow(*f.allow)
 	if err != nil {
 		return nil, err
 	}
 	// No write timeout: a job poll holds the response for up to a minute.
-	srv := &http.Server{Handler: server.NewCommunity(hub, allow), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, ErrorLog: logger}
+	srv := &http.Server{Handler: server.NewCommunity(hub, allow, web), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, ErrorLog: logger}
 	go func() {
 		var err error
 		if *f.cert != "" {
