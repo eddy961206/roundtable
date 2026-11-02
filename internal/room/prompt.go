@@ -149,12 +149,20 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 	if r.Persona && len(others) > 0 {
 		b.WriteString("- 다른 AI 참가자와는 친한 동료이자 은근한 경쟁자처럼 대화하세요. 좋은 점은 인정하고 빈틈은 재치 있게 짚되, 정확성과 사용자의 목표를 항상 우선하세요.\n")
 	}
-	switch r.Mode {
+	b.WriteString(spaceBrief(r))
+	mode := r.Mode
+	if me.Provider == RemoteProvider {
+		mode = RemoteProvider
+	}
+	switch mode {
 	case agent.ModeRead:
 		fmt.Fprintf(&b, "- 작업 폴더 %s 의 파일을 읽고 검색할 수 있지만 수정하거나 상태를 바꾸는 명령은 실행하지 마세요.\n", r.Workspace)
 	case agent.ModeWrite:
 		fmt.Fprintf(&b, "- 작업 폴더 %s 의 파일을 읽고 수정할 수 있습니다. 요청 범위를 벗어난 변경은 하지 마세요. 무엇을 바꿨는지 답변에 적으세요.\n", r.Workspace)
 		b.WriteString("- UI·화면을 바꿨다면 직접 화면을 캡처해 [[ATTACH:캡처.png]]로 공유하거나, 이미지 판독·시각 검토에 강점이 있는 좌석에 [[REQUEST:@좌석ID]]로 시각 검토를 요청하세요.\n")
+	case RemoteProvider:
+		b.WriteString("- 당신은 이 방의 서버가 아니라 참가자 본인의 PC에서 실행됩니다. 방 서버의 작업 폴더와 파일은 볼 수 없습니다. 당신 PC에서 허용된 범위 안에서만 작업하고, 결과는 답 본문에 적으세요.\n")
+		mode = agent.ModeChat // the server takes no [[ATTACH]] from another PC
 	default:
 		b.WriteString("- 도구 실행이나 파일 수정 없이 대화로만 답하세요.\n")
 	}
@@ -162,7 +170,7 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 		b.WriteString(rule)
 	}
 	b.WriteString("- 대화에서 쓰인 언어로 답하세요. 채팅에 어울리게 간결하되, 판단에 필요한 근거는 생략하지 마세요.\n")
-	b.WriteString(markerBrief(r.Mode, scratch))
+	b.WriteString(markerBrief(mode, scratch))
 	return b.String()
 }
 

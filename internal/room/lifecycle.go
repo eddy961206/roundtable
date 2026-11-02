@@ -76,6 +76,10 @@ func (h *Hub) closeLocked() error {
 		delete(h.listSubs, ch)
 		close(ch)
 	}
+	for _, sl := range h.remote { // waiting worker polls return at once
+		close(sl.wake)
+		sl.wake = make(chan struct{})
+	}
 	return stopErr
 }
 

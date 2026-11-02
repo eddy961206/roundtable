@@ -149,7 +149,7 @@ func (h *Hub) AnswerAsk(roomID, askID string, choice int, text string) (*Message
 	for i, q := range a.Questions {
 		titles[i] = clipRunes(q.Title, 240)
 	}
-	m, err := h.acceptUser(rs, fmt.Sprintf("질문 「%s」에 대한 사용자 답: %s", strings.Join(titles, " / "), text), asked.Author, nil, nil)
+	m, err := h.acceptUser(rs, fmt.Sprintf("질문 「%s」에 대한 사용자 답: %s", strings.Join(titles, " / "), text), asked.Author, nil, nil, nil)
 	if err != nil {
 		return nil, AskView{}, err
 	}

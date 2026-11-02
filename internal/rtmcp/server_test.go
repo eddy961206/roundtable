@@ -235,7 +235,7 @@ func TestReadOnly(t *testing.T) {
 		}
 		call(t, s, name, args)
 	}
-	for _, name := range []string{"rt_create_room", "rt_post", "rt_discuss", "rt_cancel_request", "rt_update_decision", "rt_apply_markers", "rt_cancel_turn", "rt_forward"} {
+	for _, name := range []string{"rt_create_room", "rt_post", "rt_discuss", "rt_cancel_request", "rt_update_decision", "rt_apply_markers", "rt_cancel_turn", "rt_forward", "rt_assign"} {
 		if _, err := s.call(context.Background(), name, json.RawMessage(`{}`)); err == nil {
 			t.Fatalf("write exposed: %s", name)
 		}
@@ -565,7 +565,7 @@ func TestStdioProtocol(t *testing.T) {
 	if text, _ := initialized["instructions"].(string); !strings.Contains(text, "다시 보내지 말고") || !strings.Contains(text, "resume_after_seq를 after_seq로") || !strings.Contains(text, "사람에게 확인받는다") {
 		t.Fatal(initialized["instructions"])
 	}
-	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 20 {
+	if len(byID["list"]["result"].(map[string]any)["tools"].([]any)) != 21 {
 		t.Fatal(byID["list"])
 	}
 	content := byID["3"]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)

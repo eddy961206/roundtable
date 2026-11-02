@@ -19,10 +19,11 @@ type Decision struct {
 	Evidence   string `json:"evidence"`
 	Dissent    string `json:"dissent"`
 	Unverified string `json:"unverified"`
-	By         string `json:"by"`         // participant id or "user"
-	SourceMsg  string `json:"source_msg"` // message that recorded the card; empty for cards added on screen
-	Status     string `json:"status"`     // proposed | active | superseded | dropped
-	At         int64  `json:"at"`         // time of this state line; strictly increases per card
+	By         string `json:"by"`             // participant id or "user"
+	SourceMsg  string `json:"source_msg"`     // message that recorded the card; empty for cards added on screen
+	Status     string `json:"status"`         // proposed | active | superseded | dropped
+	Task       string `json:"task,omitempty"` // request id of a person's task whose result this card asks to approve (community.go)
+	At         int64  `json:"at"`             // time of this state line; strictly increases per card
 }
 
 const (

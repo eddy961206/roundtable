@@ -50,6 +50,7 @@ const usage = `사용법:
   roundtable mcp --url <주소>             MCP 서버(stdio)
   roundtable install <대상 exe>...        이 빌드로 실행 파일 교체(실행 중인 파일은 이름만 바꿈)
   roundtable restart --url <주소>         실행 중인 서버가 유휴가 되면 같은 인자로 다시 띄움
+  roundtable community worker --url <주소> --cli <CLI>   이 PC에서 원격 좌석의 턴을 실행
   roundtable agy-hook install|uninstall   Antigravity 한도 표시 훅
   roundtable gitea-mcp ...                읽기 전용 Gitea MCP
 `
@@ -77,6 +78,8 @@ func dispatch(args []string) (code int, startServer bool, out string) {
 		return runRestart(args[1:]), false, ""
 	case "install":
 		return runInstall(args[1:]), false, ""
+	case "community":
+		return runCommunity(args[1:]), false, ""
 	}
 	if strings.HasPrefix(args[0], "-") {
 		return 0, true, ""
@@ -105,6 +108,7 @@ func serve(listenWait time.Duration) {
 	updateBranch := flag.String("update-branch", envOr("ROUNDTABLE_UPDATE_BRANCH", "main"), "branch the update check compares with (env ROUNDTABLE_UPDATE_BRANCH)")
 	updateInterval := flag.String("update-interval", envOr("ROUNDTABLE_UPDATE_INTERVAL", "6h"), "time between update checks, at least 10m (env ROUNDTABLE_UPDATE_INTERVAL)")
 	updateAPI := flag.String("update-api", envOr("ROUNDTABLE_UPDATE_API", "https://api.github.com"), "GitHub API base URL for the update check (env ROUNDTABLE_UPDATE_API)")
+	community := registerCommunityFlags()
 	flag.Parse()
 	if *agyStatus == "" {
 		*agyStatus = filepath.Join(*data, "agy-status.json")
@@ -121,6 +125,13 @@ func serve(listenWait time.Duration) {
 		logger.Fatalf("listen %s: %v", *addr, err)
 	}
 	defer ln.Close()
+	communityLn, communityURL, err := community.listen()
+	if err != nil {
+		logger.Fatalf("community listen %s: %v", *community.addr, err)
+	}
+	if communityLn != nil {
+		defer communityLn.Close()
+	}
 	store, err := room.NewStore(*data)
 	if err != nil {
 		logger.Fatalf("data dir: %v", err)
@@ -137,6 +148,9 @@ func serve(listenWait time.Duration) {
 	reg := agent.DefaultRegistry(*claudeCmd, *codexCmd, *agyCmd, *agyStatus)
 	reg.Get("codex").(*agent.Codex).SetWindowsSandbox(*codexSandbox)
 	reg.Add(agent.NewOpenCode(*openCodeCmd))
+	if communityLn != nil {
+		reg.Add(room.NewRemoteProvider()) // remote seats exist only while workers can reach this server
+	}
 	hub, err := room.NewHub(store, reg, scratch, logger)
 	if err != nil {
 		logger.Fatalf("load rooms: %v", err)
@@ -154,6 +168,14 @@ func serve(listenWait time.Duration) {
 		logger.Fatal(err)
 	}
 	srv := server.New(hub, reg, web)
+	srv.SetCommunityURL(communityURL)
+	var communitySrv *http.Server
+	if communityLn != nil {
+		if communitySrv, err = community.serve(communityLn, hub, logger); err != nil {
+			logger.Fatalf("community: %v", err)
+		}
+		logger.Printf("community listener for remote seat workers on %s (allow %s), workers use %s", communityLn.Addr(), *community.allow, communityURL)
+	}
 	updates := update.New(updateCfg)
 	srv.SetUpdates(updates)
 
@@ -191,6 +213,9 @@ func serve(listenWait time.Duration) {
 		defer cancel()
 		if err := hub.Shutdown(shutdownCtx); err != nil {
 			logger.Printf("agent shutdown: %v", err)
+		}
+		if communitySrv != nil {
+			_ = communitySrv.Shutdown(shutdownCtx)
 		}
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			logger.Printf("HTTP shutdown: %v", err)

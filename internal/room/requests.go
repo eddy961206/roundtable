@@ -282,6 +282,13 @@ func (h *Hub) finishMarkers(rs *roomState, pr *prepared, raw string, apply bool)
 				}
 				if err := h.saveRequest(rs, next); err != nil {
 					processingErr = err
+					continue
+				}
+				if next.From == "user" && next.Status == "done" {
+					// A person's task is done when the person approves it (community.go).
+					if err := h.taskResultCard(rs, next, msg); err != nil {
+						processingErr = err
+					}
 				}
 			case strings.HasPrefix(line, "[[REQUEST"):
 				reject("request", line, "요청 마커 형식 오류: [[REQUEST:@좌석ID]] 내용 또는 [[REQUEST_DONE:요청ID]] / [[REQUEST_REJECT:요청ID]] 이유")

@@ -1,0 +1,136 @@
+package worker
+
+import (
+	"context"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"roundtable/internal/agent"
+	"roundtable/internal/room"
+	"roundtable/internal/server"
+)
+
+// localCLI stands in for this PC's CLI: it records what it ran.
+type localCLI struct {
+	mu   sync.Mutex
+	opts []agent.RunOptions
+}
+
+func (*localCLI) ID() string                        { return "codex" }
+func (*localCLI) Label() string                     { return "Codex" }
+func (*localCLI) Command() string                   { return "codex" }
+func (*localCLI) Models() []agent.ModelOption       { return nil }
+func (*localCLI) ModelEfforts() map[string][]string { return nil }
+func (*localCLI) Efforts() []string                 { return nil }
+func (*localCLI) DefaultModel() (string, string)    { return "m", "" }
+func (*localCLI) Available() bool                   { return true }
+func (*localCLI) CanSteer() bool                    { return false }
+func (*localCLI) CanFork() bool                     { return false }
+func (*localCLI) ContextWindow(string) int          { return 0 }
+func (c *localCLI) Run(_ context.Context, o agent.RunOptions, _ func(agent.Event)) (agent.Result, error) {
+	c.mu.Lock()
+	c.opts = append(c.opts, o)
+	c.mu.Unlock()
+	return agent.Result{Text: "이 PC에서 답함", SessionID: "local-session", Usage: map[string]any{"input_tokens": 1000.0, "cached_input_tokens": 800.0, "output_tokens": 5.0}}, nil
+}
+
+// One turn end to end: the host room calls the remote seat, this worker runs
+// it with its own CLI at no more than its own mode, and the answer lands in
+// the room with the CLI session and usage.
+func TestWorkerRunsOneTurn(t *testing.T) {
+	store, _ := room.NewStore(t.TempDir())
+	hub, err := room.NewHub(store, agent.NewRegistry(room.NewRemoteProvider()), t.TempDir(), log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = hub.Shutdown(context.Background()) })
+	r, err := hub.CreateRoom(room.RoomSpec{Title: "작업실", Kind: room.KindWork, Mode: agent.ModeWrite, Workspace: t.TempDir(), ParticipantSpecs: []room.ParticipantSpec{{Provider: room.RemoteProvider, Label: "eddy"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seat := r.Participants[0].ID
+	token, err := hub.IssueRemoteToken(r.ID, seat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow, _ := server.ParseAllow(server.DefaultCommunityAllow)
+	ts := httptest.NewServer(server.NewCommunity(hub, allow))
+	t.Cleanup(ts.Close)
+	cli := &localCLI{}
+	cfg := Config{URL: ts.URL, Token: token, Provider: cli, Workspace: t.TempDir(), Scratch: t.TempDir(), MaxMode: agent.ModeRead, Once: true, Client: &http.Client{}, Log: log.New(io.Discard, "", 0)}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), cfg) }()
+	// The first poll marks the worker online; then the seat is called.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		snap, _ := hub.Snapshot(r.ID)
+		if snap.Room.Participants[0].RemoteSeenAt > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the worker never polled")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := hub.PostUser(r.ID, "원격 좌석, 확인해 줘", seat); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker did not finish its turn")
+	}
+	cli.mu.Lock()
+	ran := cli.opts[0]
+	cli.mu.Unlock()
+	if ran.Mode != agent.ModeRead || ran.Workspace != cfg.Workspace || !strings.Contains(ran.Prompt, "원격 좌석, 확인해 줘") || !strings.Contains(ran.Prompt, "read 모드로 실행") {
+		t.Fatalf("a write room must run at the worker's read cap in its own folder: %+v", ran)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		snap, _ := hub.Snapshot(r.ID)
+		p := snap.Room.Participants[0]
+		var reply *room.Message
+		for _, m := range snap.Messages {
+			if m.Kind == "agent" {
+				reply = m
+			}
+		}
+		if reply != nil && reply.Status == "done" {
+			if reply.Text != "이 PC에서 답함" || p.SessionID != "local-session" || p.InputAll != 1000 {
+				t.Fatalf("reply %+v seat %+v", reply, p)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no reply in the room: %+v", snap.Messages)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestWorkerConfigChecks(t *testing.T) {
+	cli := &localCLI{}
+	for name, c := range map[string]Config{
+		"no token":         {URL: "http://h:1", Provider: cli, MaxMode: "chat"},
+		"bad url":          {URL: "h:1/x", Token: "rtc_x", Provider: cli, MaxMode: "chat"},
+		"write, no folder": {URL: "http://h:1", Token: "rtc_x", Provider: cli, MaxMode: "write"},
+		"unknown mode":     {URL: "http://h:1", Token: "rtc_x", Provider: cli, MaxMode: "admin"},
+	} {
+		if err := c.validate(); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	if got := normalizeUsage("codex", map[string]any{"input_tokens": 10.0, "cached_input_tokens": 4.0}); got["input_tokens"] != 6.0 {
+		t.Fatalf("codex usage: %v", got)
+	}
+}
