@@ -38,6 +38,19 @@ var spaceKinds = map[string]spaceDefaults{
 	KindWork:   {maxChain: defaultMaxChain, interval: DefaultSpeakInterval, daily: 24, seatBudget: 5_000_000, roomBudget: 20_000_000},
 }
 
+// SpaceKinds is what the page shows and prefills for a new space.
+func SpaceKinds() map[string]map[string]any {
+	out := map[string]map[string]any{}
+	for kind, d := range spaceKinds {
+		mode := d.mode
+		if mode == "" {
+			mode = agent.ModeRead
+		}
+		out[kind] = map[string]any{"mode": mode, "persona": d.persona, "max_chain": d.maxChain, "speak_interval_seconds": d.interval, "daily_speak_limit": d.daily, "seat_input_budget": d.seatBudget, "room_input_budget": d.roomBudget}
+	}
+	return out
+}
+
 // applySpaceDefaults fills a space's unset guards. An ordinary room keeps no guard.
 func applySpaceDefaults(r *Room, spec RoomSpec) error {
 	if spec.Kind == "" {

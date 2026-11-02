@@ -8,6 +8,7 @@ import { renderUsagePanel } from "./usage.js";
 import { renderTargetControls } from "./composer.js";
 import { renderWorkHeadBar } from "./work.js";
 import { createUnreadTracker } from "./unread.js";
+import { SPACE_KIND, renderSpaceHead } from "./community.js";
 
 const unread = createUnreadTracker((() => { try { return globalThis.localStorage; } catch { return null; } })());
 
@@ -392,6 +393,12 @@ function buildRoomListItems(ul) {
       icon.setAttribute("aria-hidden", "true");
       btn.appendChild(icon);
       btn.appendChild(el("span", "name", r.title));
+      if (SPACE_KIND[r.kind]) {
+        const space = el("span", "space-mark", SPACE_KIND[r.kind].icon);
+        space.title = SPACE_KIND[r.kind].name;
+        space.setAttribute("aria-label", SPACE_KIND[r.kind].name);
+        btn.appendChild(space);
+      }
       const mark = marks[r.id];
       if (mark) {
         const label = mark === "active" ? "실행 중" : "안 읽은 답 있음";
@@ -583,6 +590,7 @@ export function renderRoomHead() {
   renderBlindHint();
   $("#btn-export").href = "/api/rooms/" + r.id + "/export.md";
 
+  renderSpaceHead();
   renderWorkHeadBar();
   renderTargetControls();
   renderUsagePanel();

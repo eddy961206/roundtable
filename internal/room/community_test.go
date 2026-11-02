@@ -203,7 +203,11 @@ func TestRemoteSeatRunsOnWorker(t *testing.T) {
 		}
 		polled <- job
 	}()
-	waitFor(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.remote[remoteKey(r.ID, seat)] != nil && h.remote[remoteKey(r.ID, seat)].polling == 1 })
+	waitFor(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.remote[remoteKey(r.ID, seat)] != nil && h.remote[remoteKey(r.ID, seat)].polling == 1
+	})
 	if _, err := h.PostUser(r.ID, "원격 좌석에게", seat); err != nil {
 		t.Fatal(err)
 	}

@@ -41,10 +41,13 @@ type remoteProvider struct{}
 
 func NewRemoteProvider() agent.Provider { return remoteProvider{} }
 
-func (remoteProvider) ID() string                        { return RemoteProvider }
-func (remoteProvider) Label() string                     { return "원격 에이전트" }
-func (remoteProvider) Command() string                   { return "" }
-func (remoteProvider) Models() []agent.ModelOption       { return nil }
+func (remoteProvider) ID() string      { return RemoteProvider }
+func (remoteProvider) Label() string   { return "원격 에이전트" }
+func (remoteProvider) Command() string { return "" }
+func (remoteProvider) Models() []agent.ModelOption {
+	// The worker's own -cli and -model decide; the seat only names that.
+	return []agent.ModelOption{{ID: "worker", Label: "worker가 정한 모델"}}
+}
 func (remoteProvider) ModelEfforts() map[string][]string { return nil }
 func (remoteProvider) Efforts() []string                 { return nil }
 func (remoteProvider) DefaultModel() (string, string)    { return "worker", "" }

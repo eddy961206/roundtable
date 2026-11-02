@@ -171,7 +171,7 @@ func decode(r *http.Request, v any) error {
 
 func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 	wd, _ := os.Getwd()
-	writeJSON(w, 200, map[string]any{"default_workspace": wd, "version": Version, "max_participants": room.MaxParticipants, "community_url": s.communityURL})
+	writeJSON(w, 200, map[string]any{"default_workspace": wd, "version": Version, "max_participants": room.MaxParticipants, "community_url": s.communityURL, "space_kinds": room.SpaceKinds()})
 }
 
 // SetCommunityURL tells the page where remote seat workers connect. Call it

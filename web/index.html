@@ -152,6 +152,7 @@
             <input id="room-title-input" class="room-title-input" type="text" maxlength="120" aria-label="새 방 이름 (Enter 저장, Esc 취소)" hidden>
             <button type="button" id="btn-rename-room" class="icon-btn rename-btn" aria-label="방 이름 바꾸기" title="방 이름 바꾸기 (Enter 저장 · Esc 취소)">✎</button>
             <span id="room-mode" class="badge"></span>
+            <span id="room-space" class="badge space-badge" hidden></span>
             <span id="room-ws" class="muted mono"></span>
             <span id="room-note-badge" class="badge note-badge" hidden>공지</span>
           </div>
@@ -159,6 +160,7 @@
             <label class="rounds" for="rounds">라운드 <input id="rounds" type="number" min="1" max="10" value="3" aria-label="토론 라운드 수"></label>
             <button type="button" id="btn-discuss" title="활성 참가자들이 라운드별로 토론합니다">토론 시작</button>
             <label class="blind-toggle" for="chk-blind-first" title="켜면 1라운드는 모든 참가자가 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개해 순서대로 토론합니다. 이 방의 기본값으로 저장됩니다."><input type="checkbox" id="chk-blind-first"> 블라인드 1R</label>
+            <button type="button" id="btn-agents-pause" aria-pressed="false" hidden>에이전트 발화 멈춤</button>
             <button type="button" id="btn-stop" class="danger" title="실행 중인 모든 턴을 끊고 대기열과 토론을 비웁니다 (Ctrl+.)">모두 중지</button>
             <button type="button" id="btn-usage" class="mobile-only" aria-label="남은 사용량 열기" aria-controls="provider-panel">사용량</button>
             <button type="button" id="btn-right" class="tablet-only" aria-label="참가자 및 대기열 서랍 열기/닫기" title="참가자·대기열 패널 보이기/숨기기">참가자</button>
@@ -217,6 +219,7 @@
           <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
           <button type="button" id="btn-attach" class="icon-btn attach-btn" aria-label="이미지 파일 선택 (PNG, JPEG, WEBP)" title="이미지 첨부 (PNG·JPEG·WEBP, 파일당 최대 10MB, 최대 4장)">📎</button>
           <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" aria-describedby="composer-error composer-hint" placeholder="메시지 입력… @로 이름 선택 (이미지 붙여넣기·끌어놓기 가능)"></textarea>
+          <button type="button" id="btn-assign" title="고른 좌석에게 한 줄 과제로 맡깁니다. 좌석이 끝내면 결과 카드가 결정 패널에 승인 대기로 올라옵니다." hidden>과제로 맡기기</button>
           <button type="submit" id="btn-send" class="primary">보내기</button>
         </div>
         <div id="composer-error" class="composer-error" role="alert" hidden></div>
@@ -259,6 +262,16 @@
       <label>방 이름 <input name="title" required placeholder="예: SP5 클립 설계 검토"></label>
       <label>그룹 이름 (선택) <input name="group" maxlength="120" placeholder="비우면 작업 폴더로 묶음"></label>
     </div>
+    <div id="room-kind-row">
+      <label>공간 종류
+        <select name="kind">
+          <option value="">일반 방</option>
+          <option value="work">작업실 — 여러 사람의 에이전트가 함께 일함</option>
+          <option value="lounge">휴게실 — 에이전트끼리 짧게 잡담</option>
+        </select>
+      </label>
+      <p id="room-kind-note" class="muted small-note" hidden></p>
+    </div>
     <label>작업 폴더 <input name="workspace" placeholder="D:\WorkSpaces\...\VMS"></label>
     <label>권한 모드
       <select name="mode">
@@ -285,6 +298,11 @@
       <label class="inline" title="1라운드는 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개합니다"><input type="checkbox" name="blind_first_default"> 토론 1라운드 블라인드</label>
       <label class="inline" title="받은 요청을 끝낸 좌석의 완료 신호([[REQUEST_DONE]])가 요청한 좌석을 다시 부르지 않습니다. 거절 신호는 그대로 부릅니다. 검수가 통과하면 작성 좌석이 '승인됐어'만 쓰며 문맥 전체를 다시 읽는 턴을 없앱니다. 수정이 필요하면 검수 좌석이 [[REQUEST:@작성]]으로 따로 요청합니다."><input type="checkbox" name="quiet_done"> 요청 완료 신호로 요청자를 다시 부르지 않기</label>
     </div>
+    <div class="row" id="room-speak">
+      <label title="다른 좌석이 부른 턴(연쇄·요청)은 그 좌석의 마지막 답 뒤 이 시간이 지나야 시작합니다. 사람이 직접 보낸 메시지는 기다리지 않습니다. 0은 없음">발화 간격(초) <input name="speak_interval_seconds" type="number" min="0" max="86400" placeholder="0 = 없음"></label>
+      <label title="좌석 하나가 24시간 동안 답할 수 있는 수입니다. 넘으면 새 턴을 시작하지 않고 메시지는 남겨 둡니다. 0은 없음">24시간 발화 상한(번) <input name="daily_speak_limit" type="number" min="0" max="1000" placeholder="0 = 없음"></label>
+      <label class="inline" id="room-paused-label" title="켜면 이 방의 좌석 턴을 하나도 시작하지 않습니다. 메시지는 남겨 두었다가 끈 뒤 다음 턴에 전달합니다."><input type="checkbox" name="agents_paused"> 에이전트 발화 멈춤</label>
+    </div>
     <div class="row" id="room-guards">
       <label title="좌석 누적 입력(캐시 포함)이 이 값의 배수를 넘을 때마다 안내합니다. 0은 기본 1천만, -1은 끔">입력 경고 간격(토큰) <input name="input_warn_tokens" type="number" min="-1" placeholder="0 = 1천만"></label>
       <label title="좌석 문맥이 모델 한도의 이 비율을 넘으면 한 번 안내합니다. 0은 기본 70, -1은 끔">문맥 경보(%) <input name="context_warn_percent" type="number" min="-1" max="99" placeholder="0 = 70"></label>
@@ -295,6 +313,26 @@
     <menu>
       <button value="cancel" type="button" id="dlg-room-cancel">취소</button>
       <button value="ok" type="submit" class="primary" id="dlg-room-ok">만들기</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-remote-token" aria-labelledby="dlg-remote-token-title">
+  <form method="dialog" id="form-remote-token">
+    <h3 id="dlg-remote-token-title">원격 좌석 연결 토큰</h3>
+    <p class="muted small-note">좌석 <strong id="remote-token-seat"></strong>의 턴을 다른 PC에서 실행합니다. 토큰은 지금 한 번만 보입니다. 메신저로 보낼 때는 그 사람에게만 보내세요.</p>
+    <p id="remote-token-off" class="small-note warn" hidden>이 서버는 -community-addr 없이 실행 중이라 다른 PC의 worker가 연결할 수 없습니다. 서버를 -community-addr 0.0.0.0:8790 처럼 다시 띄워야 합니다.</p>
+    <label>토큰 <input id="remote-token-value" class="mono" readonly></label>
+    <button type="button" id="btn-remote-token-copy">토큰 복사</button>
+    <ol class="small-note">
+      <li>그 PC에서 토큰을 파일 하나에 저장합니다. 예: <code>%USERPROFILE%\.roundtable-token</code></li>
+      <li>그 PC에 roundtable 실행 파일과 쓸 CLI(claude·codex·agy·opencode)가 로그인된 상태로 있어야 합니다.</li>
+      <li>아래 명령을 그 PC에서 실행합니다. <code>--cli</code>는 그 PC의 CLI로, <code>--mode</code>는 허용할 최대 권한으로 바꿉니다(read·write는 <code>--workspace 폴더</code> 필요).</li>
+    </ol>
+    <label>worker 명령 <textarea id="remote-token-command" class="mono" rows="3" readonly></textarea></label>
+    <button type="button" id="btn-remote-command-copy">명령 복사</button>
+    <menu>
+      <button type="button" id="dlg-remote-token-close" class="primary">닫기</button>
     </menu>
   </form>
 </dialog>

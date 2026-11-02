@@ -15,6 +15,7 @@ import { ensureAndRenderTrace, expandTrace } from "./trace.js";
 import { bindTimeline, focusTimelineMessage, jumpToLatestMessages, onTimelineImageLoad, renderMessage, renderTimeline, scheduleRender, scrollToTimelineBottom, syncPendingScrollRestore } from "./timeline.js";
 import { connect, openRoom, schedulePanels, upsertRequest } from "./room.js";
 import { bindDecisionControls, renderDecisions } from "./decisions.js";
+import { bindSpaceControls } from "./community.js";
 import { startUpdateCheck } from "./update.js";
 import { addPartRow, addSeatSpec, addVerifyRow, onRoomSubmit, onWorkPlanSubmit, openRoomDialog, openWorkPlanDialog, readSeatSpecs } from "./dialogs.js";
 
@@ -145,6 +146,7 @@ function bindUI() {
 
   $("#dlg-room-cancel").onclick = () => $("#dlg-room").close();
   bindDecisionControls();
+  bindSpaceControls();
   $("#form-room").onsubmit = onRoomSubmit;
   $("#btn-add-seat-spec").onclick = () => addSeatSpec($("#room-seat-specs"));
   $("#btn-copy-room-seats").onclick = () => {

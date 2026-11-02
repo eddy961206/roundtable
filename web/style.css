@@ -3009,3 +3009,17 @@ dialog.dlg-message { width: min(440px, 94vw); }
 .dlg-forward label { display: grid; gap: 4px; }
 .message-detail .forward-msg { margin-top: 6px; }
 .dlg-message-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+
+/* Community spaces (web/js/community.js) */
+.badge.space-badge { cursor: help; color: var(--accent); border-color: var(--accent); }
+.badge.space-badge.paused { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+#btn-agents-pause[aria-pressed="true"] { color: var(--warn); border-color: var(--warn); }
+.room-item .space-mark { flex: none; font-size: 12px; line-height: 1; }
+.pcard .remote-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.pcard .remote-state.online { color: var(--ok); }
+.pcard .remote-state.offline { color: var(--muted); }
+.pcard .remote-token-btn { padding: 2px 8px; min-height: 24px; font-size: 11px; }
+#room-kind-row { display: grid; gap: 4px; }
+#room-kind-row[hidden], #room-paused-label[hidden] { display: none; }
+#form-remote-token input, #form-remote-token textarea { width: 100%; }
+#form-remote-token ol { margin: 8px 0; padding-left: 20px; }

@@ -131,7 +131,7 @@ func (h *Hub) holdTurn(rs *roomState, p *Participant, why string) {
 		return
 	}
 	p.BudgetHeld = why
-	h.addSystem(rs, fmt.Sprintf("@%s 턴 보류: %s · 이 좌석에 온 메시지는 전달하지 않고 남겨 둠. 방 설정(또는 rt_update_room)에서 상한을 올리거나 0으로 지우면 다음 턴에 함께 전달됨", p.ID, why))
+	h.addSystem(rs, fmt.Sprintf("@%s 턴 보류: %s · 이 좌석에 온 메시지는 전달하지 않고 남겨 둠. 원인이 풀리면(방 설정·rt_update_room에서 상한을 올리거나 0으로 지움, 발화 재개, worker 재연결) 다음 턴에 함께 전달됨", p.ID, why))
 }
 
 func comma(v float64) string {

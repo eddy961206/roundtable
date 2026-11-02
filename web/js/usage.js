@@ -49,6 +49,7 @@ export function renderProviderStatus() {
   if (!box) return;
   box.innerHTML = "";
   for (const p of state.providers) {
+    if (p.id === "remote") continue; // no CLI on this PC: a worker elsewhere runs the seat
     const row = el("div", "prov-mini");
     const head = el("div", "prov-mini-head");
     head.appendChild(el("span", "prov-name " + p.id, LABEL[p.id] || p.label || p.id));
@@ -122,8 +123,10 @@ export function messageInputTokens(u) {
   );
 }
 
+// A remote seat spends its worker owner's account on another PC; this server
+// has no limit to read for it.
 function usageProviders() {
-  return [...new Set(activeParticipants().map((p) => p.provider))];
+  return [...new Set(activeParticipants().filter((p) => p.provider !== "remote").map((p) => p.provider))];
 }
 
 export function renderUsagePanel() {

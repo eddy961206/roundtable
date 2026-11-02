@@ -126,6 +126,8 @@ export function updateHint() {
   const disabledMentions = findDisabledMentions(encodedMentions(text, false));
   const t = state.target;
   const targetParticipant = t ? state.room.participants.find((x) => x.id === t) : null;
+  // A person's task goes to one chosen seat of a community space (community.js).
+  $("#btn-assign").hidden = !(state.room.kind && targetParticipant && targetParticipant.enabled);
 
   if (targetParticipant && !targetParticipant.enabled) {
     hint.className = "composer-hint warn";
