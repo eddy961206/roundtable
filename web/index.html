@@ -160,6 +160,7 @@
             <label class="rounds" for="rounds">라운드 <input id="rounds" type="number" min="1" max="10" value="3" aria-label="토론 라운드 수"></label>
             <button type="button" id="btn-discuss" title="활성 참가자들이 라운드별로 토론합니다">토론 시작</button>
             <label class="blind-toggle" for="chk-blind-first" title="켜면 1라운드는 모든 참가자가 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개해 순서대로 토론합니다. 이 방의 기본값으로 저장됩니다."><input type="checkbox" id="chk-blind-first"> 블라인드 1R</label>
+            <button type="button" id="btn-space-view" aria-pressed="false" aria-controls="space-view">3D 보기</button>
             <button type="button" id="btn-agents-pause" aria-pressed="false" hidden>에이전트 발화 멈춤</button>
             <button type="button" id="btn-stop" class="danger" title="실행 중인 모든 턴을 끊고 대기열과 토론을 비웁니다 (Ctrl+.)">모두 중지</button>
             <button type="button" id="btn-usage" class="mobile-only" aria-label="남은 사용량 열기" aria-controls="provider-panel">사용량</button>
@@ -197,6 +198,23 @@
       </div>
       <div class="timeline-stage">
         <div id="timeline" role="log" aria-live="off" aria-label="대화 메시지 목록"></div>
+        <section id="space-view" class="space-view" aria-label="3D 공간 보기" hidden>
+          <div class="sv-bar">
+            <strong id="sv-title"></strong>
+            <span id="sv-hint" class="muted"></span>
+            <span class="sv-tools">
+              <button type="button" id="sv-left" class="icon-btn" aria-label="왼쪽으로 돌리기" title="왼쪽으로 돌리기">⟲</button>
+              <button type="button" id="sv-right" class="icon-btn" aria-label="오른쪽으로 돌리기" title="오른쪽으로 돌리기">⟳</button>
+              <button type="button" id="sv-reset" title="처음 각도와 크기로">정면</button>
+              <button type="button" id="sv-close" class="icon-btn" aria-label="3D 보기 닫기" title="대화 보기로 돌아가기">✕</button>
+            </span>
+          </div>
+          <div id="sv-attn" class="sv-attn" role="status" aria-live="polite" aria-label="지금 상태와 할 일"></div>
+          <div id="sv-stage" class="sv-stage" tabindex="0" aria-label="3D 사무실. 왼쪽·오른쪽 화살표로 돌립니다.">
+            <div id="sv-world" class="sv-world"></div>
+            <p class="sv-legend" aria-hidden="true"><span class="sv-legend-glow"></span> 답하는 중 · <b>!</b> 승인 필요 · ⏱ 차례 대기 · ⏸ 보류 · 📡 다른 PC · 💬 지난 말(올리면 보임) · 고리 = 다음 메시지 대상</p>
+          </div>
+        </section>
         <button type="button" id="btn-jump-bottom" class="jump-bottom-btn" aria-label="맨 아래로 이동" title="맨 아래로 이동" hidden>
           <span aria-hidden="true">↓</span>
           <span id="jump-bottom-count" class="badge jump-bottom-badge" hidden>0</span>

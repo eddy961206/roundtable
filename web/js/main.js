@@ -16,6 +16,7 @@ import { bindTimeline, focusTimelineMessage, jumpToLatestMessages, onTimelineIma
 import { connect, openRoom, schedulePanels, upsertRequest } from "./room.js";
 import { bindDecisionControls, renderDecisions } from "./decisions.js";
 import { bindSpaceControls } from "./community.js";
+import { bindSpaceView } from "./space-view.js";
 import { startUpdateCheck } from "./update.js";
 import { addPartRow, addSeatSpec, addVerifyRow, onRoomSubmit, onWorkPlanSubmit, openRoomDialog, openWorkPlanDialog, readSeatSpecs } from "./dialogs.js";
 
@@ -147,6 +148,7 @@ function bindUI() {
   $("#dlg-room-cancel").onclick = () => $("#dlg-room").close();
   bindDecisionControls();
   bindSpaceControls();
+  bindSpaceView();
   $("#form-room").onsubmit = onRoomSubmit;
   $("#btn-add-seat-spec").onclick = () => addSeatSpec($("#room-seat-specs"));
   $("#btn-copy-room-seats").onclick = () => {

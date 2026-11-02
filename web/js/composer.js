@@ -94,6 +94,7 @@ export function setTarget(targetId, focusInput) {
     announce("대상 지정이 해제되어 전체 대상으로 돌아왔습니다.");
   }
   if (focusInput && $("#input")) $("#input").focus();
+  document.dispatchEvent(new CustomEvent("rt-target")); // views that mark the target redraw (space-view.js)
 }
 
 // ---------- composer, mentions, warnings & shortcuts ----------
