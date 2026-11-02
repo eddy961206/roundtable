@@ -91,8 +91,10 @@ type Room struct {
 	QuietDone bool `json:"quiet_done,omitempty"`
 	// Archived rooms are left out of room lists unless asked for; they keep
 	// working and an active one is still listed.
-	Archived bool      `json:"archived,omitempty"`
-	Work     *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
+	Archived bool `json:"archived,omitempty"`
+	// Group names the room list group; empty groups the room by its workspace.
+	Group string    `json:"group,omitempty"`
+	Work  *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"roundtable/internal/agent"
 )
@@ -22,6 +23,7 @@ const (
 	MaxParticipants = 32
 	defaultMaxChain = 4
 	defaultRounds   = 3
+	maxGroupName    = 120 // runes, the same as the room list input
 )
 
 // Hub owns every room, runs agent turns and fans events out to SSE clients.
@@ -221,13 +223,27 @@ type RoomSpec struct {
 	// BlindFirstDefault is nil when omitted; new rooms then start discussions blind.
 	BlindFirstDefault *bool `json:"blind_first_default"`
 	// TurnTimeoutMinutes is the longest a turn may run; 0 is the default (turn_timeout.go).
-	TurnTimeoutMinutes int  `json:"turn_timeout_minutes"`
-	QuietDone          bool `json:"quiet_done"`
+	TurnTimeoutMinutes int    `json:"turn_timeout_minutes"`
+	QuietDone          bool   `json:"quiet_done"`
+	Group              string `json:"group"`
+}
+
+// cleanGroup trims a room list group name and checks its length.
+func cleanGroup(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if utf8.RuneCountInString(name) > maxGroupName {
+		return "", fmt.Errorf("그룹 이름은 %d자 이하여야 함", maxGroupName)
+	}
+	return name, nil
 }
 
 func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	if strings.TrimSpace(spec.Title) == "" {
 		return nil, fmt.Errorf("방 이름이 비어 있음")
+	}
+	group, err := cleanGroup(spec.Group)
+	if err != nil {
+		return nil, err
 	}
 	if spec.Mode == "" {
 		spec.Mode = agent.ModeRead
@@ -245,7 +261,7 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 		}
 		spec.Workspace = absolute
 	}
-	r := &Room{ID: newID(), Title: spec.Title, CreatedAt: nowMs(), UpdatedAt: nowMs(), Workspace: spec.Workspace, Mode: spec.Mode, Note: spec.Note, MaxChain: spec.MaxChain, DiscussionRounds: spec.DiscussionRounds, Persona: spec.Persona, BlindFirstDefault: true, TurnTimeoutMinutes: spec.TurnTimeoutMinutes, QuietDone: spec.QuietDone}
+	r := &Room{ID: newID(), Title: spec.Title, CreatedAt: nowMs(), UpdatedAt: nowMs(), Workspace: spec.Workspace, Mode: spec.Mode, Note: spec.Note, MaxChain: spec.MaxChain, DiscussionRounds: spec.DiscussionRounds, Persona: spec.Persona, BlindFirstDefault: true, TurnTimeoutMinutes: spec.TurnTimeoutMinutes, QuietDone: spec.QuietDone, Group: group}
 	if spec.BlindFirstDefault != nil {
 		r.BlindFirstDefault = *spec.BlindFirstDefault
 	}
@@ -319,6 +335,8 @@ type RoomSummary struct {
 	Active    bool   `json:"active"`
 	Archived  bool   `json:"archived,omitempty"`
 	Asks      int    `json:"asks,omitempty"` // seat questions to the person still waiting or open (asks.go)
+	Workspace string `json:"workspace,omitempty"`
+	Group     string `json:"group,omitempty"`
 }
 
 func (h *Hub) Rooms() []RoomSummary {
@@ -333,7 +351,7 @@ func (h *Hub) Rooms() []RoomSummary {
 }
 
 func (rs *roomState) summary() RoomSummary {
-	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0, Archived: rs.room.Archived, Asks: rs.openAsks}
+	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0, Archived: rs.room.Archived, Asks: rs.openAsks, Workspace: rs.room.Workspace, Group: rs.room.Group}
 }
 
 func sortSummaries(s []RoomSummary) {
@@ -439,6 +457,7 @@ type RoomPatch struct {
 	CompactWindowTokens *int               `json:"compact_window_tokens,omitempty"`
 	QuietDone           *bool              `json:"quiet_done,omitempty"`
 	Archived            *bool              `json:"archived,omitempty"`
+	Group               *string            `json:"group,omitempty"`
 	Participants        []ParticipantPatch `json:"participants,omitempty"`
 }
 
@@ -542,6 +561,13 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 			return nil, fmt.Errorf("실행·대기 중인 턴이 있는 방은 보관할 수 없음")
 		}
 		next.Archived = *patch.Archived
+	}
+	if patch.Group != nil {
+		g, err := cleanGroup(*patch.Group)
+		if err != nil {
+			return nil, err
+		}
+		next.Group = g
 	}
 	patched := map[string]bool{}
 	for _, pp := range patch.Participants {

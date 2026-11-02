@@ -474,6 +474,7 @@ export function openRoomDialog(room, initialPrompt = "") {
   $("#dlg-room-title").textContent = room ? "방 설정" : "새 방";
   $("#dlg-room-ok").textContent = room ? "저장" : "만들기";
   f.title.value = room ? room.title : "";
+  f.group.value = room ? room.group || "" : "";
   f.workspace.value = room ? room.workspace : state.config.default_workspace || "";
   f.mode.value = room ? room.mode : "read";
   f.note.value = room ? room.note : "";
@@ -503,6 +504,7 @@ export async function onRoomSubmit(e) {
   submit.disabled = true;
   const body = {
     title: f.title.value.trim(),
+    group: f.group.value.trim(),
     workspace: f.workspace.value.trim(),
     mode: f.mode.value,
     note: f.note.value,

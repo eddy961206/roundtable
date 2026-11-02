@@ -139,7 +139,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 
 `rt_decisions`는 결정 카드 목록을 반환하며 API 오류를 빈 목록으로 바꾸지 않는다. 좌석이 마커로 남긴 카드는 `proposed`이고 안내문에 들어가지 않는다. `rt_update_decision`(`room`, `id`, 선택 `status`·`text`·`evidence`·`dissent`·`unverified`)은 기존 `PATCH /api/rooms/{id}/decisions/{did}`를 감싼다. `status:"active"`는 확정, `"dropped"`는 거절, `"superseded"`는 대체됨이다. 생략한 항목은 바뀌지 않고, 바꿀 항목이 하나도 없으면 HTTP를 부르지 않고 거절한다. 카드를 `proposed`로 되돌릴 수는 없다. 쓰기 도구라 `--read-only`에서는 노출하지 않는다.
 
-`rt_update_room`(`room`, 선택 `title`·`note`·`workspace`·`mode`)은 기존 `PATCH /api/rooms/{id}`를 감싼다. 작업 폴더(git worktree)가 PR 병합 정리로 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 `workspace`를 새 폴더로 바꾼다. 바꿀 항목이 없으면 HTTP를 부르지 않고 거절한다. 작업 폴더가 없는 방의 턴은 공급사를 띄우기 전에 "작업 폴더가 없어 실행하지 않았어"로 실패한다.
+`rt_update_room`(`room`, 선택 `title`·`note`·`workspace`·`mode`·`group`)은 기존 `PATCH /api/rooms/{id}`를 감싼다. 작업 폴더(git worktree)가 PR 병합 정리로 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 `workspace`를 새 폴더로 바꾼다. 바꿀 항목이 없으면 HTTP를 부르지 않고 거절한다. 작업 폴더가 없는 방의 턴은 공급사를 띄우기 전에 "작업 폴더가 없어 실행하지 않았어"로 실패한다.
 
 #### MCP 없이 셸로 쓰기: `roundtable rt`
 

@@ -35,3 +35,29 @@ func TestUpdateRoomPatchesOnlyGivenFields(t *testing.T) {
 		}
 	}
 }
+
+// group names the room list group; an empty one returns the room to its folder group.
+func TestRoomGroupArgument(t *testing.T) {
+	bodies := map[string]map[string]any{}
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		bodies[r.Method+" "+r.URL.Path] = got
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":"r1"}`)
+	}, false)
+	if _, err := s.call(context.Background(), "rt_create_room", json.RawMessage(`{"title":"t","workspace":"","mode":"chat","group":"g","participants":[{"provider":"codex"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := bodies["POST /api/rooms"]["group"]; got != "g" {
+		t.Fatalf("POST group %v", got)
+	}
+	if _, err := s.call(context.Background(), "rt_update_room", json.RawMessage(`{"room":"r1","group":""}`)); err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]any{"group": ""}; !reflect.DeepEqual(bodies["PATCH /api/rooms/r1"], want) {
+		t.Fatalf("PATCH body %v, want %v", bodies["PATCH /api/rooms/r1"], want)
+	}
+}

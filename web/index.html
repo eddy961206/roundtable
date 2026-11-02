@@ -255,7 +255,10 @@
 <dialog id="dlg-room" aria-labelledby="dlg-room-title">
   <form method="dialog" id="form-room">
     <h3 id="dlg-room-title">새 방</h3>
-    <label>방 이름 <input name="title" required placeholder="예: SP5 클립 설계 검토"></label>
+    <div class="row room-name-row">
+      <label>방 이름 <input name="title" required placeholder="예: SP5 클립 설계 검토"></label>
+      <label>그룹 이름 (선택) <input name="group" maxlength="120" placeholder="비우면 작업 폴더로 묶음"></label>
+    </div>
     <label>작업 폴더 <input name="workspace" placeholder="D:\WorkSpaces\...\VMS"></label>
     <label>권한 모드
       <select name="mode">

@@ -171,6 +171,11 @@ func TestCLIHelpListsToolsAndArguments(t *testing.T) {
 			t.Errorf("create_room help missing %q:\n%s", want, out)
 		}
 	}
+	for _, cmd := range []string{"create_room", "update_room"} {
+		if _, out, _ = runCLI(s, "", cmd, "--help"); !strings.Contains(out, "--group string") {
+			t.Errorf("%s help missing --group:\n%s", cmd, out)
+		}
+	}
 }
 
 func TestListRoomsLimitKeepsNewestAndSkipsOtherSnapshots(t *testing.T) {

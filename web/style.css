@@ -313,6 +313,31 @@ kbd {
   padding: 0;
 }
 #room-list li.archived .room-item { opacity: 0.6; }
+.room-group-head {
+  width: 100%;
+  min-height: 24px;
+  padding: 6px 8px 2px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  justify-content: flex-start;
+  gap: 6px;
+  text-align: left;
+}
+.room-group-head:hover:not(:disabled) { background: transparent; color: var(--text); }
+/* While a search opens every group the head only labels it. */
+.room-group-head:disabled { opacity: 1; cursor: default; }
+.room-group-head .caret { flex: none; width: 10px; }
+.room-group-head .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.room-group-head .count { flex: none; font-weight: 400; }
 .room-list-foot {
   display: flex;
   flex-wrap: wrap;
@@ -1502,6 +1527,9 @@ dialog form .row {
   flex-wrap: wrap;
   align-items: flex-end;
 }
+/* The room name takes the wider share; the optional group sits beside it. */
+dialog form .room-name-row label { flex: 1 1 160px; }
+dialog form .room-name-row label:first-child { flex-grow: 2; }
 .checks-fieldset {
   border: 1px solid var(--border);
   border-radius: 8px;
