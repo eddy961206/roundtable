@@ -1,0 +1,6 @@
+#!/bin/sh
+# Runs the CONTRIBUTING.md checks before a push (opt in per checkout:
+# git config core.hooksPath .githooks). Skip once with git push --no-verify
+# only when the checks already passed on this exact head.
+command -v python >/dev/null 2>&1 && py=python || py=python3
+exec "$py" "$(git rev-parse --show-toplevel)/tools/check.py"

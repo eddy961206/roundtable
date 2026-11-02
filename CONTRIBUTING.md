@@ -22,7 +22,8 @@ main에는 시험이 통과한 브랜치를 fast-forward로만 올린다. 병합
    git rebase origin/main
    ```
 
-2. 시험을 돌린다. `go test ./...`, 그리고 바꾼 영역의 추가 검사(예: `web/js`면 `python tools/modcheck.py web/js`, `tools/orchestrate`면 그 폴더의 unittest)다.
+2. 시험을 돌린다: `python tools/check.py`. 기준 브랜치(기본 `origin/main`) 대비 바뀐 영역에 맞춰 `gofmt`·`go vet`·`go test ./...`, `web/js`면 `tools/modcheck.py`와 `tools/perf/*.test.mjs`, `tools/orchestrate`면 그 폴더의 unittest, 안내서·스크립트의 `rt` 예시 검사를 차례로 돌리고 처음 실패에서 멈춘다. 전부 돌리려면 `--all`.
+   - 이 저장소에는 CI가 없다. checkout마다 한 번 `git config core.hooksPath .githooks`를 해 두면 `git push` 전에 같은 검사가 돈다.
 3. 원격 main에 올린다. fast-forward가 아니면 원격이 거절한다. 거절되면 1단계부터 다시 한다.
 
    ```bash
@@ -31,6 +32,17 @@ main에는 시험이 통과한 브랜치를 fast-forward로만 올린다. 병합
 
 4. 저장소 본체 checkout을 쓰는 세션은 `git merge --ff-only origin/main`으로 따라간다.
 5. 다 쓴 worktree와 브랜치는 지운다.
+
+## 결함 수정과 재발 방지
+
+fix 하나에 재발 방지 장치 하나를 붙인다. 2026-11-02 기준 재병합이 아닌 커밋 188개 중 86개(46%)가 fix였고, 마커 파싱·턴 순서처럼 같은 자리가 여러 번 다시 깨졌다.
+
+1. 고치기 전에 결함을 재현하는 장치를 먼저 만든다. 시험(`*_test.go`, fuzz), 정적 검사(`tools/modcheck.py`류), 게시 검사(`tools/orchestrate/glint.py`) 중 결함에 맞는 것을 고른다.
+2. 그 장치가 수정 전 코드에서 실패하고 수정 뒤 통과하는 것을 확인한다. 수정 전에도 통과하는 시험은 결함을 막지 못한다.
+3. 커밋 본문에 장치의 위치를 적는다. 예: `재발 방지: internal/room/marker_fuzz_test.go FuzzQuotedMarkersStayText`.
+4. 장치를 만들 수 없으면(외부 CLI의 일회성 동작 등) 그 이유를 커밋 본문에 적는다.
+
+예: 안내서의 `rt wait --timeout_seconds 7200`이 도구 상한과 어긋나 실패한 일(9671ae1) 뒤로 `internal/rtmcp/docs_examples_test.go`가 README·AGENT_GUIDE·SKILL·`tools/orchestrate`의 모든 `rt` 예시를 도구 스키마와 대조한다.
 
 ## 실행 중인 서버 교체
 
