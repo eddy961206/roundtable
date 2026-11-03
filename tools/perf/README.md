@@ -13,6 +13,7 @@
 |---|---|
 | `internal/agent/jsonl_bench_test.go` | agy/Codex transcript의 1·4·16·32개 파일 폴링, 4/64/512KiB 행, 자원 반복 검사 |
 | `internal/room/performance_test.go` | JSONL 순회, 전체/tail 기록 조회, SSE 1·4·16·32 구독자, 실제 `runTurn` 1·4·16·32개 동시 실행 |
+| `internal/room/history_memory_test.go` | 방 하나에 합성 메시지 1만·10만 개를 넣고 시작 시 읽기 시간·GC 후 남는 힙, Snapshot·좌석 전달·질문 목록·사용량 순회 시간. [측정과 판단](../../docs/메시지기록_메모리_측정_20261103.md) |
 | `fakecli/main.go` | Claude stream-json을 내보내는 로컬 fixture. 세션·도구·사용량·취소를 재현하며 모델을 호출하지 않음 |
 | `stream_load.py` | 실제 HTTP → CLI → JSONL → SSE 경로, 4개 SSE 소비자, 전후 본문·기록 순서 대조 |
 | `lifecycle_smoke.py` | CLI `rt post/read`, 세션 재개, 참가자별 중단, 독립 실행, 사용량, 정상 종료 후 재시작 |
