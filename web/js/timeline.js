@@ -203,7 +203,6 @@ export function renderTimeline(scrollToBottom, explicitPriorTop) {
       state.winStart = 0;
       state.winEnd = 0;
       updateTimelineBanners(tl);
-      renderRoomEmptyGuide(tl);
       recordTimelineScrollMetrics(tl);
       return;
     }
@@ -305,44 +304,6 @@ export async function jumpToLatestMessages() {
   state.unreadBelow = 0;
   try { await hooks.openRoom(state.roomId, true, true); }
   catch (err) { announce("최신 대화 조회 실패: " + err.message); }
-}
-
-function renderRoomEmptyGuide(tl) {
-  const box = el("div", "room-empty-guide");
-  box.id = "timeline-empty";
-  const selected = activeParticipants().filter((p) => p.enabled);
-  const openCodeOnly = selected.length > 0 && selected.every((p) => p.provider === "opencode");
-  box.appendChild(el("h3", "", "이 방의 첫 대화를 시작해 보세요"));
-  box.appendChild(
-    el(
-      "p",
-      "",
-      openCodeOnly
-        ? "연결한 OpenCode 모델에게 질문하세요. 구독이나 연결을 바꿨다면 참가자 설정에서 연결·모델을 새로 불러올 수 있습니다."
-        : "이름을 선택해 한 명에게 질문하거나, 멘션 없이 참여 중인 참가자 모두에게 질문할 수 있습니다. 아래 예시를 누르면 입력창에 채워집니다."
-    )
-  );
-  const chips = el("div", "prompt-chips");
-  const examples = [
-    "이 저장소의 핵심 구조와 데이터 흐름을 각자 읽고 3줄로 요약해줘.",
-    "최근 변경 사항에서 잠재적 버그나 경합 조건이 있는지 검토해줘.",
-    "이 설계의 장단점을 분석하고, 여러 참가자가 함께한다면 서로의 의견도 검토해줘.",
-  ];
-  for (const ex of examples) {
-    const b = el("button", "prompt-example", "“" + ex + "”");
-    b.type = "button";
-    b.onclick = () => {
-      const inp = $("#input");
-      if (inp) {
-        inp.value = ex;
-        inp.focus();
-        updateHint();
-      }
-    };
-    chips.appendChild(b);
-  }
-  box.appendChild(chips);
-  tl.appendChild(box);
 }
 
 export function scheduleRender(id) {
@@ -535,9 +496,6 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
   if (!m) return;
   const tl = $("#timeline");
   if (!tl) return;
-
-  const emptyGuide = $("#timeline-empty");
-  if (emptyGuide) emptyGuide.remove();
 
   const atBottom = !state.browsingHistory && state.stickToBottom;
   const total = state.order.length;

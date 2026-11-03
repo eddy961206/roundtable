@@ -93,7 +93,6 @@ export function fillSpaceFields(f, room) {
   f.auto_chat_hours.value = room ? room.auto_chat_hours || "" : "";
   // Auto chat and the pause change a running space, so they live in its settings.
   for (const id of ["#room-paused-label", "#room-autochat-label", "#room-autochat-hours-label"]) $(id).hidden = !room;
-  renderKindNote(f);
 }
 
 export function readSpaceFields(f, body, editing) {
@@ -119,16 +118,6 @@ function applyKindDefaults(f) {
     f.speak_interval_seconds.value = 0;
     f.daily_speak_limit.value = 0;
   }
-  renderKindNote(f);
-}
-
-function renderKindNote(f) {
-  const note = $("#room-kind-note");
-  const kind = SPACE_KIND[f.kind.value];
-  const d = (state.config.space_kinds || {})[f.kind.value];
-  note.hidden = !kind;
-  if (!kind || !d) return;
-  note.textContent = kind.note + " 토큰을 아끼려고 좌석 누적 입력 " + d.seat_input_budget.toLocaleString() + " · 방 " + d.room_input_budget.toLocaleString() + " 토큰에서 새 턴을 멈춥니다(만든 뒤 설정에서 바꿈).";
 }
 
 // ---------- remote seats ----------
@@ -203,7 +192,7 @@ async function renderPeople() {
     const res = await api("GET", "/api/community/people");
     $("#people-off").hidden = !!res.community_url;
     if (!res.people.length) {
-      ul.replaceChildren(el("li", "muted", "아직 초대한 사람이 없습니다"));
+      ul.replaceChildren();
       return;
     }
     ul.replaceChildren(...res.people.map((p) => {

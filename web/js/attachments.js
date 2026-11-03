@@ -381,7 +381,6 @@ export function renderRequests() {
   ul.dataset.sig = sig;
   ul.replaceChildren();
   if (!sorted.length) {
-    ul.appendChild(el("li", "muted", "진행 중인 요청 없음"));
     return;
   }
   for (const req of sorted) {

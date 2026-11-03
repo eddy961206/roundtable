@@ -482,7 +482,7 @@ kbd {
   background: var(--bg);
 }
 
-/* Empty & Onboarding */
+/* Empty screen */
 .empty-wrap {
   flex: 1;
   overflow-y: auto;
@@ -495,86 +495,7 @@ kbd {
   justify-content: space-between;
   margin-bottom: 12px;
 }
-.onboarding {
-  max-width: 840px;
-  margin: auto;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.onboard-hero {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 18px 20px;
-}
-.onboard-hero h2 {
-  margin: 0 0 8px;
-  font-size: 19px;
-}
-.onboard-hero p {
-  margin: 0 0 14px;
-}
-.onboard-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.onboard-card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px;
-}
-.onboard-card h3 {
-  margin: 0 0 6px;
-  font-size: 14px;
-}
-.onboard-card p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
-}
-.onboard-card code, .file-path {
-  font-family: var(--mono);
-  font-size: 12px;
-  background: var(--panel2);
-  padding: 1px 5px;
-  border-radius: 4px;
-  color: var(--text);
-}
-.onboard-prompts {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px;
-}
-.onboard-prompts h3 {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--muted);
-}
-.prompt-chips {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.prompt-example {
-  justify-content: flex-start;
-  text-align: left;
-  white-space: normal;
-  padding: 6px 10px;
-  font-size: 13px;
-}
-.onboard-shortcuts {
-  font-size: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  justify-content: center;
-}
+.empty-center { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
 
 /* Active Room Section */
 #room {
@@ -722,13 +643,6 @@ kbd {
   text-transform: none;
   color: var(--text);
 }
-.usage-scope {
-  margin: 1px 0 7px;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
 #provider-panel .token-strip { display: grid; gap: 8px; min-width: 0; font-size: 11.5px; }
 .usage-account {
   min-width: 0;
@@ -827,25 +741,6 @@ kbd {
   font-size: 12px;
   color: var(--muted);
   margin: 2px 0;
-}
-.room-empty-guide {
-  margin: auto;
-  max-width: 640px;
-  width: 100%;
-  background: var(--panel);
-  border: 1px dashed var(--border-strong);
-  border-radius: 12px;
-  padding: 20px;
-  text-align: center;
-}
-.room-empty-guide h3 {
-  margin: 0 0 8px;
-  font-size: 15px;
-}
-.room-empty-guide p {
-  margin: 0 0 12px;
-  font-size: 13px;
-  color: var(--muted);
 }
 
 .msg {
@@ -1598,10 +1493,12 @@ dialog menu {
   body.left-collapsed .panel-expand-left { display: inline-flex; }
 }
 @media (min-width: 1101px) {
+  body.no-room #app { grid-template-columns: 240px minmax(0, 1fr); }
+  body.no-room.left-collapsed #app { grid-template-columns: minmax(0, 1fr); }
   body.left-collapsed #app { grid-template-columns: minmax(0, 1fr) 316px; }
   body.right-collapsed #app { grid-template-columns: 240px minmax(0, 1fr); }
   body.left-collapsed.right-collapsed #app { grid-template-columns: minmax(0, 1fr); }
-  body.right-collapsed #right { display: none; }
+  body.right-collapsed #right, body.no-room #right { display: none; }
   body.right-collapsed .panel-expand-right { display: inline-flex; }
 }
 @media (min-width: 761px) and (max-width: 1100px) {
@@ -1650,9 +1547,6 @@ dialog menu {
     grid-template-columns: minmax(0, 1fr);
   }
   .mobile-only { display: inline-flex; }
-  .onboard-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
   #sidebar {
     display: none;
   }
@@ -2723,15 +2617,6 @@ dialog.dlg-lightbox[open] {
 }
 /* Cost hint for the blind toggle: its own line right under the actions row, aligned
    to the toggle side so it does not squeeze the room title. */
-#room-head .blind-hint {
-  margin: -2px 0 0;
-  font-size: 11px;
-  line-height: 1.3;
-  text-align: right;
-}
-@media (max-width: 1100px) {
-  #room-head .blind-hint { text-align: left; }
-}
 
 /* ---- #seq, reply links and parallel-answer groups in the message meta (K1·K7) ---- */
 .seq-chip,
@@ -2915,7 +2800,6 @@ dialog.dlg-stats { width: min(1100px, 96vw); }
 .stats-table .sort-btn { background: transparent; border: 0; padding: 0; min-height: 0; font-weight: 600; color: var(--muted); }
 .stats-table th[aria-sort="ascending"] .sort-btn, .stats-table th[aria-sort="descending"] .sort-btn { color: var(--text); }
 .stats-table tbody tr:hover { background: var(--panel2); }
-@media (min-width: 1180px) { .onboard-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 
 /* Update banner: floats over the layout so the 100vh grid keeps its size. */
 .update-banner {
@@ -3043,7 +2927,6 @@ dialog.dlg-message { width: min(440px, 94vw); }
 }
 .space-view[hidden] { display: none; }
 .sv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
-.sv-bar #sv-hint { font-size: 12px; flex: 1 1 200px; }
 .sv-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-left: auto; }
 /* Law of proximity: turning, zooming and replay are three groups of tools. */
 .sv-tools #sv-zoom-out, .sv-tools #sv-replay { margin-left: 8px; }
@@ -3114,7 +2997,6 @@ dialog.dlg-message { width: min(440px, 94vw); }
   .sv-agent.running .sv-head, .sv-agent.running .sv-bubble.typing { animation: none; }
 }
 @media (max-width: 640px) {
-  .sv-bar #sv-hint { display: none; }
   .sv-world { top: 55%; }
 }
 
@@ -3137,9 +3019,6 @@ dialog.dlg-message { width: min(440px, 94vw); }
 .sv-agent.selected .sv-ring { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
 .sv-agent.running .sv-ring { background: radial-gradient(closest-side, color-mix(in srgb, var(--c) 55%, transparent), transparent); animation: sv-glow 1.6s ease-in-out infinite; }
 .sv-agent.selected .sv-name { border-color: var(--accent); color: var(--accent); }
-.sv-legend { position: absolute; left: 12px; top: 8px; max-width: calc(100% - 24px); margin: 0; padding: 4px 10px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--border); color: var(--muted); font-size: 12px; pointer-events: none; }
-.sv-legend b { color: var(--warn); }
-.sv-legend-link { display: inline-block; width: 18px; height: 3px; border-radius: 2px; background: var(--accent); vertical-align: 3px; }
 .sv-links { position: absolute; left: 0; top: 0; transform-style: preserve-3d; pointer-events: none; }
 /* The floor is tilted and shrunk: a line must be thick in scene pixels to read as 3-4 px on screen. */
 .sv-link { position: absolute; left: 0; top: -6px; height: 12px; border-radius: 6px; transform-origin: 0 50%; background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 35%, transparent), var(--accent)); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent); }
@@ -3155,14 +3034,12 @@ dialog.dlg-message { width: min(440px, 94vw); }
 .sv-card-state { font-weight: 600; }
 .sv-card-words { padding: 6px 8px; border-radius: 8px; background: var(--panel2); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pp-card-answer { margin: 6px 0 0; padding: 6px 8px; border-left: 3px solid var(--border-strong); background: var(--panel2); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
-.sv-legend-glow { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); vertical-align: -1px; }
 @keyframes sv-hop { 50% { transform: rotate(-45deg) translate(3px, -3px); } }
 @keyframes sv-glow { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) {
   .sv-agent.st-approve .sv-alert, .sv-agent.running .sv-ring { animation: none; }
 }
 @media (max-width: 640px) {
-  .sv-legend { display: none; }
   /* A phone keeps most of the room in view: the card takes the lower half at most. */
   .sv-card { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 48%; gap: 4px; padding: 8px 10px; font-size: 12px; }
   .sv-card-words { max-height: 4.4em; overflow: auto; }
@@ -3188,7 +3065,6 @@ body.people-page { display: flex; flex-direction: column; min-height: 100vh; mar
 .pp-space.active { border-color: var(--accent); color: var(--accent); }
 .pp-main { display: flex; flex-direction: column; min-width: 0; }
 .space-view.pp-view { position: relative; inset: auto; height: min(72vh, 760px); min-height: 420px; z-index: auto; }
-.pp-empty { padding: 24px; }
 .pp-side { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; padding: 12px 16px 16px; align-items: start; }
 .pp-side > section, .pp-composer { min-width: 0; }
 .pp-composer { grid-column: 2; display: grid; gap: 6px; }
@@ -3222,3 +3098,9 @@ body.people-page { display: flex; flex-direction: column; min-height: 100vh; mar
 .people-issued { display: grid; gap: 6px; margin-top: 10px; }
 .people-issued[hidden] { display: none; }
 #form-people input, #form-people select { width: 100%; }
+
+/* Rarely changed room settings fold away under one summary. */
+.room-advanced { margin-top: 8px; }
+.room-advanced > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+/* Usage belongs to a room's providers: without a room there is none to show. */
+body.no-room #provider-panel { display: none; }

@@ -7,12 +7,11 @@
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪑</text></svg>">
 </head>
-<body>
+<body class="no-room">
 <div id="live-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
 <div id="update-banner" class="update-banner" role="status" hidden>
   <span id="update-text" class="update-text"></span>
-  <span class="update-how muted">적용: 새 빌드로 <code>roundtable install …</code> 후 <code>roundtable restart</code></span>
   <a id="update-link" class="update-link" target="_blank" rel="noopener noreferrer">변경 보기</a>
   <button type="button" id="btn-update-close" class="icon-btn" aria-label="업데이트 알림 닫기" title="이 업데이트 알림 닫기">✕</button>
 </div>
@@ -40,16 +39,14 @@
         <h2 id="usage-title" tabindex="-1">남은 사용량</h2>
         <button type="button" id="btn-refresh-usage" class="ghost" title="이 방에 추가한 공급사의 사용량 갱신">새로고침</button>
       </div>
-      <p class="usage-scope muted">이 방의 공급사 · 계정 기준</p>
       <div id="token-strip" class="token-strip"></div>
       <div id="usage-status" class="muted" role="status"></div>
       <details id="usage-detail" class="usage-detail">
-        <summary>관측 정보 · 상세</summary>
+        <summary>상세</summary>
         <div id="usage-detail-content"></div>
       </details>
       <details id="provider-details">
-        <summary>CLI 설치 상태 · 버전</summary>
-        <p class="small-note muted">실행 프로그램을 찾았는지와 버전 명령의 결과만 보여줍니다. 로그인·구독 여부는 별도로 확인해야 합니다.</p>
+        <summary>CLI 버전</summary>
         <div id="limits"></div>
         <div class="versions-foot">
           <button type="button" id="btn-refresh-versions" class="ghost" title="각 CLI의 버전 명령을 다시 실행합니다">다시 확인</button>
@@ -64,81 +61,10 @@
       <div class="empty-mobile-bar">
         <button type="button" id="btn-empty-left" class="mobile-only" aria-label="방 목록 열기">☰ 방 목록</button>
         <button type="button" id="btn-empty-expand-left" class="panel-expand-left" aria-controls="sidebar" aria-expanded="false" title="방 목록 패널 열기">» 방 목록</button>
-        <button type="button" id="btn-empty-expand-right" class="panel-expand-right" aria-controls="right" aria-expanded="false" title="참가자 패널 열기">참가자 «</button>
-        <button type="button" id="btn-empty-right" class="tablet-only" aria-label="참가자 패널 열기">참가자</button>
       </div>
-      <div class="onboarding">
-        <div class="onboard-hero">
-          <p id="empty-notice" class="composer-hint warn" hidden></p>
-          <h2>Roundtable — 멀티 에이전트 코딩 단톡방</h2>
-          <p class="muted">이용 중인 CLI나 연결한 API 모델을 참가자로 추가하세요. 같은 공급사의 서로 다른 모델도 각자 독립된 대화로 질문하고 토론할 수 있습니다.</p>
-          <div class="onboard-cta">
-            <button type="button" id="btn-onboard-new" class="primary lg">+ 새 방 만들기</button>
-          </div>
-        </div>
-
-        <div class="onboard-grid" role="list" aria-label="핵심 기능 안내">
-          <div class="onboard-card" role="listitem">
-            <h3>1. @멘션과 동시 호출</h3>
-            <p>입력창에 <code>@</code>를 입력하고 이름을 선택하세요. 한 명만 부르려면 아래 대상 버튼을 누르면 됩니다. 멘션 없이 보내면 활성 참가자 <strong>전원이 동시에</strong> 답합니다.</p>
-          </div>
-          <div class="onboard-card" role="listitem">
-            <h3>2. 1회성 조정 (Steering)</h3>
-            <p>입력창의 대상 칩으로 한 에이전트만 지정해 방향을 바꿉니다. <strong>Claude</strong>는 실행 중 즉시 주입되고, <strong>Codex·Antigravity</strong>는 현재 턴 직후 우선 전달됩니다. 전송 후 자동으로 전체 대상으로 복귀하며 <code>Esc</code>로 해제합니다.</p>
-          </div>
-          <div class="onboard-card" role="listitem">
-            <h3>3. 구조화된 라운드 토론</h3>
-            <p>상단 <strong>토론 시작</strong>을 누르면 N라운드 동안 발언하며 <code>CONTINUE</code> · <code>AGREE</code> · <code>PASS</code> · <code>CONCLUDE</code> 신호를 남깁니다. <strong>블라인드 1R</strong>을 켜면 1라운드는 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개해 순서대로 갈린 쟁점을 다룹니다. 전원 동의/패스하거나 결론이 나면 자동 종료됩니다. <code>AGREE</code>는 의견 일치일 뿐 검증이 아닙니다.</p>
-          </div>
-          <div class="onboard-card" role="listitem">
-            <h3>4. 방 단위 권한 모드</h3>
-            <p><span class="badge read">read</span> 작업 폴더 읽기·검색·서브에이전트 탐색(기본)<br>
-            <span class="badge chat">chat</span> 대화 중심 · 프로젝트 폴더를 전달하지 않음<br>
-            <span class="badge write">write</span> CLI 작업 폴더 편집 허용</p>
-          </div>
-          <div class="onboard-card" role="listitem">
-            <h3>5. 작업 계획과 파트 분배</h3>
-            <p><strong>write</strong> 방에서 <strong>작업 계획</strong>을 열고 목표·검증 명령·파트를 정하면, 파트마다 담당 좌석이 자기 worktree에서 작업하고 통합 branch로 병합됩니다. 진행은 상단 작업 보드에서 봅니다.</p>
-          </div>
-          <div class="onboard-card" role="listitem">
-            <h3>6. 적대적 교차 리뷰</h3>
-            <p>파트가 끝나면 <strong>다른 공급사</strong>의 좌석이 diff를 리뷰합니다. 지적 → 작성자 답변 → 반박 → 재확인 순서로 라운드가 돌고, 통과한 뒤에야 병합됩니다. 지적·수정·철회 수는 <strong>더보기 ▾ 모델 기록</strong>에 쌓입니다.</p>
-          </div>
-          <div class="onboard-card" role="listitem">
-            <h3>7. 참가자 간 요청</h3>
-            <p>에이전트는 응답 끝에 <code>[[REQUEST:@이름]] 확인할 내용</code>으로 서로에게 일을 넘기고, 받은 쪽은 <code>[[REQUEST_DONE:…]]</code>로 끝냅니다. 오른쪽 <strong>요청</strong> 목록에서 진행 상태를 봅니다.</p>
-          </div>
-          <div class="onboard-card" role="listitem">
-            <h3>8. 이미지 공유</h3>
-            <p>입력창에 이미지를 붙여넣거나 끌어놓으면(PNG·JPEG·WEBP) 모든 참가자가 봅니다. 에이전트도 화면 캡처를 <code>[[ATTACH:파일.png]]</code>로 올릴 수 있어 UI 작업의 시각 검토를 다른 좌석에 요청할 수 있습니다.</p>
-          </div>
-          <div class="onboard-card" role="listitem">
-            <h3>9. 역할 카드</h3>
-            <p>참가자마다 <strong>역할</strong>(예: 큰 그림·UX, 적대적 검증)을 정하면 모든 안내문에 들어갑니다. 역할은 "이 관점을 먼저 깊게 본다"는 우선순위이지 다른 문제를 말하지 말라는 뜻이 아닙니다. 프리셋과 모델 추천은 서버의 역할 파일에서 옵니다.</p>
-          </div>
-          <div class="onboard-card" role="listitem">
-            <h3>10. 결정 카드</h3>
-            <p>결정은 오른쪽 <strong>결정</strong> 목록에 근거·남은 반대·미확인 항목과 함께 남습니다. 에이전트가 <code>[[DECISION: 결정 | 근거: … | 반대: … | 미확인: …]]</code> 한 줄로 적은 카드는 <strong>제안</strong>으로 기록되고, 사람이 <strong>확정</strong>하거나 거절합니다. 사람이 직접 추가한 결정은 바로 유효합니다. 유효한 결정 문장만 다음 턴부터 모든 참가자의 안내문에 들어갑니다.</p>
-          </div>
-        </div>
-
-        <div class="onboard-prompts">
-          <h3>예시 프롬프트 (방을 만든 뒤 눌러서 바로 입력)</h3>
-          <div class="prompt-chips">
-            <button type="button" class="prompt-example" data-prompt="이 작업 폴더의 전체 아키텍처와 핵심 패키지 역할을 3줄씩 요약해줘.">“이 작업 폴더의 전체 아키텍처와 핵심 패키지 역할을 3줄씩 요약해줘.”</button>
-            <button type="button" class="prompt-example" data-prompt="최근 변경 사항에서 동시성 경합이나 예외 누락이 있는지 검토해줘.">“최근 변경 사항에서 동시성 경합이나 예외 누락이 있는지 검토해줘.”</button>
-            <button type="button" class="prompt-example" data-prompt="이 설계안의 장단점을 각자 분석하고 대안을 제시해줘. 그다음 토론으로 결론을 내자.">“이 설계안의 장단점을 각자 분석하고 대안을 제시해줘. 그다음 토론으로 결론을 내자.”</button>
-          </div>
-        </div>
-
-        <div class="onboard-shortcuts muted">
-          <span>단축키:</span>
-          <kbd>Enter</kbd> 전송 ·
-          <kbd>Shift+Enter</kbd> 줄바꿈 ·
-          <kbd>Esc</kbd> 대상 해제/팝업 닫기 ·
-          <kbd>Ctrl+.</kbd> 모두 중지 ·
-          <kbd>/</kbd> 입력창 포커스
-        </div>
+      <div class="empty-center">
+        <p id="empty-notice" class="composer-hint warn" hidden></p>
+        <button type="button" id="btn-onboard-new" class="primary lg">+ 새 방</button>
       </div>
     </div>
 
@@ -153,7 +79,6 @@
             <button type="button" id="btn-rename-room" class="icon-btn rename-btn" aria-label="방 이름 바꾸기" title="방 이름 바꾸기 (Enter 저장 · Esc 취소)">✎</button>
             <span id="room-mode" class="badge"></span>
             <span id="room-space" class="badge space-badge" hidden></span>
-            <span id="room-ws" class="muted mono"></span>
             <span id="room-note-badge" class="badge note-badge" hidden>공지</span>
           </div>
           <div class="actions">
@@ -185,7 +110,6 @@
             </details>
           </div>
         </div>
-        <p id="blind-hint" class="blind-hint muted" hidden></p>
         <div id="work-head-bar" class="work-head-bar" hidden></div>
       </header>
       <div id="usage-dock" class="usage-dock" hidden></div>
@@ -201,8 +125,6 @@
         <div id="timeline" role="log" aria-live="off" aria-label="대화 메시지 목록"></div>
         <section id="space-view" class="space-view" aria-label="3D 공간 보기" hidden>
           <div class="sv-bar">
-            <strong id="sv-title"></strong>
-            <span id="sv-hint" class="muted"></span>
             <span class="sv-tools">
               <button type="button" id="sv-left" class="icon-btn" aria-label="왼쪽으로 돌리기" title="왼쪽으로 돌리기">⟲</button>
               <button type="button" id="sv-right" class="icon-btn" aria-label="오른쪽으로 돌리기" title="오른쪽으로 돌리기">⟳</button>
@@ -216,7 +138,6 @@
           <div id="sv-attn" class="sv-attn" role="status" aria-live="polite" aria-label="지금 상태와 할 일"></div>
           <div id="sv-stage" class="sv-stage" tabindex="0" aria-label="3D 사무실. 왼쪽·오른쪽 화살표로 돌립니다.">
             <div id="sv-world" class="sv-world"></div>
-            <p class="sv-legend" aria-hidden="true"><span class="sv-legend-glow"></span> 답하는 중 · <b>!</b> 승인 필요 · ⏱ 차례 대기 · ⏸ 보류 · 📡 다른 PC · 💬 지난 말 · <span class="sv-legend-link"></span> 부른 상대 · 고리 = 다음 메시지 대상</p>
           </div>
         </section>
         <button type="button" id="btn-jump-bottom" class="jump-bottom-btn" aria-label="맨 아래로 이동" title="맨 아래로 이동" hidden>
@@ -229,7 +150,6 @@
       <form id="composer" aria-label="메시지 작성 및 조정">
         <div id="mention-pop" role="listbox" aria-label="멘션 후보" hidden></div>
         <div class="composer-steer-bar">
-          <span class="steer-label muted">다음 메시지 대상</span>
           <div id="target-chips" class="target-chips" role="group" aria-label="메시지 전달 대상 선택"></div>
           <div id="target-active-chip" class="target-active-chip" hidden></div>
           <select id="target" class="sr-only" aria-label="조정 대상 에이전트 선택" tabindex="-1">
@@ -240,12 +160,12 @@
         <div class="composer-row">
           <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
           <button type="button" id="btn-attach" class="icon-btn attach-btn" aria-label="이미지 파일 선택 (PNG, JPEG, WEBP)" title="이미지 첨부 (PNG·JPEG·WEBP, 파일당 최대 10MB, 최대 4장)">📎</button>
-          <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" aria-describedby="composer-error composer-hint" placeholder="메시지 입력… @로 이름 선택 (이미지 붙여넣기·끌어놓기 가능)"></textarea>
+          <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" aria-describedby="composer-error composer-hint" placeholder="메시지"></textarea>
           <button type="button" id="btn-assign" title="고른 좌석에게 한 줄 과제로 맡깁니다. 좌석이 끝내면 결과 카드가 결정 패널에 승인 대기로 올라옵니다." hidden>과제로 맡기기</button>
           <button type="submit" id="btn-send" class="primary">보내기</button>
         </div>
         <div id="composer-error" class="composer-error" role="alert" hidden></div>
-        <div id="composer-hint" class="composer-hint muted"></div>
+        <div id="composer-hint" class="composer-hint warn" role="status" hidden></div>
       </form>
     </section>
   </main>
@@ -281,37 +201,37 @@
   <form method="dialog" id="form-room">
     <h3 id="dlg-room-title">새 방</h3>
     <div class="row room-name-row">
-      <label>방 이름 <input name="title" required placeholder="예: SP5 클립 설계 검토"></label>
-      <label>그룹 이름 (선택) <input name="group" maxlength="120" placeholder="비우면 작업 폴더로 묶음"></label>
+      <label>방 이름 <input name="title" required></label>
+      <label>그룹 <input name="group" maxlength="120"></label>
     </div>
     <div id="room-kind-row">
       <label>공간 종류
         <select name="kind">
           <option value="">일반 방</option>
-          <option value="work">작업실 — 여러 사람의 에이전트가 함께 일함</option>
-          <option value="lounge">휴게실 — 에이전트끼리 짧게 잡담</option>
+          <option value="work">작업실</option>
+          <option value="lounge">휴게실</option>
         </select>
       </label>
-      <p id="room-kind-note" class="muted small-note" hidden></p>
     </div>
-    <label>작업 폴더 <input name="workspace" placeholder="D:\WorkSpaces\...\VMS"></label>
+    <label>작업 폴더 <input name="workspace"></label>
     <label>권한 모드
       <select name="mode">
-        <option value="read">read — 폴더 읽기·검색만 (추천)</option>
-        <option value="chat">chat — 대화 중심 · 프로젝트 폴더를 전달하지 않음</option>
-        <option value="write">write — CLI 작업 폴더 편집 허용</option>
+        <option value="read">read · 읽기</option>
+        <option value="chat">chat · 대화만</option>
+        <option value="write">write · 편집</option>
       </select>
     </label>
-    <label>방 공지 (모든 에이전트에게 항상 보이는 맥락)
-      <textarea name="note" rows="3" placeholder="예: 이 방은 Go VMS의 녹화 보존 설계를 검토한다. 결정은 사람이 내린다."></textarea>
+    <label>공지
+      <textarea name="note" rows="3"></textarea>
     </label>
     <fieldset id="room-seats-fieldset" class="checks-fieldset">
-      <legend>참가자 구성</legend>
-      <p class="muted small-note">이용 중인 공급사와 인원을 선택하세요. CLI 설치 여부는 로그인·이용 권한과 다를 수 있습니다.</p>
+      <legend>참가자</legend>
       <div id="room-seat-specs"></div>
       <button type="button" id="btn-add-seat-spec">+ 다른 공급사·모델</button>
-      <button type="button" id="btn-copy-room-seats" class="ghost" title="지금 열린 방의 참가자 공급사·모델·추론 수준·이름을 그대로 채웁니다">지금 방 구성 가져오기</button>
+      <button type="button" id="btn-copy-room-seats" class="ghost" title="지금 열린 방의 참가자 공급사·모델·추론 수준·이름을 그대로 채웁니다">지금 방 참가자 가져오기</button>
     </fieldset>
+    <details class="room-advanced">
+    <summary>고급</summary>
     <div class="row">
       <label>연쇄 호출 한도 <input name="max_chain" type="number" min="1" max="20" value="4"></label>
       <label>기본 토론 라운드 <input name="discussion_rounds" type="number" min="1" max="10" value="3"></label>
@@ -334,6 +254,7 @@
       <label title="방 전체 누적 입력이 넘으면 모든 좌석의 새 턴을 시작하지 않습니다. 0은 상한 없음">방 입력 상한(토큰) <input name="room_input_budget" type="number" min="0" placeholder="0 = 없음"></label>
       <label title="Claude 좌석이 세션 문맥이 이 크기에 이르면 자동 압축합니다. 긴 세션의 입력이 줄지만 압축 호출만큼 턴이 길어집니다. 0은 CLI 기본, 100000~1000000">Claude 압축 기준(토큰) <input name="compact_window_tokens" type="number" min="0" max="1000000" placeholder="0 = CLI 기본"></label>
     </div>
+    </details>
     <menu>
       <button value="cancel" type="button" id="dlg-room-cancel">취소</button>
       <button value="ok" type="submit" class="primary" id="dlg-room-ok">만들기</button>
@@ -343,17 +264,11 @@
 
 <dialog id="dlg-remote-token" aria-labelledby="dlg-remote-token-title">
   <form method="dialog" id="form-remote-token">
-    <h3 id="dlg-remote-token-title">원격 좌석 연결 토큰</h3>
-    <p class="muted small-note">좌석 <strong id="remote-token-seat"></strong>의 턴을 다른 PC에서 실행합니다. 토큰은 지금 한 번만 보입니다. 메신저로 보낼 때는 그 사람에게만 보내세요.</p>
-    <p id="remote-token-off" class="small-note warn" hidden>이 서버는 -community-addr 없이 실행 중이라 다른 PC의 worker가 연결할 수 없습니다. 서버를 -community-addr 0.0.0.0:8790 처럼 다시 띄워야 합니다.</p>
+    <h3 id="dlg-remote-token-title"><span id="remote-token-seat"></span> 연결 토큰 · 한 번만 보임</h3>
+    <p id="remote-token-off" class="small-note warn" hidden>다른 PC 연결이 꺼져 있음 (-community-addr)</p>
     <label>토큰 <input id="remote-token-value" class="mono" readonly></label>
     <button type="button" id="btn-remote-token-copy">토큰 복사</button>
-    <ol class="small-note">
-      <li>그 PC에서 토큰을 파일 하나에 저장합니다. 예: <code>%USERPROFILE%\.roundtable-token</code></li>
-      <li>그 PC에 roundtable 실행 파일과 쓸 CLI(claude·codex·agy·opencode)가 로그인된 상태로 있어야 합니다.</li>
-      <li>아래 명령을 그 PC에서 실행합니다. <code>--cli</code>는 그 PC의 CLI로, <code>--mode</code>는 허용할 최대 권한으로 바꿉니다(read·write는 <code>--workspace 폴더</code> 필요).</li>
-    </ol>
-    <label>worker 명령 <textarea id="remote-token-command" class="mono" rows="3" readonly></textarea></label>
+    <label>그 PC에서 실행 <textarea id="remote-token-command" class="mono" rows="3" readonly></textarea></label>
     <button type="button" id="btn-remote-command-copy">명령 복사</button>
     <menu>
       <button type="button" id="dlg-remote-token-close" class="primary">닫기</button>
@@ -364,23 +279,22 @@
 <dialog id="dlg-people" aria-labelledby="dlg-people-title">
   <form method="dialog" id="form-people">
     <h3 id="dlg-people-title">사람 초대</h3>
-    <p class="muted small-note">다른 PC의 사람이 브라우저로 사내 커뮤니티 공간(작업실·휴게실)에 들어옵니다. 일반 방, 작업 폴더 경로, 작업 기록은 보이지 않습니다.</p>
-    <p id="people-off" class="small-note warn" hidden>이 서버는 -community-addr 없이 실행 중이라 다른 PC에서 접속할 수 없습니다. 서버를 -community-addr 0.0.0.0:8790 처럼 다시 띄워야 합니다.</p>
+    <p id="people-off" class="small-note warn" hidden>다른 PC 접속이 꺼져 있음 (-community-addr)</p>
     <ul id="people-list" class="people-list" aria-label="초대한 사람"></ul>
     <div class="row">
-      <label>이름 <input name="name" maxlength="40" placeholder="예: 부장님"></label>
+      <label>이름 <input name="name" maxlength="40"></label>
       <label>권한
         <select name="role">
-          <option value="viewer">구경 — 보기만</option>
-          <option value="member">참여 — 보내기·과제·승인</option>
+          <option value="viewer">구경</option>
+          <option value="member">참여</option>
         </select>
       </label>
     </div>
-    <button type="button" id="btn-people-invite" class="primary">초대 토큰 만들기</button>
+    <button type="button" id="btn-people-invite" class="primary">초대</button>
     <div id="people-issued" class="people-issued" hidden>
-      <label>초대 토큰 <input id="people-token" class="mono" readonly></label>
+      <label>접속 주소 <code id="people-url"></code></label>
+      <label>초대 토큰 · 한 번만 보임 <input id="people-token" class="mono" readonly></label>
       <button type="button" id="btn-people-copy">토큰 복사</button>
-      <p class="small-note">그 사람이 브라우저로 <code id="people-url"></code> 을 열고 이 토큰을 넣습니다. 토큰은 지금 한 번만 보입니다. 메신저로 보낼 때는 그 사람에게만 보내세요.</p>
     </div>
     <menu>
       <button type="button" id="dlg-people-close" class="primary">닫기</button>
@@ -391,17 +305,16 @@
 <dialog id="dlg-decision" aria-labelledby="dlg-decision-title">
   <form id="form-decision">
     <h3 id="dlg-decision-title">결정 추가</h3>
-    <p class="muted small-note">유효한 결정 문장은 다음 턴부터 모든 참가자의 안내문에 들어갑니다. 근거·반대·미확인은 화면에만 남습니다.</p>
-    <label>결정 (한 줄) <input name="text" required maxlength="300" placeholder="예: 세션 만료는 30분으로 한다"></label>
-    <label>근거 <input name="evidence" placeholder="URL·파일·메시지"></label>
-    <label>남은 반대 의견 <input name="dissent" placeholder="없음"></label>
-    <label>확인하지 못한 것 <input name="unverified" placeholder="없음"></label>
+    <label>결정 <input name="text" required maxlength="300"></label>
+    <label>근거 <input name="evidence"></label>
+    <label>반대 <input name="dissent"></label>
+    <label>미확인 <input name="unverified"></label>
     <label id="decision-status-row">상태
       <select name="status">
-        <option value="proposed">제안 (proposed) — 확정 전</option>
-        <option value="active">유효 (active)</option>
-        <option value="superseded">대체됨 (superseded)</option>
-        <option value="dropped">폐기됨 (dropped)</option>
+        <option value="proposed">제안</option>
+        <option value="active">유효</option>
+        <option value="superseded">대체됨</option>
+        <option value="dropped">폐기됨</option>
       </select>
     </label>
     <div id="decision-form-error" class="composer-error" role="alert" hidden></div>
@@ -415,7 +328,6 @@
 <dialog id="dlg-participant" aria-labelledby="dlg-participant-title">
   <form id="form-participant">
     <h3 id="dlg-participant-title">참가자 추가</h3>
-    <p class="muted">같은 모델도 여러 명 추가할 수 있습니다. 각자 별도의 대화를 이어갑니다.</p>
     <div id="participant-spec"></div>
     <menu>
       <button type="button" id="dlg-participant-cancel">취소</button>
@@ -427,15 +339,14 @@
 <dialog id="dlg-work" class="dlg-wide" aria-labelledby="dlg-work-title">
   <form id="form-work">
     <h3 id="dlg-work-title">작업 계획</h3>
-    <p class="muted small-note">write 방에서 파트별 worktree·교차 리뷰(다른 공급사 좌석)·통합 branch 병합을 시작합니다.</p>
-    <label>목표 (Goal)
-      <textarea name="goal" rows="2" required placeholder="예: 작업 분배·적대적 교차 리뷰 및 통합 병합 워크플로 구현"></textarea>
+    <label>목표
+      <textarea name="goal" rows="2" required></textarea>
     </label>
     <div class="row">
       <label>병합 모드
         <select name="merge_mode">
-          <option value="confirm">confirm — 확인 후 병합 (승인 필요)</option>
-          <option value="auto">auto — 리뷰·검증 통과 시 자동 병합</option>
+          <option value="confirm">확인 후 병합</option>
+          <option value="auto">자동 병합</option>
         </select>
       </label>
       <label>리뷰 라운드 상한
@@ -443,14 +354,12 @@
       </label>
     </div>
     <fieldset class="checks-fieldset">
-      <legend>검증 명령 (Verify)</legend>
-      <p class="muted small-note">병합 시 통합 worktree에서 순서대로 실행합니다. argv는 셸 문자열이 아닌 인자 배열(한 줄에 인자 1개)로 전달됩니다.</p>
+      <legend>검증 명령 · 한 줄에 인자 하나</legend>
       <div id="work-verify-rows" class="work-form-rows"></div>
       <button type="button" id="btn-add-verify">+ 검증 명령 추가</button>
     </fieldset>
     <fieldset class="checks-fieldset">
-      <legend>파트 분할 (Parts)</legend>
-      <p class="muted small-note">리뷰어 좌석은 담당 좌석과 다른 공급사(Provider)의 활성 좌석만 선택할 수 있습니다.</p>
+      <legend>파트</legend>
       <div id="work-part-rows" class="work-form-rows"></div>
       <button type="button" id="btn-add-part">+ 파트 추가</button>
     </fieldset>
@@ -467,7 +376,6 @@
     <h3 id="dlg-stats-title">모델 기록</h3>
     <button type="button" id="dlg-stats-close" class="icon-btn" aria-label="모델 기록 닫기 (Esc)" title="닫기 (Esc)">✕</button>
   </div>
-  <p class="small-note muted">공급사·모델·추론 수준·역할별로 턴 수, 오류, 응답 시간 중앙값, 토큰, 파트·리뷰 결과를 모읍니다. 열 제목을 누르면 정렬됩니다. 추천은 사람이 하며 이 표는 근거일 뿐입니다.</p>
   <p id="stats-status" class="muted" role="status"></p>
   <div id="stats-table" class="stats-table-wrap"></div>
 </dialog>

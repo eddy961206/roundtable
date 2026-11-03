@@ -226,8 +226,6 @@ function renderSpaceView() {
     sceneKey = key;
     world.replaceChildren(buildFloor(kind, r), el("div", "sv-links"), el("div", "sv-agents"));
   }
-  $("#sv-title").textContent = (kind === "lounge" ? "☕ 휴게실" : "🛠 작업실") + " · " + r.title;
-  $("#sv-hint").textContent = r.agents_paused ? "에이전트 발화가 멈춰 있습니다" : "끌어서 돌리기 · Ctrl+휠 또는 +/−로 확대 · 아바타를 누르면 좌석 정보" + (src.canSend() ? "와 보낼 대상" : "");
   $("#sv-replay").textContent = replay ? "■ 멈추기" : "▶ 다시 보기";
   $("#sv-replay").setAttribute("aria-pressed", String(!!replay));
   const talk = shown();
@@ -536,7 +534,7 @@ function renderCard(seats, words) {
   for (let i = all.length - 1; i >= 0 && (!all[i] || now - all[i].ts < 86400000); i--) {
     if (all[i] && all[i].kind === "agent" && all[i].author === p.id) day++;
   }
-  rows.push(el("p", "muted", "최근 24시간 답 " + day + "번" + (r.daily_speak_limit ? " / 상한 " + r.daily_speak_limit + "번" : "") + " · 이 화면이 받은 기록 기준"));
+  rows.push(el("p", "muted", "24시간 답 " + day + (r.daily_speak_limit ? " / " + r.daily_speak_limit : "")));
   const entry = words.get(p.id);
   const last = entry ? plain(entry.m.text) : "";
   rows.push(el("p", "sv-card-words", last ? new Date(entry.m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " · " + (last.length > 400 ? last.slice(0, 399) + "…" : last) : "최근 기록에 이 좌석의 말이 없습니다"));
@@ -570,7 +568,8 @@ function renderAttention(counts) {
   if (counts.running) items.push(["● 답하는 중 " + counts.running, "ok", "지금 답을 쓰는 좌석"]);
   if (counts.queued) items.push(["⏱ 차례 대기 " + counts.queued, "warn", "앞선 턴이나 발화 간격을 기다리는 좌석"]);
   if (counts.off) items.push(["꺼짐 " + counts.off, "off", "참여가 꺼진 좌석"]);
-  if (!items.length) items.push(["모두 쉬는 중 · 할 일 없음", "off", "실행·대기 중인 턴과 승인할 결과가 없습니다"]);
+  if (src.room().agents_paused) items.push(["⏸ 에이전트 발화 멈춤", "danger", "이 공간의 좌석은 새 턴을 시작하지 않습니다"]);
+  bar.hidden = !items.length; // nothing to do, nothing to read
   const sig = JSON.stringify(items.map((i) => i[0]));
   if (bar.dataset.sig === sig) return;
   bar.dataset.sig = sig;

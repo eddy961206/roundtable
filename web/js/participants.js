@@ -5,7 +5,7 @@ import { activeParticipants, modelLabel, openSeq, participant, participantLabel,
 import { closeDrawers } from "./layout.js";
 import { renderProviderStatus, usageGauge } from "./usage.js";
 import { setTarget, updateHint } from "./composer.js";
-import { renderBlindHint, renderRoomHead, scheduleRoomList } from "./rooms.js";
+import { renderRoomHead, scheduleRoomList } from "./rooms.js";
 import { renderRemoteSeat } from "./community.js";
 
 export function catalogMessage(info) {
@@ -64,7 +64,6 @@ export function buildRoleField(container, { initial = "", getModel = () => "", o
   const textarea = el("textarea", "role-input");
   textarea.rows = 2;
   textarea.maxLength = 600;
-  textarea.placeholder = "예: 큰 그림과 사용자 경험을 먼저 깊게 본다. 비우면 역할 없음.";
   textarea.setAttribute("aria-label", "역할 지시문");
   textarea.value = initial || "";
   wrap.appendChild(textarea);
@@ -93,23 +92,21 @@ export function buildRoleField(container, { initial = "", getModel = () => "", o
     const model = getModel();
     const suggested = suggestedPreset(model);
     const current = textarea.value.trim();
+    // Only a problem or a suggestion is worth a line under the role field.
+    let text = "";
+    let tone = "muted";
     if (rolePresets.error) {
-      note.className = "role-note small-note warn";
-      note.textContent = "역할 프리셋을 불러오지 못했습니다: " + rolePresets.error + " 역할은 직접 입력할 수 있습니다.";
-    } else if (!rolePresets.loaded) {
-      note.className = "role-note small-note muted";
-      note.textContent = "역할 프리셋을 불러오는 중…";
-    } else if (!rolePresets.presets.length) {
-      note.className = "role-note small-note warn";
-      note.textContent = "역할 프리셋이 비어 있습니다. " + (rolePresets.path ? rolePresets.path + " 파일에 프리셋을 추가하세요." : "");
+      text = "역할 프리셋을 불러오지 못함: " + rolePresets.error;
+      tone = "warn";
+    } else if (rolePresets.loaded && !rolePresets.presets.length) {
+      text = "역할 프리셋 없음" + (rolePresets.path ? " · " + rolePresets.path : "");
+      tone = "warn";
     } else if (suggested) {
-      const using = current === (suggested.directive || "").trim();
-      note.className = "role-note small-note muted";
-      note.textContent = "모델 추천: " + suggested.name + (using ? " (적용됨)" : "") + " · 추천은 참고일 뿐이며 자유롭게 고쳐도 됩니다.";
-    } else {
-      note.className = "role-note small-note muted";
-      note.textContent = model ? "이 모델에 대한 추천 역할이 없습니다. 프리셋을 고르거나 직접 적으세요." : "프리셋을 고르거나 직접 적으세요.";
+      text = "추천: " + suggested.name + (current === (suggested.directive || "").trim() ? " ✓" : "");
     }
+    note.className = "role-note small-note " + tone;
+    note.textContent = text;
+    note.hidden = !text;
     for (const preset of rolePresets.presets) {
       const chip = el("button", "role-chip", preset.name);
       chip.type = "button";
@@ -316,7 +313,6 @@ export function renderParticipants() {
     }
     updateParticipantCardInPlace(card, p, info);
   }
-  renderBlindHint();
 }
 
 const roleFields = new WeakMap(); // card element -> its role editor
@@ -355,7 +351,7 @@ function buildParticipantCardSkeleton(p, info) {
   card.appendChild(roleLine);
 
   const edit = el("details", "participant-edit");
-  edit.appendChild(el("summary", "muted", "설정 · 상세"));
+  edit.appendChild(el("summary", "muted", "설정"));
   edit.ontoggle = () => {
     const current = participant(p.id);
     if (edit.open && current) { delete card.dataset.signature; updateParticipantCardInPlace(card, current, info); }
@@ -388,7 +384,6 @@ function buildParticipantCardSkeleton(p, info) {
   roleSave.type = "button";
   roleSave.onclick = () => patchParticipant(p.id, { role: roleField.value });
   edit.appendChild(roleSave);
-  edit.appendChild(el("p", "small-note muted", "역할을 바꿔도 세션은 유지됩니다. 다음 턴부터 새 역할이 안내문에 들어갑니다."));
   const customLabel = el("label", "", "모델 ID 직접 입력");
   const custom = el("input", "custom-model");
   custom.placeholder = "CLI가 지원하는 정확한 모델 ID";
@@ -450,9 +445,8 @@ function buildParticipantCardSkeleton(p, info) {
   selRow.appendChild(es);
   edit.appendChild(selRow);
   filter.oninput = () => { delete card.dataset.signature; updateParticipantCardInPlace(card, participant(p.id), info); };
-  edit.appendChild(el("div", "small-note muted", "모델·추론 수준 변경 시 새 대화 세션으로 시작합니다."));
+  edit.appendChild(el("div", "resp-times muted"));
   edit.appendChild(buildSessionActions(p.id));
-  edit.appendChild(el("div", "small-note muted", "CLI 창을 닫은 뒤 참가자를 다시 켜세요. 복사한 명령은 참가자를 끈 뒤 실행하세요."));
   edit.appendChild(el("div", "participant-id muted mono", "참가자 ID: " + p.id));
 
   es.onchange = () => patchParticipant(p.id, { effort: es.value });
@@ -469,7 +463,6 @@ function buildParticipantCardSkeleton(p, info) {
 
   const stLine = el("div", "status-line");
   card.appendChild(stLine);
-  card.appendChild(el("div", "resp-times muted"));
   // Two different stops: one running turn only (the seat stays on and keeps
   // receiving requests), or the seat's whole work plus turning the seat off.
   const actions = el("div", "stop-actions");
@@ -627,9 +620,9 @@ function updateParticipantCardInPlace(card, p, info) {
   const roleField = roleFields.get(card);
   if (roleField) roleField.syncSuggestion();
   const roleLine = card.querySelector(".participant-role");
-  roleLine.textContent = p.role ? "🎯 " + p.role : "역할 없음";
-  roleLine.title = p.role ? "역할: " + p.role : "설정 · 상세에서 역할을 정할 수 있습니다";
-  roleLine.classList.toggle("muted", !p.role);
+  roleLine.textContent = p.role ? "🎯 " + p.role : "";
+  roleLine.title = p.role ? "역할: " + p.role : "";
+  roleLine.hidden = !p.role;
   for (const control of card.querySelectorAll(".model-sel, .effort-sel, .custom-model, .apply-custom-model, .remove-participant")) {
     control.disabled = p.status === "running";
     control.title = p.status === "running" ? "현재 턴을 중지하거나 완료한 뒤 변경하세요" : "";
@@ -697,7 +690,8 @@ function updateParticipantCardInPlace(card, p, info) {
   const rt = card.querySelector(".resp-times");
   if (rt) {
     const t = seatTimes(p.id);
-    rt.textContent = t ? "응답 시간 · 최근 " + fmtElapsed(t.last) + " · 평균 " + fmtElapsed(t.avg) + " (" + t.n + "회)" : "응답 시간 · 아직 완료한 답변 없음";
+    rt.textContent = t ? "응답 시간 · 최근 " + fmtElapsed(t.last) + " · 평균 " + fmtElapsed(t.avg) + " (" + t.n + "회)" : "";
+    rt.hidden = !t;
   }
   renderGuardBadges(card, p);
   const stLine = card.querySelector(".status-line");
@@ -716,10 +710,9 @@ function updateParticipantCardInPlace(card, p, info) {
     } else if (p.status === "queued") {
       stMain.textContent = "⏳ 대기열에서 차례 대기 중";
       stLine.appendChild(stMain);
-    } else {
-      stMain.textContent = p.enabled ? "대기 중" : "참여 꺼짐";
-      stLine.appendChild(stMain);
     }
+    // Idle needs no words; the switch already says on or off.
+    stLine.hidden = p.status !== "running" && p.status !== "queued";
   }
 
   const t = p.totals || {};
@@ -771,7 +764,6 @@ export function renderQueue() {
   if (!ul) return;
   ul.innerHTML = "";
   if (!state.queue.length) {
-    ul.appendChild(el("li", "muted", "대기 중인 턴 없음"));
     return;
   }
   for (const t of state.queue) {

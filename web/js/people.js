@@ -56,13 +56,11 @@ async function startPeoplePage() {
   $("#pp-logout").hidden = false;
   $("#pp-me").textContent = me.name + " · " + (me.role === "member" ? "참여" : "구경");
   $("#pp-composer").hidden = me.role !== "member";
-  $("#pp-viewer-note").hidden = me.role === "member";
   spaces = await call("GET", "/people/api/spaces");
   renderSpaces();
   const wanted = decodeURIComponent(location.hash.slice(1));
   const first = spaces.find((s) => s.id === wanted) || spaces[0];
   if (first) openSpace(first.id);
-  else $("#pp-empty").hidden = false;
 }
 
 function renderSpaces() {
@@ -77,7 +75,7 @@ function renderSpaces() {
     li.appendChild(b);
     return li;
   }));
-  if (!spaces.length) ul.appendChild(el("li", "muted", "아직 열린 공간이 없습니다"));
+  if (!spaces.length) ul.appendChild(el("li", "muted", "공간 없음"));
 }
 
 async function openSpace(id) {
@@ -85,7 +83,6 @@ async function openSpace(id) {
   target = "";
   history.replaceState(null, "", "#" + encodeURIComponent(id));
   renderSpaces();
-  $("#pp-empty").hidden = true;
   await reload();
   if (id !== openSpaceId) return; // another space opened while this one loaded
   if (stream) stream.close();
@@ -136,10 +133,9 @@ function renderApprovals() {
   const ul = $("#pp-approvals");
   const waiting = snap.decisions.filter((d) => d.status === "proposed");
   const decided = snap.decisions.filter((d) => d.task && d.status !== "proposed").slice(-3);
-  if (!waiting.length && !decided.length) {
-    ul.replaceChildren(el("li", "muted", "승인을 기다리는 결과가 없습니다"));
-    return;
-  }
+  // The section shows only when there is something to approve or just decided.
+  $("#pp-approvals-box").hidden = !waiting.length && !decided.length;
+  if (!waiting.length && !decided.length) return;
   ul.replaceChildren(...waiting.map((d) => {
     const li = el("li", "pp-card-item waiting");
     li.appendChild(el("div", "pp-card-text", d.text));

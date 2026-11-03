@@ -113,10 +113,10 @@ export async function openModelStatsDialog() {
     rows = data.rows.map((r) => ({ ...r, marker_reject_total: Object.values(r.marker_rejects).reduce((a, b) => a + b, 0) }));
     generatedAt = Number(data.generated_at) || 0;
     if (!rows.length) {
-      status.textContent = "아직 기록된 에이전트 턴이 없습니다. 방에서 대화하면 여기에 쌓입니다.";
+      status.textContent = "기록 없음";
       return;
     }
-    status.textContent = rows.length + "행 · 계산 시각 " + (generatedAt ? new Date(generatedAt).toLocaleString("ko-KR") : "알 수 없음") + " · 저장된 방 데이터에서 계산한 값이며, 표본(턴 수)이 적은 행은 참고만 하세요." + (data.unattributed_marker_rejects > 0 ? " 모델 기록 이전의 마커 거절 " + data.unattributed_marker_rejects + "건은 당시 모델을 알 수 없어 표에서 뺐습니다." : "");
+    status.textContent = rows.length + "행 · " + (generatedAt ? new Date(generatedAt).toLocaleString("ko-KR") : "") + (data.unattributed_marker_rejects > 0 ? " · 모델을 모르는 마커 거절 " + data.unattributed_marker_rejects + "건 제외" : "");
     renderTable();
   } catch (err) {
     status.className = "warn";

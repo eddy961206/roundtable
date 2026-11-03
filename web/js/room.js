@@ -127,6 +127,7 @@ export async function openRoom(id, resync, latest = false) {
   state.winStart = Math.max(0, state.winEnd - DOM_CAP_STEP);
 
   $("#empty").hidden = true;
+  document.body.classList.remove("no-room");
   const roomSec = $("#room");
   roomSec.hidden = false;
   roomSec.dataset.mode = state.room.mode || "read";
@@ -168,8 +169,8 @@ export function connect(id) {
     if (state.es !== es || state.roomId !== id) return;
     const hint = $("#composer-hint");
     if (hint) {
-      hint.className = "composer-hint warn";
-      hint.textContent = "⚠ 서버와 SSE 연결이 끊겼습니다 — 재연결 시도 중…";
+      hint.hidden = false;
+      hint.textContent = "서버 연결 끊김 · 다시 연결하는 중";
     }
   };
   es.addEventListener("hello", () => {

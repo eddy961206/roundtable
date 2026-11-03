@@ -44,7 +44,6 @@ export function addVerifyRow(container, initial = null) {
   const row = el("div", "work-verify-row");
   const nameLabel = el("label", "", "이름");
   const nameInput = el("input", "verify-name");
-  nameInput.placeholder = "예: test";
   if (initial && initial.name) nameInput.value = initial.name;
   nameLabel.appendChild(nameInput);
   row.appendChild(nameLabel);
@@ -80,21 +79,18 @@ export function addPartRow(container, removable = true) {
   const titleLabel = el("label", "", "파트 제목");
   const titleInput = el("input", "part-title-input");
   titleInput.required = true;
-  titleInput.placeholder = "예: P1 리뷰 프로토콜";
   titleLabel.appendChild(titleInput);
   row.appendChild(titleLabel);
 
   const scopeLabel = el("label", "", "범위 경로 (쉼표 구분)");
   const scopeInput = el("input", "part-scope-input mono");
   scopeInput.required = true;
-  scopeInput.placeholder = "예: internal/room/review.go, internal/room/review_test.go";
   scopeLabel.appendChild(scopeInput);
   row.appendChild(scopeLabel);
 
   const briefLabel = el("label", "part-brief-label", "완료 조건 (Brief)");
   const briefInput = el("input", "part-brief-input");
   briefInput.required = true;
-  briefInput.placeholder = "예: review_types.go 메서드 및 단위 테스트 통과";
   briefLabel.appendChild(briefInput);
   row.appendChild(briefLabel);
 
@@ -287,7 +283,7 @@ export function addSeatSpec(box, providerId = "", removable = true, seed = null)
   }
   const provider = field("공급사", el("select", "seat-provider"));
   provider.required = true;
-  const providerPlaceholder = el("option", "", "이용 중인 공급사 선택");
+  const providerPlaceholder = el("option", "", "공급사");
   providerPlaceholder.value = "";
   provider.appendChild(providerPlaceholder);
   for (const info of state.providers) {
@@ -317,11 +313,10 @@ export function addSeatSpec(box, providerId = "", removable = true, seed = null)
   count.max = "32";
   count.value = "1";
   count.required = true;
-  const label = field("이름 (선택)", el("input", "seat-label"));
+  const label = field("이름", el("input", "seat-label"));
   label.maxLength = 80;
-  label.placeholder = "예: 설계 검토자";
   const roleBox = el("div", "seat-role");
-  roleBox.appendChild(el("div", "role-label", "역할 (선택 · 이 관점을 먼저 깊게 본다)"));
+  roleBox.appendChild(el("div", "role-label", "역할"));
   row.appendChild(roleBox);
   const selectedModel = () => (model.value === "__custom__" ? custom.value.trim() : model.value);
   // A copied seat keeps its own (possibly empty) role; only a fresh seat gets the model suggestion.
@@ -344,9 +339,9 @@ export function addSeatSpec(box, providerId = "", removable = true, seed = null)
     effort.disabled = !provider.value;
     custom.disabled = !provider.value;
     if (!provider.value) {
-      const modelPlaceholder = el("option", "", "공급사를 먼저 선택하세요");
+      const modelPlaceholder = el("option", "", "—");
       modelPlaceholder.value = ""; model.replaceChildren(modelPlaceholder);
-      const effortPlaceholder = el("option", "", "공급사 선택 후 설정");
+      const effortPlaceholder = el("option", "", "—");
       effortPlaceholder.value = ""; effort.replaceChildren(effortPlaceholder);
       effort.hidden = false; effort.parentElement.hidden = false;
       delete effort.dataset.effKey;
@@ -395,8 +390,7 @@ export function addSeatSpec(box, providerId = "", removable = true, seed = null)
 // provider, model and effort to the base seat's, which the server requires.
 function buildForkPicker(row, provider, model, effort, syncModel) {
   const box = el("details", "seat-fork");
-  box.appendChild(el("summary", "muted", "기반 세션에서 시작 (선택)"));
-  box.appendChild(el("p", "muted small-note", "공통 문서를 읽힌 기반 좌석의 세션을 복사해 첫 턴을 시작합니다. 같은 문서를 다시 읽지 않습니다. 같은 공급사·모델만 되고 agy는 포크하지 못합니다."));
+  box.appendChild(el("summary", "muted", "기반 세션에서 시작"));
   const roomLabel = el("label", "", "기반 방");
   const roomSel = el("select", "seat-fork-room");
   roomLabel.appendChild(roomSel);

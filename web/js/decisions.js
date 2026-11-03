@@ -107,7 +107,6 @@ export function renderDecisions() {
   ul.dataset.sig = sig;
   ul.replaceChildren();
   if (!sorted.length) {
-    ul.appendChild(el("li", "muted", "기록된 결정 없음"));
     return;
   }
   for (const d of sorted) {

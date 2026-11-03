@@ -474,19 +474,6 @@ export function bindRoomList() {
 export function roomMenuIsOpen() { return !!menuOpenFor; }
 export { closeRoomMenu };
 
-// The blind first round runs one independent call per enabled seat, so a question
-// that already has answers costs that many calls more. Shown next to the toggle.
-export function renderBlindHint() {
-  const hint = $("#blind-hint");
-  if (!hint) return;
-  if (!state.room) {
-    hint.hidden = true;
-    return;
-  }
-  const n = activeParticipants().filter((p) => p.enabled).length;
-  hint.hidden = false;
-  hint.textContent = "시작 전에 이미 답이 있으면 블라인드는 호출 " + (n > 0 ? n + "회" : "참가자 수만큼") + "를 더 씁니다";
-}
 
 // ---------- room header: inline title edit ----------
 let titleEditing = false;
@@ -561,8 +548,7 @@ export function renderRoomHead() {
       : r.mode === "read"
       ? "read 모드: 작업 폴더 읽기·검색만 허용됩니다"
       : "chat 모드: 대화 중심 · 프로젝트 폴더를 전달하지 않습니다";
-  $("#room-ws").textContent = r.workspace || "(작업 폴더 없음)";
-  $("#room-ws").title = r.workspace || "작업 폴더가 지정되지 않았습니다";
+  if (r.workspace) badge.title += "\n" + r.workspace;
 
   const noteBadge = $("#room-note-badge");
   if (noteBadge) {
@@ -587,7 +573,6 @@ export function renderRoomHead() {
 
   $("#rounds").value = r.discussion_rounds || 3;
   $("#chk-blind-first").checked = r.blind_first_default === true;
-  renderBlindHint();
   $("#btn-export").href = "/api/rooms/" + r.id + "/export.md";
 
   renderSpaceHead();

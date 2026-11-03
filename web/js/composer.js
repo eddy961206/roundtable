@@ -130,35 +130,9 @@ export function updateHint() {
   // A person's task goes to one chosen seat of a community space (community.js).
   $("#btn-assign").hidden = !(state.room.kind && targetParticipant && targetParticipant.enabled);
 
-  if (targetParticipant && !targetParticipant.enabled) {
-    hint.className = "composer-hint warn";
-    hint.textContent =
-      participantLabel(t) + "의 참여가 꺼져 있습니다. 참가자를 켜거나 대상을 해제하세요.";
-    return;
-  }
-  if (disabledMentions.length > 0) {
-    hint.className = "composer-hint warn";
-    hint.textContent =
-      "⚠ 꺼진 참가자(" +
-      disabledMentions.map((id) => participantLabel(id)).join(", ") +
-      ")가 멘션되었습니다. 켜지 않으면 해당 에이전트는 답하지 않습니다.";
-    return;
-  }
-
-  hint.className = "composer-hint muted";
-  if (!t) {
-    hint.textContent = "이름을 선택하면 한 명에게 · @로 여러 명 선택 · Enter 전송";
-    return;
-  }
-  const info = state.providers.find((x) => x.id === targetParticipant.provider) || {};
-  if (targetParticipant && targetParticipant.status === "running") {
-    hint.textContent = info.can_steer
-      ? participantLabel(t) + " 작업 중 · 다음 메시지를 즉시 전달합니다."
-      : participantLabel(t) + " 작업 중 · 현재 답변 뒤에 다음 메시지를 전달합니다.";
-  } else {
-    hint.textContent =
-      participantLabel(t) + "에게만 다음 메시지를 전달합니다. Esc로 해제";
-  }
+  const off = targetParticipant && !targetParticipant.enabled ? [t] : disabledMentions;
+  hint.hidden = !off.length;
+  hint.textContent = off.length ? "꺼진 참가자 · " + off.map((id) => participantLabel(id)).join(", ") : "";
 }
 
 // Fix #7: Connect mention candidates to accessibility tree via option IDs & aria-activedescendant

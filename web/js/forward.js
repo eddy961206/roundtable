@@ -10,7 +10,6 @@ export function openForwardDialog(m) {
   dlg.setAttribute("aria-label", "다른 방으로 전달");
   const form = el("form");
   form.appendChild(el("h3", "", "#" + m.seq + " 다른 방으로 전달"));
-  form.appendChild(el("p", "muted small-note", "원문을 그대로 보냅니다. 받는 좌석은 출처(방·번호·작성자)와 함께 읽고, 원문 속 @멘션과 [[REQUEST]] 같은 마커는 실행하지 않습니다."));
   const roomLabel = el("label", "", "받을 방");
   const roomSel = el("select");
   roomSel.required = true;
@@ -26,10 +25,9 @@ export function openForwardDialog(m) {
   const seatSel = el("select");
   seatSel.appendChild(none("활성 좌석 전원"));
   seatLabel.appendChild(seatSel);
-  const noteLabel = el("label", "", "메모 (선택 · 한 줄 300자)");
+  const noteLabel = el("label", "", "메모");
   const note = el("input");
   note.maxLength = 300;
-  note.placeholder = "예: 이 지적을 반영해 줘";
   noteLabel.appendChild(note);
   form.append(roomLabel, seatLabel, noteLabel);
   roomSel.onchange = async () => {

@@ -124,19 +124,6 @@ function bindUI() {
   const onbNew = $("#btn-onboard-new");
   if (onbNew) onbNew.onclick = () => openRoomDialog();
 
-  $$(".prompt-example").forEach((btn) => {
-    btn.onclick = () => {
-      const promptText = btn.getAttribute("data-prompt") || "";
-      if (state.roomId && $("#input")) {
-        $("#input").value = promptText;
-        $("#input").focus();
-        updateHint();
-      } else {
-        openRoomDialog(null, promptText);
-      }
-    };
-  });
-
   const searchInput = $("#room-search");
   if (searchInput) {
     searchInput.addEventListener("input", () => {
@@ -407,8 +394,6 @@ function bindUI() {
   if (btnLeft) btnLeft.onclick = () => toggleDrawer("left");
   const btnEmptyLeft = $("#btn-empty-left");
   if (btnEmptyLeft) btnEmptyLeft.onclick = () => toggleDrawer("left");
-  const btnEmptyRight = $("#btn-empty-right");
-  if (btnEmptyRight) btnEmptyRight.onclick = () => toggleDrawer("right");
   const btnCloseLeft = $("#btn-close-left");
   if (btnCloseLeft) btnCloseLeft.onclick = closeDrawers;
   const btnCloseRight = $("#btn-close-right");
@@ -491,6 +476,7 @@ function closeRoom(notice) {
   if (state.es) state.es.close();
   $("#room").hidden = true;
   $("#empty").hidden = false;
+  document.body.classList.add("no-room");
   const emptyNotice = $("#empty-notice");
   emptyNotice.textContent = notice;
   emptyNotice.hidden = !notice;

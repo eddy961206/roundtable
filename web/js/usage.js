@@ -190,7 +190,6 @@ export function renderUsagePanel() {
       group.appendChild(row);
     }
     if (unsupported) {
-      group.appendChild(el("p", "small-note muted", "한도·잔액 조회는 지원하지 않습니다. 연결한 공급사의 관리 화면에서 확인하세요."));
     } else if (source) {
       const observed = source.observed_at ? "관측 " + new Date(source.observed_at).toLocaleString("ko-KR") : "관측 시각 없음";
       group.appendChild(el("p", "small-note muted", observed + (source.refresh_kind === "vendor" ? " · 공급사 조회" : " · 저장된 기록")));
@@ -199,14 +198,13 @@ export function renderUsagePanel() {
     }
     detail.appendChild(group);
   }
-  if (!selected.length) strip.appendChild(el("p", "usage-empty muted", state.room ? "이 방에 공급사를 추가하면 사용량을 보여줍니다." : "방을 선택하면 해당 공급사의 사용량을 보여줍니다."));
   const totals = participants.reduce((sum, p) => {
     const t = p.totals || {};
     sum.input += Number(t.input || 0); sum.output += Number(t.output || 0); sum.cost += Number(t.cost_usd || 0);
     return sum;
   }, { input: 0, output: 0, cost: 0 });
   if (state.room) detail.appendChild(el("p", "small-note muted", "이 방 누적 · 입력 " + fmtK(totals.input) + " · 출력 " + fmtK(totals.output) + (totals.cost ? " · 보고된 비용 $" + totals.cost.toFixed(3) : "")));
-  detail.appendChild(el("p", "small-note muted", "이 방에 추가한 공급사만 화면을 보는 동안 1분마다 갱신합니다. 참가자를 꺼도 사용량은 남아 있습니다. 공급사마다 조회 방식과 관측 시각이 다릅니다."));
   $("#btn-refresh-usage").disabled = state.usageBusy || !selected.length;
-  $("#usage-status").textContent = !selected.length ? "" : state.usageBusy ? "갱신 중…" : state.usageError ? state.usageError : state.usageChecked ? "확인 " + fmtTime(state.usageChecked) : "";
+  $("#usage-status").textContent = !selected.length ? "" : state.usageBusy ? "갱신 중…" : state.usageError ? state.usageError : "";
+  $("#btn-refresh-usage").title = state.usageChecked ? "마지막 확인 " + fmtTime(state.usageChecked) : "사용량 갱신";
 }
