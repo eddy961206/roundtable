@@ -19,10 +19,12 @@ type Decision struct {
 	Evidence   string `json:"evidence"`
 	Dissent    string `json:"dissent"`
 	Unverified string `json:"unverified"`
-	By         string `json:"by"`         // participant id or "user"
-	SourceMsg  string `json:"source_msg"` // message that recorded the card; empty for cards added on screen
-	Status     string `json:"status"`     // proposed | active | superseded | dropped
-	At         int64  `json:"at"`         // time of this state line; strictly increases per card
+	By         string `json:"by"`                   // participant id or "user"
+	SourceMsg  string `json:"source_msg"`           // message that recorded the card; empty for cards added on screen
+	Status     string `json:"status"`               // proposed | active | superseded | dropped
+	Task       string `json:"task,omitempty"`       // request id of a person's task whose result this card asks to approve (community.go)
+	DecidedBy  string `json:"decided_by,omitempty"` // a person on another PC who confirmed or dropped the card (people.go)
+	At         int64  `json:"at"`                   // time of this state line; strictly increases per card
 }
 
 const (
@@ -38,6 +40,7 @@ type DecisionInput struct {
 	Dissent    *string `json:"dissent,omitempty"`
 	Unverified *string `json:"unverified,omitempty"`
 	Status     *string `json:"status,omitempty"`
+	DecidedBy  *string `json:"-"` // set by the server for a person on another PC, never from a request body
 }
 
 var decisionMarker = regexp.MustCompile(`^\[\[DECISION:\s*(.*?)\s*\|\s*근거:\s*(.*?)\s*\|\s*반대:\s*(.*?)\s*\|\s*미확인:\s*(.*?)\s*\]\]$`)
@@ -149,7 +152,10 @@ func (rs *roomState) activeDecisionTexts(cap int64) []string {
 	}
 	var picked []int
 	for i, d := range rs.decisions {
-		if d.Status == "active" && (d.SourceMsg == "" || sources[d.SourceMsg] <= cap) {
+		// An approved task result is one seat's finished work, not a rule
+		// for the room: in every seat's brief it would grow the brief and
+		// resend it to all seats on each approval (review 2026-11-03).
+		if d.Status == "active" && d.Task == "" && (d.SourceMsg == "" || sources[d.SourceMsg] <= cap) {
 			picked = append(picked, i)
 		}
 	}
@@ -240,6 +246,9 @@ func (h *Hub) UpdateDecision(roomID, id string, in DecisionInput) (Decision, err
 			return Decision{}, fmt.Errorf("proposed로 되돌릴 수 없음 (확정은 active, 거절은 dropped)")
 		}
 		next.Status = *in.Status
+	}
+	if in.DecidedBy != nil {
+		next.DecidedBy = *in.DecidedBy
 	}
 	if err := validDecision(next); err != nil {
 		return Decision{}, err

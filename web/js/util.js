@@ -48,7 +48,7 @@ export const fmtReset = (sec) => {
   return h >= 24 ? Math.round(h / 24) + "일 후" : h + "시간 후";
 };
 
-export const LABEL = { claude: "Claude", codex: "Codex", agy: "Antigravity", opencode: "OpenCode", user: "나", system: "시스템" };
+export const LABEL = { claude: "Claude", codex: "Codex", agy: "Antigravity", opencode: "OpenCode", remote: "원격 에이전트", user: "나", system: "시스템" };
 const PROVIDER_ICONS = Object.freeze({
   claude: "claude.svg",
   codex: "codex.svg",

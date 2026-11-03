@@ -30,6 +30,9 @@ type Server struct {
 	mux     *http.ServeMux
 	stopped chan struct{} // closed once POST /api/shutdown closed the hub
 	updates interface{ Status() update.Status }
+	// communityURL is the address remote seat workers use; "" when the
+	// community listener is off (community.go).
+	communityURL string
 }
 
 func New(hub *room.Hub, reg *agent.Registry, web fs.FS) *Server {
@@ -100,6 +103,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/session/open", s.openNativeSession)
 	s.mux.HandleFunc("DELETE /api/rooms/{id}", s.deleteRoom)
 	s.mux.HandleFunc("POST /api/rooms/{id}/messages", s.postMessage)
+	s.mux.HandleFunc("POST /api/rooms/{id}/tasks", s.assignTask)
+	s.mux.HandleFunc("GET /api/community/people", s.listPeople)
+	s.mux.HandleFunc("POST /api/community/people", s.invitePerson)
+	s.mux.HandleFunc("DELETE /api/community/people/{pid}", s.revokePerson)
+	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/remote-token", s.remoteToken)
 	s.mux.HandleFunc("POST /api/rooms/{id}/forward", s.forwardMessage)
 	s.mux.HandleFunc("POST /api/rooms/{id}/attachments", s.uploadAttachment)
 	s.mux.HandleFunc("GET /api/rooms/{id}/attachments/{aid}", s.getAttachment)
@@ -166,8 +174,12 @@ func decode(r *http.Request, v any) error {
 
 func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 	wd, _ := os.Getwd()
-	writeJSON(w, 200, map[string]any{"default_workspace": wd, "version": Version, "max_participants": room.MaxParticipants})
+	writeJSON(w, 200, map[string]any{"default_workspace": wd, "version": Version, "max_participants": room.MaxParticipants, "community_url": s.communityURL, "space_kinds": room.SpaceKinds()})
 }
+
+// SetCommunityURL tells the page where remote seat workers connect. Call it
+// before serving.
+func (s *Server) SetCommunityURL(url string) { s.communityURL = url }
 
 // SetUpdates attaches the update checker read by GET /api/version. Call it
 // before serving; without it the endpoint reports state "off".

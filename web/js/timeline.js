@@ -420,7 +420,7 @@ function replyChipHtml(m) {
   if (m.kind !== "agent" || !m.reply_to) return [];
   const target = state.messages.get(m.reply_to);
   const label = target && target.seq ? "#" + target.seq : "원 메시지";
-  const who = target ? (target.kind === "user" ? "나" : participantLabel(target.author)) : "";
+  const who = target ? (target.kind === "user" ? target.by || "나" : participantLabel(target.author)) : "";
   const out = [
     '<button type="button" class="reply-chip" data-reply-to="' +
       esc(m.reply_to) +
@@ -601,7 +601,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
       seqChipHtml(m) +
       "</div>";
   } else {
-    const who = m.kind === "user" ? "나" : participantLabel(m.author);
+    const who = m.kind === "user" ? m.by || "나" : participantLabel(m.author); // by: a person on another PC (people.js)
     const meta = [];
     meta.push('<span class="who ' + esc(authorProvider(m.author)) + '">' + esc(who) + "</span>");
     meta.push(seqChipHtml(m));
@@ -640,6 +640,7 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
     }
     if (m.reason === "discussion") meta.push('<span class="badge">🗣 토론 ' + m.round + "R</span>");
     else if (m.reason === "mention") meta.push('<span class="badge">@호출</span>');
+    else if (m.reason === "auto") meta.push('<span class="badge" title="공간이 조용해서 사람 호출 없이 말한 차례입니다(자율 잡담)">☕ 자율 잡담</span>');
     else if (m.reason === "part") meta.push('<span class="badge">🔨 파트 작업</span>');
     else if (m.reason === "review") meta.push('<span class="badge">🔍 교차 리뷰</span>');
     if (m.part) {

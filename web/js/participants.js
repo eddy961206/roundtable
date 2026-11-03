@@ -6,6 +6,7 @@ import { closeDrawers } from "./layout.js";
 import { renderProviderStatus, usageGauge } from "./usage.js";
 import { setTarget, updateHint } from "./composer.js";
 import { renderBlindHint, renderRoomHead, scheduleRoomList } from "./rooms.js";
+import { renderRemoteSeat } from "./community.js";
 
 export function catalogMessage(info) {
   if (info.catalog_status === "loading") return "모델 목록을 불러오는 중입니다. 잠시 뒤 목록을 다시 불러오세요.";
@@ -589,9 +590,16 @@ function renderGuardBadges(card, p) {
     b.title = "공급사 한도 오류로 이 시각까지 새 턴을 보류합니다. 원인: " + (p.hold_reason || "") + ". 이 좌석을 대상으로 지정해 보내면 바로 다시 시도합니다.";
     box.appendChild(b);
   }
+  if (p.paced_until && p.paced_until > Date.now() && p.status === "queued") {
+    const b = el("span", "badge guard warn", "발화 간격 대기 ~" + new Date(p.paced_until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+    b.title = "다른 좌석이 부른 턴이라 방의 발화 간격이 지난 뒤 시작합니다. 사람이 이 좌석에 직접 보내면 기다리지 않습니다.";
+    box.appendChild(b);
+  }
   if (p.budget_held) {
-    const b = el("span", "badge guard danger", "입력 상한 · 턴 보류");
-    b.title = p.budget_held + ". 방 설정에서 상한을 올리거나 0으로 지우면 다음 턴에 남은 메시지가 전달됩니다.";
+    // Input budgets, the 24-hour speak limit, a paused space and an away
+    // worker all hold the seat the same way (budget.go, community.go, remote.go).
+    const b = el("span", "badge guard danger", p.budget_held.includes("입력") ? "입력 상한 · 턴 보류" : "턴 보류");
+    b.title = p.budget_held + ". 상한을 올리거나 원인을 풀면 다음 턴에 남은 메시지가 전달됩니다.";
     box.appendChild(b);
   }
   box.hidden = !box.childElementCount;
@@ -629,6 +637,9 @@ function updateParticipantCardInPlace(card, p, info) {
   card.querySelector(".model-sel").setAttribute("aria-label", participantLabel(p.id) + " 모델");
   card.querySelector(".effort-sel").setAttribute("aria-label", participantLabel(p.id) + " 추론 노력");
   updateSessionActions(card.querySelector(".session-actions"), p.session_id, p.status === "running");
+  // A remote seat's CLI session lives on the worker's PC; this server cannot open it.
+  card.querySelector(".session-actions").hidden = p.provider === "remote";
+  renderRemoteSeat(card, p);
   const stop = card.querySelector(".stop-participant");
   const hasWork = p.status === "running" || p.status === "queued";
   if (!hasWork || p.enabled) delete stop.dataset.requested;

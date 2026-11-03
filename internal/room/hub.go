@@ -44,9 +44,12 @@ type Hub struct {
 	limitsSaving    bool
 	limitsDone      chan struct{}
 	limitsSaveError error
-	nativeSessions  map[string]string // provider/session key -> reserved working directory
-	mcp             *agent.MCPServer  // read-only tool server attached to read/write runs
-	workRoot        string            // <data>/worktrees: part and integration worktrees live outside user repos
+	nativeSessions  map[string]string      // provider/session key -> reserved working directory
+	mcp             *agent.MCPServer       // read-only tool server attached to read/write runs
+	workRoot        string                 // <data>/worktrees: part and integration worktrees live outside user repos
+	remote          map[string]*remoteSlot // remote seat jobs by room/seat (remote.go)
+	remoteTokens    map[string]remoteToken // connection token hash -> seat
+	people          []personRecord         // people invited from other PCs (people.go)
 	Log             *log.Logger
 }
 
@@ -68,6 +71,8 @@ type roomState struct {
 
 	workBusy          map[string]bool   // plan creation, submit checks or cleanup running git outside h.mu
 	participantEvents map[string]string // last serialized seat state sent to subscribers
+	paceTimer         *time.Timer       // wakes the room when its earliest paced turn may start (community.go)
+	paceAt            int64
 }
 
 type running struct {
@@ -102,7 +107,13 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 	if err != nil {
 		return nil, fmt.Errorf("worktree 폴더: %w", err)
 	}
-	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, listSubs: map[chan []byte]struct{}{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]string{}, workRoot: workRoot, Log: logger}
+	h := &Hub{store: store, reg: reg, scratch: absoluteScratch, rooms: map[string]*roomState{}, listSubs: map[chan []byte]struct{}{}, limits: map[string]agent.Limits{}, nativeSessions: map[string]string{}, workRoot: workRoot, remote: map[string]*remoteSlot{}, Log: logger}
+	if h.remoteTokens, err = store.loadRemoteTokens(); err != nil {
+		return nil, fmt.Errorf("remote_tokens.json: %w", err)
+	}
+	if h.people, err = store.loadPeople(); err != nil {
+		return nil, fmt.Errorf("people.json: %w", err)
+	}
 	rooms, msgs, _, err := store.loadRooms(false, true)
 	if err != nil {
 		return nil, err
@@ -226,6 +237,11 @@ type RoomSpec struct {
 	TurnTimeoutMinutes int    `json:"turn_timeout_minutes"`
 	QuietDone          bool   `json:"quiet_done"`
 	Group              string `json:"group"`
+	// Kind makes a community space (community.go); its unset guards get the
+	// space defaults.
+	Kind                 string `json:"kind"`
+	SpeakIntervalSeconds int    `json:"speak_interval_seconds"`
+	DailySpeakLimit      int    `json:"daily_speak_limit"`
 }
 
 // cleanGroup trims a room list group name and checks its length.
@@ -247,6 +263,9 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	}
 	if spec.Mode == "" {
 		spec.Mode = agent.ModeRead
+		if d := spaceKinds[spec.Kind]; d.mode != "" {
+			spec.Mode = d.mode
+		}
 	}
 	if err := validateTurnTimeout(spec.TurnTimeoutMinutes); err != nil {
 		return nil, err
@@ -270,6 +289,13 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 	}
 	if r.DiscussionRounds <= 0 {
 		r.DiscussionRounds = defaultRounds
+	}
+	r.SpeakIntervalSeconds, r.DailySpeakLimit = spec.SpeakIntervalSeconds, spec.DailySpeakLimit
+	if err := applySpaceDefaults(r, spec); err != nil {
+		return nil, err
+	}
+	if err := validateSpeakGuards(r); err != nil {
+		return nil, err
 	}
 	if len(spec.Participants) > 0 && spec.ParticipantSpecs != nil {
 		return nil, fmt.Errorf("participants와 participant_specs는 함께 지정할 수 없음")
@@ -337,6 +363,7 @@ type RoomSummary struct {
 	Asks      int    `json:"asks,omitempty"` // seat questions to the person still waiting or open (asks.go)
 	Workspace string `json:"workspace,omitempty"`
 	Group     string `json:"group,omitempty"`
+	Kind      string `json:"kind,omitempty"`
 }
 
 func (h *Hub) Rooms() []RoomSummary {
@@ -351,7 +378,7 @@ func (h *Hub) Rooms() []RoomSummary {
 }
 
 func (rs *roomState) summary() RoomSummary {
-	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0, Archived: rs.room.Archived, Asks: rs.openAsks, Workspace: rs.room.Workspace, Group: rs.room.Group}
+	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0, Archived: rs.room.Archived, Asks: rs.openAsks, Workspace: rs.room.Workspace, Group: rs.room.Group, Kind: rs.room.Kind}
 }
 
 func sortSummaries(s []RoomSummary) {
@@ -441,24 +468,29 @@ type ParticipantPatch struct {
 
 // RoomPatch is a partial update.
 type RoomPatch struct {
-	Title               *string            `json:"title,omitempty"`
-	Note                *string            `json:"note,omitempty"`
-	Mode                *string            `json:"mode,omitempty"`
-	Workspace           *string            `json:"workspace,omitempty"`
-	MaxChain            *int               `json:"max_chain,omitempty"`
-	DiscussionRounds    *int               `json:"discussion_rounds,omitempty"`
-	Persona             *bool              `json:"persona,omitempty"`
-	BlindFirstDefault   *bool              `json:"blind_first_default,omitempty"`
-	InputWarnTokens     *int64             `json:"input_warn_tokens,omitempty"`
-	SeatInputBudget     *int64             `json:"seat_input_budget,omitempty"`
-	RoomInputBudget     *int64             `json:"room_input_budget,omitempty"`
-	ContextWarnPercent  *int               `json:"context_warn_percent,omitempty"`
-	TurnTimeoutMinutes  *int               `json:"turn_timeout_minutes,omitempty"`
-	CompactWindowTokens *int               `json:"compact_window_tokens,omitempty"`
-	QuietDone           *bool              `json:"quiet_done,omitempty"`
-	Archived            *bool              `json:"archived,omitempty"`
-	Group               *string            `json:"group,omitempty"`
-	Participants        []ParticipantPatch `json:"participants,omitempty"`
+	Title                *string            `json:"title,omitempty"`
+	Note                 *string            `json:"note,omitempty"`
+	Mode                 *string            `json:"mode,omitempty"`
+	Workspace            *string            `json:"workspace,omitempty"`
+	MaxChain             *int               `json:"max_chain,omitempty"`
+	DiscussionRounds     *int               `json:"discussion_rounds,omitempty"`
+	Persona              *bool              `json:"persona,omitempty"`
+	BlindFirstDefault    *bool              `json:"blind_first_default,omitempty"`
+	InputWarnTokens      *int64             `json:"input_warn_tokens,omitempty"`
+	SeatInputBudget      *int64             `json:"seat_input_budget,omitempty"`
+	RoomInputBudget      *int64             `json:"room_input_budget,omitempty"`
+	ContextWarnPercent   *int               `json:"context_warn_percent,omitempty"`
+	TurnTimeoutMinutes   *int               `json:"turn_timeout_minutes,omitempty"`
+	CompactWindowTokens  *int               `json:"compact_window_tokens,omitempty"`
+	QuietDone            *bool              `json:"quiet_done,omitempty"`
+	Archived             *bool              `json:"archived,omitempty"`
+	Group                *string            `json:"group,omitempty"`
+	SpeakIntervalSeconds *int               `json:"speak_interval_seconds,omitempty"`
+	DailySpeakLimit      *int               `json:"daily_speak_limit,omitempty"`
+	AgentsPaused         *bool              `json:"agents_paused,omitempty"`
+	AutoChatMinutes      *int               `json:"auto_chat_minutes,omitempty"`
+	AutoChatHours        *string            `json:"auto_chat_hours,omitempty"`
+	Participants         []ParticipantPatch `json:"participants,omitempty"`
 }
 
 func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
@@ -532,7 +564,25 @@ func (h *Hub) UpdateRoom(id string, patch RoomPatch) ([]byte, error) {
 		}
 		next.TurnTimeoutMinutes = *patch.TurnTimeoutMinutes
 	}
+	if patch.SpeakIntervalSeconds != nil {
+		next.SpeakIntervalSeconds = *patch.SpeakIntervalSeconds
+	}
+	if patch.DailySpeakLimit != nil {
+		next.DailySpeakLimit = *patch.DailySpeakLimit
+	}
+	if patch.AgentsPaused != nil {
+		next.AgentsPaused = *patch.AgentsPaused
+	}
+	if patch.AutoChatMinutes != nil {
+		next.AutoChatMinutes = *patch.AutoChatMinutes
+	}
+	if patch.AutoChatHours != nil {
+		next.AutoChatHours = strings.TrimSpace(*patch.AutoChatHours)
+	}
 	if err := validateGuards(&next); err != nil {
+		return nil, err
+	}
+	if err := validateSpeakGuards(&next); err != nil {
 		return nil, err
 	}
 	if patch.MaxChain != nil {
@@ -963,12 +1013,12 @@ func (h *Hub) enabledIDs(rs *roomState) []string {
 // target addresses one agent; if that agent is running and can steer, the text
 // is injected live, otherwise a priority turn is queued.
 func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Message, error) {
-	return h.postUser(id, text, target, nil, attachmentIDs)
+	return h.postUser(id, text, target, nil, attachmentIDs, "")
 }
 
 // postUser accepts a user message; fwd marks a forwarded copy (forward.go),
-// whose quoted @mentions are not parsed.
-func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentIDs []string) (*Message, error) {
+// whose quoted @mentions are not parsed. by names a person on another PC (people.go).
+func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentIDs []string, by string) (*Message, error) {
 	text = strings.TrimSpace(text)
 	if text == "" && len(attachmentIDs) == 0 {
 		return nil, fmt.Errorf("빈 메시지")
@@ -982,11 +1032,13 @@ func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentID
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
 	}
-	return h.acceptUser(rs, text, target, fwd, attachmentIDs)
+	return h.acceptUser(rs, text, target, fwd, attachmentIDs, nil, by)
 }
 
-// acceptUser stores and routes a user message. Caller holds h.mu.
-func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource, attachmentIDs []string) (*Message, error) {
+// acceptUser stores and routes a user message. A task (AssignTask) is saved
+// with the message as its source before the target's turn can start and claim
+// it. Caller holds h.mu.
+func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource, attachmentIDs []string, task *Request, by string) (*Message, error) {
 	id := rs.room.ID
 	if target != "" {
 		p := rs.room.participant(target)
@@ -1017,8 +1069,14 @@ func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource,
 	}
 	m.Mentions = &mentioned
 	m.Forward = fwd
+	m.By = by
+	if task != nil {
+		m.Requests = []string{task.ID}
+	}
 	var liveRun *running
-	if target != "" && len(attachments) == 0 && fwd == nil {
+	// A task is never live steering: the running turn has claimed its requests
+	// already, so the seat would never get the task's request id (PR #4 review).
+	if target != "" && len(attachments) == 0 && fwd == nil && task == nil {
 		if run := rs.runningFor(target); run != nil && run.steer != nil && len(run.steer) < cap(run.steer) {
 			// h.mu serializes all senders; the provider can only free capacity.
 			liveRun = run
@@ -1031,6 +1089,12 @@ func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource,
 	}
 	// The message append is the acceptance boundary. Subsequent metadata or
 	// explanatory-note failures must not tell the caller to resend accepted input.
+	if task != nil {
+		task.SourceMsg, task.At = m.ID, nowMs()
+		if err := h.saveRequest(rs, *task); err != nil {
+			h.reportPersistenceError(rs, "과제", err)
+		}
+	}
 	if liveRun != nil {
 		liveRun.steer <- text
 		liveRun.live = append(liveRun.live, m)
@@ -1329,8 +1393,26 @@ func (h *Hub) pump(rs *roomState) {
 			i++
 			continue
 		}
+		// A turn another seat started waits for the speak interval (its timer
+		// pumps again); the seat shows until when.
+		if until := rs.paceUntil(p, t); until > 0 {
+			if p.PacedUntil != until {
+				p.PacedUntil = until
+				rs.broadcast("participant", p)
+			}
+			h.armPace(rs, until)
+			i++
+			continue
+		}
 		rs.queue = slices.Delete(rs.queue, i, i+1)
-		if why := rs.budgetHold(p); why != "" && t.Reason != "part" && t.Reason != "review" {
+		why := rs.budgetHold(p)
+		if why == "" {
+			why = rs.speakHold(p)
+		}
+		if why == "" && p.Provider == RemoteProvider && !h.remoteOnline(rs, p) {
+			why, p.RemoteMissed = remoteAwayReason, true
+		}
+		if why != "" && t.Reason != "part" && t.Reason != "review" {
 			if t.Reason == "discussion" {
 				h.discussionStep(rs, t.Agent, "PASS", "cancelled")
 			}
@@ -1338,7 +1420,7 @@ func (h *Hub) pump(rs *roomState) {
 			skipped = true
 			continue
 		}
-		p.BudgetHeld = ""
+		p.BudgetHeld, p.PacedUntil = "", 0
 		pr := h.buildTurn(rs, t)
 		if pr == nil {
 			skipped = true
@@ -1377,11 +1459,12 @@ type prepared struct {
 	opts           agent.RunOptions
 	ctx            context.Context
 	cancel         context.CancelFunc
-	part           *Part  // the turn runs in this part's worktree (D9, review)
-	reviewer       bool   // fresh reviewer session that must not be kept (D10)
-	handoffFrom    int64  // HistoryFrom when the turn was built; only a done turn ends the handoff
-	pendingSession string // session a post-handoff turn reported, committed only when it is done
-	bootstrap      bool   // first part turn contains plan context only
+	part           *Part      // the turn runs in this part's worktree (D9, review)
+	reviewer       bool       // fresh reviewer session that must not be kept (D10)
+	handoffFrom    int64      // HistoryFrom when the turn was built; only a done turn ends the handoff
+	pendingSession string     // session a post-handoff turn reported, committed only when it is done
+	bootstrap      bool       // first part turn contains plan context only
+	remote         *RemoteJob // a remote seat's job; its prompt is filled in when the turn starts (remote.go)
 }
 
 // buildTurn renders a prompt without reserving a participant. Caller holds h.mu.
@@ -1411,11 +1494,14 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		cap = max(cap, p.HistoryFrom)
 	}
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
-	if len(hist) == 0 && t.Reason != "discussion" && t.Reason != "handoff" && len(rs.pendingNotices(p.ID, "")) == 0 {
+	if len(hist) == 0 && t.Reason != "discussion" && t.Reason != "handoff" && t.Reason != "auto" && len(rs.pendingNotices(p.ID, "")) == 0 {
 		// No CLI call is needed to acknowledge own/filtered messages. Keep
 		// unfinished replies as holes for a later cap to deliver exactly once.
 		p.LastSeen, p.Unseen = seen, unseen
 		return nil
+	}
+	if t.Reason == "auto" && len(hist) > autoChatHistory {
+		hist = hist[len(hist)-autoChatHistory:] // a line of chat needs the latest talk, not the backlog
 	}
 	decisions := rs.activeDecisionTexts(cap)
 	brief := briefKey(standingBrief(rs.room, p, decisions, h.scratch))
@@ -1428,12 +1514,20 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
-	if t.Reason == "handoff" {
+	if t.Reason == "handoff" || t.Reason == "auto" {
 		prompt += "\n\n" + t.prompt
 	}
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
-	h.addTurnImages(rs, p, hist, &opts, t.Reason)
-	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, handoffFrom: p.HistoryFrom}
+	var remote *RemoteJob
+	if p.Provider == RemoteProvider {
+		// The worker runs on another PC. On this server the turn has no folder
+		// or tool, so its [[ATTACH]] lines cannot reach this PC's files.
+		remote = &RemoteJob{Turn: t.ID, Room: rs.room.ID, RoomTitle: rs.room.Title, Seat: p.ID, Label: p.Label, SessionID: p.SessionID, Mode: rs.room.Mode, TimeoutSeconds: int(max(rs.room.turnTimeout()-time.Minute, time.Minute).Seconds())}
+		opts.Mode, opts.Workspace, opts.MCP = agent.ModeChat, "", nil
+	} else {
+		h.addTurnImages(rs, p, hist, &opts, t.Reason)
+	}
+	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, handoffFrom: p.HistoryFrom, remote: remote}
 	if forked {
 		pr.opts.ForkSession = p.Fork.Session
 		if p.Fork.Dir != sessionDir(rs.room) {
@@ -1698,7 +1792,16 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if err == nil && len(opts.Images) > 0 && p.Provider != "codex" && p.Provider != "claude" && p.Provider != "agy" {
 		err = fmt.Errorf("%s 공급사의 이미지 전달은 지원하지 않음", p.Provider)
 	}
-	if err == nil {
+	switch {
+	case err != nil:
+	case pr.remote != nil:
+		job := *pr.remote
+		job.Prompt = opts.Prompt
+		res, err = h.runRemote(ctx, &job, emit)
+		if res.Usage != nil {
+			emit(agent.Event{Kind: agent.KindUsage, Meta: res.Usage})
+		}
+	default:
 		res, err = prov.Run(ctx, opts, emit)
 	}
 	// Read before taking h.mu: git status may take a while in a large worktree.
@@ -1882,7 +1985,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if workDone && msg.Status == "done" && pr.stopGen == rs.stopGen {
 		h.submitAsync(rs, pr.part.ID)
 	}
-	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" {
+	// An auto chat turn calls nobody: the banter grows one quiet interval at a
+	// time, never as a chain of turns (community.go).
+	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" && t.Reason != "auto" {
 		h.chainMentions(rs, msg, t)
 	}
 	if pr.stopGen == rs.stopGen && t.Reason == "discussion" {

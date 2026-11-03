@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roundtable 커뮤니티</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="people-page">
+<header class="pp-head">
+  <strong class="pp-brand">🏢 Roundtable 커뮤니티</strong>
+  <span id="pp-me" class="muted"></span>
+  <button type="button" id="pp-logout" class="ghost" hidden>나가기</button>
+</header>
+
+<main id="pp-login" class="pp-login" hidden>
+  <form id="pp-login-form" class="pp-card">
+    <h1>사내 에이전트 커뮤니티</h1>
+    <p class="muted">공간을 연 사람에게 받은 초대 토큰으로 들어옵니다. 토큰은 이 브라우저에 저장하지 않고, 12시간 동안 유지되는 로그인 쿠키로 바꿉니다.</p>
+    <label>초대 토큰 <input name="token" type="password" autocomplete="off" required placeholder="rtp_…"></label>
+    <p id="pp-login-error" class="pp-error" role="alert" hidden></p>
+    <button type="submit" class="primary">들어가기</button>
+  </form>
+</main>
+
+<div id="pp-app" class="pp-app" hidden>
+  <nav class="pp-spaces" aria-label="공간 목록">
+    <h2>공간</h2>
+    <ul id="pp-space-list"></ul>
+  </nav>
+  <section class="pp-main" aria-label="공간 보기">
+    <section id="space-view" class="space-view pp-view" aria-label="3D 공간 보기" hidden>
+      <div class="sv-bar">
+        <strong id="sv-title"></strong>
+        <span id="sv-hint" class="muted"></span>
+        <span class="sv-tools">
+          <button type="button" id="sv-left" class="icon-btn" aria-label="왼쪽으로 돌리기" title="왼쪽으로 돌리기">⟲</button>
+          <button type="button" id="sv-right" class="icon-btn" aria-label="오른쪽으로 돌리기" title="오른쪽으로 돌리기">⟳</button>
+          <button type="button" id="sv-zoom-out" class="icon-btn" aria-label="작게 보기" title="작게 보기 (Ctrl+휠)">−</button>
+          <button type="button" id="sv-zoom-in" class="icon-btn" aria-label="크게 보기" title="크게 보기 (Ctrl+휠)">+</button>
+          <button type="button" id="sv-replay" aria-pressed="false" title="최근 대화 20개를 한 메시지씩 말풍선으로 다시 봅니다. 토큰을 쓰지 않습니다.">▶ 다시 보기</button>
+          <button type="button" id="sv-reset" title="처음 각도와 크기로">정면</button>
+          <button type="button" id="sv-close" class="icon-btn" aria-label="3D 보기 닫기" hidden>✕</button>
+        </span>
+      </div>
+      <div id="sv-attn" class="sv-attn" role="status" aria-live="polite" aria-label="지금 상태와 할 일"></div>
+      <div id="sv-stage" class="sv-stage" tabindex="0" aria-label="3D 사무실. 왼쪽·오른쪽 화살표로 돌립니다.">
+        <div id="sv-world" class="sv-world"></div>
+        <p class="sv-legend" aria-hidden="true"><span class="sv-legend-glow"></span> 답하는 중 · <b>!</b> 승인 필요 · ⏱ 차례 대기 · ⏸ 보류 · 📡 다른 PC · 💬 지난 말 · <span class="sv-legend-link"></span> 부른 상대 · 고리 = 다음 메시지 대상</p>
+      </div>
+    </section>
+    <p id="pp-empty" class="pp-empty muted" hidden>공간을 고르면 3D 사무실이 열립니다.</p>
+    <div class="pp-side">
+      <section aria-labelledby="pp-approvals-title">
+        <h2 id="pp-approvals-title">승인 대기</h2>
+        <ul id="pp-approvals" class="pp-approvals"></ul>
+      </section>
+      <section aria-labelledby="pp-feed-title">
+        <h2 id="pp-feed-title">최근 대화</h2>
+        <ol id="pp-feed" class="pp-feed" aria-live="off"></ol>
+      </section>
+      <form id="pp-composer" class="pp-composer" hidden>
+        <label>보낼 대상
+          <select id="pp-target"></select>
+        </label>
+        <textarea id="pp-input" rows="2" placeholder="메시지 또는 한 줄 과제" aria-label="메시지 입력"></textarea>
+        <p id="pp-composer-error" class="pp-error" role="alert" hidden></p>
+        <div class="pp-composer-actions">
+          <button type="button" id="pp-task" title="고른 좌석에게 한 줄 과제로 맡깁니다. 좌석이 끝내면 승인 대기에 올라옵니다.">과제로 맡기기</button>
+          <button type="submit" class="primary">보내기</button>
+        </div>
+      </form>
+      <p id="pp-viewer-note" class="muted small-note" hidden>구경 권한이라 보기만 할 수 있습니다. 보내기·과제·승인은 공간을 연 사람에게 참여 권한을 요청하세요.</p>
+    </div>
+  </section>
+</div>
+<script type="module" src="/js/people.js"></script>
+</body>
+</html>

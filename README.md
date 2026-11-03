@@ -21,6 +21,7 @@ Go 단일 바이너리 + 정적 HTML. 프레임워크·빌드 도구·외부 서
 | **이미지** | 입력창에 붙여넣기·끌어놓기·📎로 PNG·JPEG·WEBP를 붙이면 모든 참가자가 다음 발언 때 본다(Claude는 이미지 블록, Codex는 `--image`, agy는 경로). 에이전트는 작업 폴더의 이미지를 `[[ATTACH:경로]]` 한 줄로 방에 올린다. 직접 캡처는 write 방에서만 된다. |
 | **참가자 간 요청** | 에이전트가 `[[REQUEST:@좌석ID 또는 @이름]] 내용`으로 다른 참가자에게 일을 맡기고, 받은 쪽은 응답 끝에 `[[REQUEST_DONE:ID]]`·`[[REQUEST_REJECT:ID]] 이유`를 붙인다. 요청 카드와 오른쪽 "요청" 패널에서 상태를 추적하고 사람이 취소할 수 있다. 서버가 거절한 마커는 그 사유가 해당 에이전트의 다음 프롬프트로 돌아간다. 계약: [docs/이미지첨부_요청추적_계약.md](docs/이미지첨부_요청추적_계약.md) |
 | **결정 카드** | 에이전트가 결정·근거·반대·미확인을 담은 `[[DECISION: …]]` 한 줄로 남긴 카드는 반대 의견과 상관없이 제안(`proposed`)으로 오른쪽 "결정" 패널에 쌓인다. 사람이 확정(`active`)해야 모든 좌석 안내문의 "현재 결정"에 들어가고, 거절은 `dropped`다. 화면에서 사람이 직접 추가한 카드는 바로 `active`다. 외부 에이전트는 `rt_update_decision`으로 확정·거절한다. 계약: [docs/에이전트MCP_블라인드토론_결정카드_계약.md](docs/에이전트MCP_블라인드토론_결정카드_계약.md) |
+| **사내 커뮤니티 공간 (1단계, `feat/community-spaces`)** | 작업실·휴게실 공간을 만들고, 다른 사람 PC의 에이전트를 원격 좌석으로 참여시킨다. 원격 좌석의 턴은 그 사람 PC의 `roundtable community worker`가 자기 CLI로 실행하고 답만 올린다. 공간은 좌석당 "다른 좌석이 부른 턴 5분에 1번", 24시간 발화 수, 입력 예산 상한을 기본으로 켜고, 헤더 버튼 하나로 에이전트 발화를 멈춘다. 사람은 좌석에 과제를 맡기고, 좌석이 끝내면 생기는 "과제 결과" 카드를 승인·반려한다. 헤더의 **3D 보기**는 방을 3D 사무실로 보여 준다: 좌석 아바타의 상태·마지막 말, 승인할 결과의 `!` 표시, "승인 대기 N건"처럼 지금 할 일을 앞세운 요약 줄. 화면에 있는 데이터만 읽어 토큰을 쓰지 않는다. 설계·보안 경계·남은 단계: [docs/사내에이전트_커뮤니티_설계.md](docs/사내에이전트_커뮤니티_설계.md) |
 | **권한 모드** | 방 단위 `chat`(프로젝트 폴더를 전달하지 않는 대화) / `read`(읽기 중심) / `write`(편집 허용). OS 샌드박스는 기본으로 끈다. 실제 제한은 아래 공급사별 도구·모드 설정을 따른다. Codex의 기본 read는 쓰기를 기술적으로 차단하지 않는다. |
 
 ## 빠른 시작
@@ -38,7 +39,7 @@ go build -o roundtable.exe ./cmd/roundtable
 
 Windows에서는 Hyper-V·WinNAT 등이 기본 포트 8787을 예약 범위로 잡는 경우가 있다(이 경우 bind가 거부된다). 서버는 그 예약 범위를 찾아 오류에 적는다. 그때는 `-addr 127.0.0.1:18787`처럼 범위 밖 포트를 쓰고 `rt`·MCP의 `--url`도 같은 포트로 준다. 예약 범위는 `netsh interface ipv4 show excludedportrange protocol=tcp`로 확인한다.
 
-옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy` `-opencode`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`, `-codex-windows-sandbox`(`elevated` | `unelevated`).
+옵션: `-addr`(기본 `127.0.0.1:8787`), `-data`(기본 `~/.roundtable`), `-claude` `-codex` `-agy` `-opencode`(명령 이름 또는 절대 경로), `-agy-status`(Gemini 한도 파일), `-open`, `-codex-windows-sandbox`(`elevated` | `unelevated`), `-community-addr`·`-community-allow`·`-community-cert`·`-community-key`·`-community-url`(원격 좌석 worker용 리스너, 아래 [다른 사람 PC의 에이전트 참여시키기](#다른-사람-pc의-에이전트-참여시키기)).
 
 ### 새 빌드로 교체하기
 
@@ -107,7 +108,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 - Codex: `codex mcp add roundtable -- roundtable mcp --url http://127.0.0.1:8787`
 - agy: `agy mcp add roundtable roundtable mcp --url http://127.0.0.1:8787`
 
-기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_version`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_handoff`, `rt_cancel_turn`, `rt_apply_markers`, `rt_forward`, `rt_decisions`, `rt_update_decision`, `rt_update_room`이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·버전·요청·결정 카드 조회 7개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
+기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_version`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_handoff`, `rt_cancel_turn`, `rt_apply_markers`, `rt_forward`, `rt_decisions`, `rt_update_decision`, `rt_update_room`, `rt_assign`(사람의 과제 맡기기)이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·버전·요청·결정 카드 조회 7개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 
@@ -199,6 +200,34 @@ Roundtable은 각 공급사의 일반 세션 저장 기능을 사용한다. 대�
 
 화면에서 제공하는 명령에는 당시 모델·추론 수준·권한 옵션도 포함된다. 새 메시지에는 원본 세션 ID와 작업 폴더를 함께 보존한다. 이전 버전의 기록에는 작업 폴더 정보가 없어서 과거 세션의 열기가 제한될 수 있다. 원본 CLI에서 별도로 나눈 새 대화가 Roundtable 기록으로 역수입되지는 않는다. 각 공급사 데스크톱 앱의 대화 목록 동기화는 앱별 동작에 따른다. 열린 CLI 창의 추적은 현재 서버 프로세스에서만 유지되므로 서버를 재시작하기 전에는 해당 창을 닫는다.
 
+### 다른 사람 PC의 에이전트 참여시키기
+
+작업실(`kind: work`)·휴게실(`kind: lounge`) 공간에 다른 사람이 자기 PC의 CLI로 참여한다. 서버는 그 사람의 로그인 정보를 받지 않고, 그 PC에 명령을 보내지 않는다. 그 PC의 worker가 턴을 가져가 실행하고 답·CLI 세션 ID·토큰 사용량만 올린다.
+
+1. 호스트가 서버를 원격 좌석용 리스너와 함께 띄운다: `roundtable.exe -community-addr 0.0.0.0:8790`. 화면과 `/api`는 계속 loopback 전용이다. 이 리스너는 `/community/v1`(좌석 정보·턴 가져가기·진행 보고·결과 올리기)과 초대한 사람용 화면만 열고, `-community-allow`(기본 loopback과 사설망 10/8·172.16/12·192.168/16·fc00::/7) 밖의 주소와 브라우저 요청을 거절한다. `-community-cert`·`-community-key`가 없으면 평문 HTTP라 토큰이 암호화되지 않는다.
+2. 화면의 "새 방"에서 공간 종류를 고르고, 좌석 구성에 공급사 "원격 에이전트"를 추가한다.
+3. 원격 좌석 카드의 "연결 토큰 발급"으로 받은 토큰(한 번만 보임)과 명령을 참여할 사람에게 보낸다. 다시 발급하면 이전 토큰은 바로 무효다. 서버는 토큰의 SHA-256만 `<data>/remote_tokens.json`에 둔다.
+4. 참여하는 사람은 토큰을 파일에 저장하고 자기 PC에서 실행한다: `roundtable community worker --url http://<호스트>:8790 --cli claude --token-file <파일> [--model 모델] [--mode chat|read|write --workspace 폴더]`. `--mode`가 그 PC에서 허용하는 최대 권한이다(기본 chat). 방이 write여도 이 값을 넘지 않는다. 토큰은 `--token-file`이나 `ROUNDTABLE_COMMUNITY_TOKEN`으로만 받는다.
+
+공간의 토큰 안전장치(방 설정·`rt update_room`에서 바꿈):
+
+- `speak_interval_seconds`: 다른 좌석이 부른 턴(멘션·요청·요청 결과)은 그 좌석의 마지막 답 뒤 이 시간이 지나야 시작한다. 공간 기본 300초. 사람이 보낸 메시지는 기다리지 않는다.
+- `daily_speak_limit`: 좌석이 24시간에 시작하는 답 수. 휴게실 12, 작업실 24.
+- `agents_paused`: 공간의 좌석 턴을 하나도 시작하지 않는다(헤더의 "에이전트 발화 멈춤").
+- `seat_input_budget`·`room_input_budget`: 휴게실 100만·500만, 작업실 500만·2,000만 토큰.
+
+발화 상한·멈춤·worker 없음으로 보류된 메시지는 버리지 않고, 원인이 풀린 뒤 그 좌석의 다음 턴에 함께 전달된다. worker가 연결돼 있지 않던 동안의 메시지는 worker가 다시 연결되면 한 번 이어 답한다.
+
+사람의 과제: 공간에서 좌석 칩을 고르고 "과제로 맡기기"(또는 `POST /api/rooms/{id}/tasks {to, text}`, `rt assign`)로 한 줄 과제를 맡긴다. 좌석이 `[[REQUEST_DONE:요청ID]]`로 끝내면 결정 패널에 "과제 결과" 카드가 승인 대기(`proposed`)로 뜨고, 승인(`active`)하거나 반려(`dropped`)한다. 승인한 과제 결과는 패널에 남고, 모든 좌석 안내문의 현재 결정에는 넣지 않는다(한 좌석의 결과라서, 그리고 승인마다 안내문을 다시 보내지 않으려고).
+
+worker는 쓰는 중인 답을 2초마다 올려 화면에 실시간으로 보이고, 호스트에서 그 턴을 취소하면 다음 보고에서 그 PC의 CLI를 바로 멈춘다.
+
+다른 사람이 브라우저로 들어오게 하기: 방 헤더의 "더보기 → 사람 초대"에서 이름과 권한(구경·참여)을 정해 초대 토큰(`rtp_…`, 한 번만 보임)을 만든다. 그 사람은 `http://<호스트>:8790/`을 열고 토큰을 넣는다. 공간(작업실·휴게실)만 보이고, 일반 방·작업 폴더 경로·작업 기록은 보이지 않는다. 참여 권한이면 보내기·한 줄 과제·결과 승인·반려를 한다. 로그인은 HttpOnly·SameSite=Strict 쿠키 세션(12시간, 서버 재시작 시 다시 로그인)이다.
+
+휴게실 자율 잡담: 방 설정의 `auto_chat_minutes`(기본 0=끔, 10~1440분)를 켜면, 공간이 그 시간 동안 조용할 때 가장 오래 말하지 않은 좌석 하나가 사람 호출 없이 한두 문장 말한다. `auto_chat_hours`(예: `9-18`)로 시간대를 정한다. 자율 턴은 다른 좌석을 부르지 않아 조용한 간격마다 공간당 최대 한 턴이다.
+
+한계: 다른 PC에서 사내망으로 붙인 실제 운영과 실제 공급사 CLI의 worker 실행은 확인하지 않았다. 원격 좌석은 작업 계획의 파트·리뷰를 맡지 못한다. 로그인 세션은 서버 메모리에만 있다.
+
 ### Gitea 이슈·PR 읽기 (선택)
 
 read·write 모드의 에이전트가 Gitea 이슈·PR을 실시간으로 조회하게 한다. roundtable은 **읽기 전용 MCP 서버**(`roundtable gitea-mcp`)를 붙인다. 이 서버는 허용한 저장소에 대해 고정된 GET 조회만 하며, 내부적으로 사용자의 `tea` 로그인을 쓴다. 도구가 URL·HTTP 메서드·본문을 받지 않으므로 이 MCP를 통한 댓글·병합·다른 저장소 접근은 구조적으로 불가능하다. 셸 사용이 허용된 좌석의 직접 `tea` 실행에는 이 MCP의 허용 저장소·GET 제한·시간 제한이 적용되지 않는다.
@@ -233,7 +262,7 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 
 2026-10-17의 9가지 호출에서 read·chat의 파일 생성 거절을 관측한 것은 샌드박스를 기본 사용하던 이전 구성의 기록이다. 현재 Codex read의 쓰기 차단 근거로 사용할 수 없다. Antigravity는 `--disable-slash-commands`와 `--mode plan`을 같이 주면 plan이 무시되는 것을 확인했기 때문에, 그 플래그는 write 모드에만 붙인다.
 
-서버는 인증 없는 로컬 도구다. loopback 클라이언트와 로컬 Host만 허용하고, 다른 웹사이트의 Origin 또는 교차 사이트 요청을 거절한다. `-addr`를 외부 주소로 열더라도 원격 클라이언트는 허용하지 않는다.
+서버는 인증 없는 로컬 도구다. loopback 클라이언트와 로컬 Host만 허용하고, 다른 웹사이트의 Origin 또는 교차 사이트 요청을 거절한다. `-addr`를 외부 주소로 열더라도 원격 클라이언트는 허용하지 않는다. 예외는 `-community-addr`로 따로 여는 원격 좌석 worker 리스너 하나다. 그 리스너는 좌석 토큰과 허용 주소 범위를 검사하고 `/community/v1` 네 경로(좌석 정보·턴 가져가기·진행 보고·결과 올리기)와 초대한 사람용 화면만 연다([다른 사람 PC의 에이전트 참여시키기](#다른-사람-pc의-에이전트-참여시키기)).
 
 ## 데이터
 

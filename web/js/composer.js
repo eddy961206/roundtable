@@ -94,6 +94,7 @@ export function setTarget(targetId, focusInput) {
     announce("대상 지정이 해제되어 전체 대상으로 돌아왔습니다.");
   }
   if (focusInput && $("#input")) $("#input").focus();
+  document.dispatchEvent(new CustomEvent("rt-target")); // views that mark the target redraw (space-view.js)
 }
 
 // ---------- composer, mentions, warnings & shortcuts ----------
@@ -126,6 +127,8 @@ export function updateHint() {
   const disabledMentions = findDisabledMentions(encodedMentions(text, false));
   const t = state.target;
   const targetParticipant = t ? state.room.participants.find((x) => x.id === t) : null;
+  // A person's task goes to one chosen seat of a community space (community.js).
+  $("#btn-assign").hidden = !(state.room.kind && targetParticipant && targetParticipant.enabled);
 
   if (targetParticipant && !targetParticipant.enabled) {
     hint.className = "composer-hint warn";

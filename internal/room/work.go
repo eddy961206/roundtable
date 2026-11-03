@@ -213,6 +213,10 @@ func planFromSpec(r *Room, spec WorkSpec) (*WorkPlan, error) {
 		if reviewer.Provider == seat.Provider {
 			return nil, fmt.Errorf("파트 %d: 리뷰어는 담당과 다른 공급사여야 함(%s)", i+1, seat.Provider)
 		}
+		if seat.Provider == RemoteProvider || reviewer.Provider == RemoteProvider {
+			// A part runs in a worktree on this server, which a remote worker cannot reach.
+			return nil, fmt.Errorf("파트 %d: 원격 좌석은 작업 계획의 파트·리뷰를 맡을 수 없음", i+1)
+		}
 		if seats[seat.ID] {
 			return nil, fmt.Errorf("파트 %d: 좌석 %s가 이미 다른 파트를 맡음", i+1, seat.ID)
 		}

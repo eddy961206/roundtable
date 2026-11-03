@@ -36,16 +36,22 @@ function sortedDecisions() {
   });
 }
 
+// A card with a task is a person's task result (community.js): confirming it
+// approves the result, dropping it sends the result back.
 function buildProposedActions(d) {
-  const confirm = el("button", "primary dec-confirm", "확정");
+  const confirm = el("button", "primary dec-confirm", d.task ? "승인" : "확정");
   confirm.type = "button";
-  confirm.title = "유효(active)로 바꿉니다. 다음 턴부터 모든 참가자의 안내문에 들어갑니다.";
-  confirm.setAttribute("aria-label", "결정 확정: " + d.text);
+  confirm.title = d.task
+    ? "과제 결과를 승인합니다. 유효(active)가 되어 다음 턴부터 모든 참가자의 안내문에 들어갑니다."
+    : "유효(active)로 바꿉니다. 다음 턴부터 모든 참가자의 안내문에 들어갑니다.";
+  confirm.setAttribute("aria-label", (d.task ? "과제 결과 승인: " : "결정 확정: ") + d.text);
   confirm.onclick = () => patchDecision(d.id, { status: "active" }, confirm);
-  const reject = el("button", "danger dec-reject", "거절");
+  const reject = el("button", "danger dec-reject", d.task ? "반려" : "거절");
   reject.type = "button";
-  reject.title = "폐기(dropped)로 바꿉니다. 카드는 기록으로 남습니다.";
-  reject.setAttribute("aria-label", "결정 거절: " + d.text);
+  reject.title = d.task
+    ? "과제 결과를 반려합니다(dropped). 다시 할 일은 그 좌석에게 새 메시지나 과제로 보내세요."
+    : "폐기(dropped)로 바꿉니다. 카드는 기록으로 남습니다.";
+  reject.setAttribute("aria-label", (d.task ? "과제 결과 반려: " : "결정 거절: ") + d.text);
   reject.onclick = () => patchDecision(d.id, { status: "dropped" }, reject);
   return [confirm, reject];
 }
@@ -115,7 +121,7 @@ export function renderDecisions() {
       el(
         "div",
         "dec-item-meta muted",
-        decisionAuthor(d) + (d.status === "proposed" ? " 제안 · 확정해야 안내문에 들어갑니다 · " : " · ") + fmtTime(d.at)
+        decisionAuthor(d) + (d.status === "proposed" ? (d.task ? " 과제 결과 · 사람이 승인해야 확정됩니다 · " : " 제안 · 확정해야 안내문에 들어갑니다 · ") : " · ") + fmtTime(d.at)
       )
     );
 

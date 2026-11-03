@@ -39,6 +39,16 @@ type Participant struct {
 	// HistoryFrom is the seq of the handoff summary a new session starts from;
 	// its first turn gets that summary and later messages only (handoff.go).
 	HistoryFrom int64 `json:"history_from,omitempty"`
+	// Pacing (community.go): a turn another seat started waits here until
+	// PacedUntil (ms) because the room's speak interval has not passed.
+	PacedUntil int64 `json:"paced_until,omitempty"`
+	// Remote seats (remote.go): a worker on another PC runs the seat's turns.
+	// RemoteToken tells a connection token exists, RemoteSeenAt (ms) is the
+	// worker's last poll, and RemoteMissed records turns dropped while it was
+	// away so its next poll catches up once.
+	RemoteToken  bool  `json:"remote_token,omitempty"`
+	RemoteSeenAt int64 `json:"remote_seen_at,omitempty"`
+	RemoteMissed bool  `json:"remote_missed,omitempty"`
 }
 
 // ForkSource is the base seat session a seat starts from. The copy is made on
@@ -93,8 +103,23 @@ type Room struct {
 	// working and an active one is still listed.
 	Archived bool `json:"archived,omitempty"`
 	// Group names the room list group; empty groups the room by its workspace.
-	Group string    `json:"group,omitempty"`
-	Work  *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
+	Group string `json:"group,omitempty"`
+	// Kind marks a community space (community.go): "" is an ordinary room,
+	// "work" a workroom, "lounge" a lounge. It is fixed at creation.
+	Kind string `json:"kind,omitempty"`
+	// Speak guards (community.go). SpeakIntervalSeconds: a turn another seat
+	// started (chain depth > 0) waits until the seat's last reply is this old.
+	// DailySpeakLimit: replies a seat may start in any 24 hours. 0 is no limit.
+	// AgentsPaused starts no seat turn at all; messages stay for later.
+	SpeakIntervalSeconds int  `json:"speak_interval_seconds,omitempty"`
+	DailySpeakLimit      int  `json:"daily_speak_limit,omitempty"`
+	AgentsPaused         bool `json:"agents_paused,omitempty"`
+	// Auto chat (community.go): when a space has been quiet this long, one seat
+	// speaks without being called. 0 is off; AutoChatHours ("9-18", server
+	// local time, "" any time) limits it to working hours.
+	AutoChatMinutes int       `json:"auto_chat_minutes,omitempty"`
+	AutoChatHours   string    `json:"auto_chat_hours,omitempty"`
+	Work            *WorkPlan `json:"-"` // stored in room.json "work"; clients get Snapshot.work and "work" events
 }
 
 func (r *Room) participant(id string) *Participant {
@@ -134,8 +159,9 @@ type Message struct {
 	ID               string         `json:"id"`
 	Seq              int64          `json:"seq"`
 	TS               int64          `json:"ts"`
-	Kind             string         `json:"kind"`   // user | agent | system
-	Author           string         `json:"author"` // "user" or participant id
+	Kind             string         `json:"kind"`         // user | agent | system
+	Author           string         `json:"author"`       // "user" or participant id
+	By               string         `json:"by,omitempty"` // a person on another PC who wrote this user message (people.go)
 	Text             string         `json:"text"`
 	Status           string         `json:"status"`           // done | streaming | error | cancelled
 	Target           string         `json:"target,omitempty"` // user message addressed to one agent only

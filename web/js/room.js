@@ -10,6 +10,7 @@ import { renderRoomHead, renderRoomList } from "./rooms.js";
 import { renderDiscussion, renderParticipants, renderQueue } from "./participants.js";
 import { mergeSnapshotDecisions, renderDecisions, upsertDecision } from "./decisions.js";
 import { appendTraceEvent, boundedTraceEvent, expandTrace, liveFeed, seedLive, updateTraceCount } from "./trace.js";
+import { scheduleSpaceView } from "./space-view.js";
 import { cancelPendingScrollRestore, pruneMessageCaches, renderMessage, renderTimeline, scheduleRender, scheduleTraceRender, updateJumpBottomBtn, updateTimelineBanners } from "./timeline.js";
 
 let panelTimer = null;
@@ -142,6 +143,7 @@ export async function openRoom(id, resync, latest = false) {
   renderRoomList();
   updateHint();
   refreshLimits(false, true);
+  scheduleSpaceView();
   if (!resync) connect(id);
 }
 
@@ -159,6 +161,7 @@ export function connect(id) {
       return;
     }
     handle(msg.type, msg.data);
+    scheduleSpaceView();
   };
   let connected = false;
   es.onerror = () => {

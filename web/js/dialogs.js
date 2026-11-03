@@ -7,6 +7,7 @@ import { renderWork } from "./work.js";
 import { loadRooms, renderRoomHead } from "./rooms.js";
 import { buildRoleField, catalogMessage, fillModelSelect, getEffortsForModel, refreshProviderCatalog, syncEffortSelect } from "./participants.js";
 import { openRoom } from "./room.js";
+import { fillSpaceFields, readSpaceFields } from "./community.js";
 
 // ---------- Work Plan Dialog (POST /api/rooms/{id}/work) ----------
 function syncReviewerSelect(seatSel, revSel, preferredReviewer = "") {
@@ -484,6 +485,7 @@ export function openRoomDialog(room, initialPrompt = "") {
   f.persona.checked = room ? !!room.persona : false;
   f.blind_first_default.checked = room ? room.blind_first_default === true : true;
   f.quiet_done.checked = room ? !!room.quiet_done : false;
+  fillSpaceFields(f, room);
   // Usage guards apply to an existing room (PATCH); a new room starts with the defaults.
   $("#room-guards").hidden = !room;
   for (const k of ["input_warn_tokens", "context_warn_percent", "seat_input_budget", "room_input_budget", "compact_window_tokens"]) f[k].value = room ? room[k] || 0 : 0;
@@ -515,6 +517,7 @@ export async function onRoomSubmit(e) {
     blind_first_default: f.blind_first_default.checked,
     quiet_done: f.quiet_done.checked,
   };
+  readSpaceFields(f, body, !!f.dataset.editing);
   try {
     if (f.dataset.editing) {
       for (const k of ["input_warn_tokens", "context_warn_percent", "seat_input_budget", "room_input_budget", "compact_window_tokens"]) body[k] = Number(f[k].value || 0);

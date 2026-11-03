@@ -152,6 +152,7 @@
             <input id="room-title-input" class="room-title-input" type="text" maxlength="120" aria-label="새 방 이름 (Enter 저장, Esc 취소)" hidden>
             <button type="button" id="btn-rename-room" class="icon-btn rename-btn" aria-label="방 이름 바꾸기" title="방 이름 바꾸기 (Enter 저장 · Esc 취소)">✎</button>
             <span id="room-mode" class="badge"></span>
+            <span id="room-space" class="badge space-badge" hidden></span>
             <span id="room-ws" class="muted mono"></span>
             <span id="room-note-badge" class="badge note-badge" hidden>공지</span>
           </div>
@@ -159,6 +160,8 @@
             <label class="rounds" for="rounds">라운드 <input id="rounds" type="number" min="1" max="10" value="3" aria-label="토론 라운드 수"></label>
             <button type="button" id="btn-discuss" title="활성 참가자들이 라운드별로 토론합니다">토론 시작</button>
             <label class="blind-toggle" for="chk-blind-first" title="켜면 1라운드는 모든 참가자가 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개해 순서대로 토론합니다. 이 방의 기본값으로 저장됩니다."><input type="checkbox" id="chk-blind-first"> 블라인드 1R</label>
+            <button type="button" id="btn-space-view" aria-pressed="false" aria-controls="space-view">3D 보기</button>
+            <button type="button" id="btn-agents-pause" aria-pressed="false" hidden>에이전트 발화 멈춤</button>
             <button type="button" id="btn-stop" class="danger" title="실행 중인 모든 턴을 끊고 대기열과 토론을 비웁니다 (Ctrl+.)">모두 중지</button>
             <button type="button" id="btn-usage" class="mobile-only" aria-label="남은 사용량 열기" aria-controls="provider-panel">사용량</button>
             <button type="button" id="btn-right" class="tablet-only" aria-label="참가자 및 대기열 서랍 열기/닫기" title="참가자·대기열 패널 보이기/숨기기">참가자</button>
@@ -176,6 +179,7 @@
                 <a id="btn-export" class="button" download title="대화 전체를 마크다운 파일로 저장합니다">내보내기</a>
                 <button type="button" id="btn-model-stats" title="저장된 방 데이터에서 계산한 모델별 수행 기록을 봅니다">모델 기록</button>
                 <button type="button" id="btn-settings" title="방 설정 및 공지 수정">설정</button>
+                <button type="button" id="btn-people" title="다른 PC의 사람이 브라우저로 사내 커뮤니티 공간을 구경하거나 참여하게 초대합니다">사람 초대</button>
                 <button type="button" id="btn-delete" class="danger ghost" title="방과 기록을 영구 삭제합니다">방 삭제</button>
               </div>
             </details>
@@ -195,6 +199,26 @@
       </div>
       <div class="timeline-stage">
         <div id="timeline" role="log" aria-live="off" aria-label="대화 메시지 목록"></div>
+        <section id="space-view" class="space-view" aria-label="3D 공간 보기" hidden>
+          <div class="sv-bar">
+            <strong id="sv-title"></strong>
+            <span id="sv-hint" class="muted"></span>
+            <span class="sv-tools">
+              <button type="button" id="sv-left" class="icon-btn" aria-label="왼쪽으로 돌리기" title="왼쪽으로 돌리기">⟲</button>
+              <button type="button" id="sv-right" class="icon-btn" aria-label="오른쪽으로 돌리기" title="오른쪽으로 돌리기">⟳</button>
+              <button type="button" id="sv-zoom-out" class="icon-btn" aria-label="작게 보기" title="작게 보기 (Ctrl+휠)">−</button>
+              <button type="button" id="sv-zoom-in" class="icon-btn" aria-label="크게 보기" title="크게 보기 (Ctrl+휠)">+</button>
+              <button type="button" id="sv-replay" aria-pressed="false" title="최근 대화 20개를 한 메시지씩 말풍선으로 다시 봅니다. 토큰을 쓰지 않습니다.">▶ 다시 보기</button>
+              <button type="button" id="sv-reset" title="처음 각도와 크기로">정면</button>
+              <button type="button" id="sv-close" class="icon-btn" aria-label="3D 보기 닫기" title="대화 보기로 돌아가기">✕</button>
+            </span>
+          </div>
+          <div id="sv-attn" class="sv-attn" role="status" aria-live="polite" aria-label="지금 상태와 할 일"></div>
+          <div id="sv-stage" class="sv-stage" tabindex="0" aria-label="3D 사무실. 왼쪽·오른쪽 화살표로 돌립니다.">
+            <div id="sv-world" class="sv-world"></div>
+            <p class="sv-legend" aria-hidden="true"><span class="sv-legend-glow"></span> 답하는 중 · <b>!</b> 승인 필요 · ⏱ 차례 대기 · ⏸ 보류 · 📡 다른 PC · 💬 지난 말 · <span class="sv-legend-link"></span> 부른 상대 · 고리 = 다음 메시지 대상</p>
+          </div>
+        </section>
         <button type="button" id="btn-jump-bottom" class="jump-bottom-btn" aria-label="맨 아래로 이동" title="맨 아래로 이동" hidden>
           <span aria-hidden="true">↓</span>
           <span id="jump-bottom-count" class="badge jump-bottom-badge" hidden>0</span>
@@ -217,6 +241,7 @@
           <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
           <button type="button" id="btn-attach" class="icon-btn attach-btn" aria-label="이미지 파일 선택 (PNG, JPEG, WEBP)" title="이미지 첨부 (PNG·JPEG·WEBP, 파일당 최대 10MB, 최대 4장)">📎</button>
           <textarea id="input" rows="2" aria-label="메시지 입력" aria-controls="mention-pop" aria-autocomplete="list" aria-describedby="composer-error composer-hint" placeholder="메시지 입력… @로 이름 선택 (이미지 붙여넣기·끌어놓기 가능)"></textarea>
+          <button type="button" id="btn-assign" title="고른 좌석에게 한 줄 과제로 맡깁니다. 좌석이 끝내면 결과 카드가 결정 패널에 승인 대기로 올라옵니다." hidden>과제로 맡기기</button>
           <button type="submit" id="btn-send" class="primary">보내기</button>
         </div>
         <div id="composer-error" class="composer-error" role="alert" hidden></div>
@@ -259,6 +284,16 @@
       <label>방 이름 <input name="title" required placeholder="예: SP5 클립 설계 검토"></label>
       <label>그룹 이름 (선택) <input name="group" maxlength="120" placeholder="비우면 작업 폴더로 묶음"></label>
     </div>
+    <div id="room-kind-row">
+      <label>공간 종류
+        <select name="kind">
+          <option value="">일반 방</option>
+          <option value="work">작업실 — 여러 사람의 에이전트가 함께 일함</option>
+          <option value="lounge">휴게실 — 에이전트끼리 짧게 잡담</option>
+        </select>
+      </label>
+      <p id="room-kind-note" class="muted small-note" hidden></p>
+    </div>
     <label>작업 폴더 <input name="workspace" placeholder="D:\WorkSpaces\...\VMS"></label>
     <label>권한 모드
       <select name="mode">
@@ -285,6 +320,13 @@
       <label class="inline" title="1라운드는 서로의 답을 보지 않고 동시에 답하고, 2라운드부터 공개합니다"><input type="checkbox" name="blind_first_default"> 토론 1라운드 블라인드</label>
       <label class="inline" title="받은 요청을 끝낸 좌석의 완료 신호([[REQUEST_DONE]])가 요청한 좌석을 다시 부르지 않습니다. 거절 신호는 그대로 부릅니다. 검수가 통과하면 작성 좌석이 '승인됐어'만 쓰며 문맥 전체를 다시 읽는 턴을 없앱니다. 수정이 필요하면 검수 좌석이 [[REQUEST:@작성]]으로 따로 요청합니다."><input type="checkbox" name="quiet_done"> 요청 완료 신호로 요청자를 다시 부르지 않기</label>
     </div>
+    <div class="row" id="room-speak">
+      <label title="다른 좌석이 부른 턴(연쇄·요청)은 그 좌석의 마지막 답 뒤 이 시간이 지나야 시작합니다. 사람이 직접 보낸 메시지는 기다리지 않습니다. 0은 없음">발화 간격(초) <input name="speak_interval_seconds" type="number" min="0" max="86400" placeholder="0 = 없음"></label>
+      <label title="좌석 하나가 24시간 동안 답할 수 있는 수입니다. 넘으면 새 턴을 시작하지 않고 메시지는 남겨 둡니다. 0은 없음">24시간 발화 상한(번) <input name="daily_speak_limit" type="number" min="0" max="1000" placeholder="0 = 없음"></label>
+      <label id="room-autochat-label" title="공간이 이 시간 동안 조용하면, 마지막으로 말한 지 가장 오래된 좌석 한 명이 사람 호출 없이 한두 문장 말합니다. 다른 좌석을 부르지 않습니다. 0은 끔(기본), 10~1440분">자율 잡담 간격(분) <input name="auto_chat_minutes" type="number" min="0" max="1440" placeholder="0 = 끔"></label>
+      <label id="room-autochat-hours-label" title="자율 잡담을 하는 시간대(이 서버 PC 시각). 예: 9-18은 9시부터 18시 전까지. 비우면 언제나">자율 잡담 시간대 <input name="auto_chat_hours" placeholder="예: 9-18"></label>
+      <label class="inline" id="room-paused-label" title="켜면 이 방의 좌석 턴을 하나도 시작하지 않습니다. 메시지는 남겨 두었다가 끈 뒤 다음 턴에 전달합니다."><input type="checkbox" name="agents_paused"> 에이전트 발화 멈춤</label>
+    </div>
     <div class="row" id="room-guards">
       <label title="좌석 누적 입력(캐시 포함)이 이 값의 배수를 넘을 때마다 안내합니다. 0은 기본 1천만, -1은 끔">입력 경고 간격(토큰) <input name="input_warn_tokens" type="number" min="-1" placeholder="0 = 1천만"></label>
       <label title="좌석 문맥이 모델 한도의 이 비율을 넘으면 한 번 안내합니다. 0은 기본 70, -1은 끔">문맥 경보(%) <input name="context_warn_percent" type="number" min="-1" max="99" placeholder="0 = 70"></label>
@@ -295,6 +337,53 @@
     <menu>
       <button value="cancel" type="button" id="dlg-room-cancel">취소</button>
       <button value="ok" type="submit" class="primary" id="dlg-room-ok">만들기</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-remote-token" aria-labelledby="dlg-remote-token-title">
+  <form method="dialog" id="form-remote-token">
+    <h3 id="dlg-remote-token-title">원격 좌석 연결 토큰</h3>
+    <p class="muted small-note">좌석 <strong id="remote-token-seat"></strong>의 턴을 다른 PC에서 실행합니다. 토큰은 지금 한 번만 보입니다. 메신저로 보낼 때는 그 사람에게만 보내세요.</p>
+    <p id="remote-token-off" class="small-note warn" hidden>이 서버는 -community-addr 없이 실행 중이라 다른 PC의 worker가 연결할 수 없습니다. 서버를 -community-addr 0.0.0.0:8790 처럼 다시 띄워야 합니다.</p>
+    <label>토큰 <input id="remote-token-value" class="mono" readonly></label>
+    <button type="button" id="btn-remote-token-copy">토큰 복사</button>
+    <ol class="small-note">
+      <li>그 PC에서 토큰을 파일 하나에 저장합니다. 예: <code>%USERPROFILE%\.roundtable-token</code></li>
+      <li>그 PC에 roundtable 실행 파일과 쓸 CLI(claude·codex·agy·opencode)가 로그인된 상태로 있어야 합니다.</li>
+      <li>아래 명령을 그 PC에서 실행합니다. <code>--cli</code>는 그 PC의 CLI로, <code>--mode</code>는 허용할 최대 권한으로 바꿉니다(read·write는 <code>--workspace 폴더</code> 필요).</li>
+    </ol>
+    <label>worker 명령 <textarea id="remote-token-command" class="mono" rows="3" readonly></textarea></label>
+    <button type="button" id="btn-remote-command-copy">명령 복사</button>
+    <menu>
+      <button type="button" id="dlg-remote-token-close" class="primary">닫기</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-people" aria-labelledby="dlg-people-title">
+  <form method="dialog" id="form-people">
+    <h3 id="dlg-people-title">사람 초대</h3>
+    <p class="muted small-note">다른 PC의 사람이 브라우저로 사내 커뮤니티 공간(작업실·휴게실)에 들어옵니다. 일반 방, 작업 폴더 경로, 작업 기록은 보이지 않습니다.</p>
+    <p id="people-off" class="small-note warn" hidden>이 서버는 -community-addr 없이 실행 중이라 다른 PC에서 접속할 수 없습니다. 서버를 -community-addr 0.0.0.0:8790 처럼 다시 띄워야 합니다.</p>
+    <ul id="people-list" class="people-list" aria-label="초대한 사람"></ul>
+    <div class="row">
+      <label>이름 <input name="name" maxlength="40" placeholder="예: 부장님"></label>
+      <label>권한
+        <select name="role">
+          <option value="viewer">구경 — 보기만</option>
+          <option value="member">참여 — 보내기·과제·승인</option>
+        </select>
+      </label>
+    </div>
+    <button type="button" id="btn-people-invite" class="primary">초대 토큰 만들기</button>
+    <div id="people-issued" class="people-issued" hidden>
+      <label>초대 토큰 <input id="people-token" class="mono" readonly></label>
+      <button type="button" id="btn-people-copy">토큰 복사</button>
+      <p class="small-note">그 사람이 브라우저로 <code id="people-url"></code> 을 열고 이 토큰을 넣습니다. 토큰은 지금 한 번만 보입니다. 메신저로 보낼 때는 그 사람에게만 보내세요.</p>
+    </div>
+    <menu>
+      <button type="button" id="dlg-people-close" class="primary">닫기</button>
     </menu>
   </form>
 </dialog>

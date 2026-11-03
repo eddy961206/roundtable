@@ -32,6 +32,7 @@ func TestStandingBriefRolesAndPriority(t *testing.T) {
 		"[[ATTACH:캡처.png]]",
 		"[[REQUEST:@좌석ID]]",
 		"시각 검토",
+		"이 방에서는 모두 반말로 말합니다", // the owner's rule for every room
 	} {
 		if !strings.Contains(brief, want) {
 			t.Errorf("standingBrief missing %q:\n%s", want, brief)
