@@ -30,11 +30,15 @@ const (
 	personHeader   = "X-RT-Person"
 	spaceMessages  = 60
 	streamCoalesce = 500 * time.Millisecond
+	// One person signs in from a few browsers; repeated logins with one
+	// invite replace the oldest session instead of filling the memory.
+	maxPersonSessions = 8
 )
 
 type session struct {
 	person  string
 	expires time.Time
+	n       uint64 // login order; clock ticks can tie
 }
 
 type people struct {
@@ -42,6 +46,7 @@ type people struct {
 	web      fs.FS
 	mu       sync.Mutex
 	sessions map[string]session
+	logins   uint64
 }
 
 // peopleFiles are the only static files the community listener serves.
@@ -115,12 +120,23 @@ func (pp *people) newSession(person string) (string, error) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
 	now := time.Now()
+	oldest, own := "", 0
 	for k, s := range pp.sessions { // drop expired sessions as new ones come
-		if now.After(s.expires) {
+		switch {
+		case now.After(s.expires):
 			delete(pp.sessions, k)
+		case s.person == person:
+			own++
+			if oldest == "" || s.n < pp.sessions[oldest].n {
+				oldest = k
+			}
 		}
 	}
-	pp.sessions[id] = session{person: person, expires: now.Add(personSession)}
+	if own >= maxPersonSessions {
+		delete(pp.sessions, oldest)
+	}
+	pp.logins++
+	pp.sessions[id] = session{person: person, expires: now.Add(personSession), n: pp.logins}
 	return id, nil
 }
 
@@ -156,6 +172,10 @@ func (pp *people) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (pp *people) logout(w http.ResponseWriter, r *http.Request) {
+	if !sameSite(r) {
+		writeErr(w, http.StatusForbidden, errors.New("이 화면에서만 로그아웃할 수 있음"))
+		return
+	}
 	if c, err := r.Cookie(personCookie); err == nil {
 		pp.mu.Lock()
 		delete(pp.sessions, c.Value)
@@ -259,6 +279,8 @@ type spaceMessage struct {
 	Target string `json:"target,omitempty"`
 	Reason string `json:"reason,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// Mentions are the seats a reply called; the 3D view draws who talks to whom.
+	Mentions *[]string `json:"mentions,omitempty"`
 }
 
 func (pp *people) space(w http.ResponseWriter, r *http.Request, _ room.Person) {
@@ -279,10 +301,10 @@ func (pp *people) space(w http.ResponseWriter, r *http.Request, _ room.Person) {
 	}
 	msgs := []spaceMessage{}
 	for _, m := range snap.Messages {
-		if m.Kind == "system" && m.UserOnly {
+		if m.UserOnly {
 			continue // usage warnings with token counts are for the host
 		}
-		msgs = append(msgs, spaceMessage{ID: m.ID, Seq: m.Seq, TS: m.TS, Kind: m.Kind, Author: m.Author, By: m.By, Text: m.Text, Status: m.Status, Target: m.Target, Reason: m.Reason, Error: m.Error})
+		msgs = append(msgs, spaceMessage{ID: m.ID, Seq: m.Seq, TS: m.TS, Kind: m.Kind, Author: m.Author, By: m.By, Text: m.Text, Status: m.Status, Target: m.Target, Reason: m.Reason, Error: m.Error, Mentions: m.Mentions})
 	}
 	decisions := snap.Decisions
 	if decisions == nil {
@@ -293,7 +315,7 @@ func (pp *people) space(w http.ResponseWriter, r *http.Request, _ room.Person) {
 
 // stream tells the page that the space changed; the page reads the space
 // again. Room events themselves are not forwarded: they carry work traces.
-func (pp *people) stream(w http.ResponseWriter, r *http.Request, _ room.Person) {
+func (pp *people) stream(w http.ResponseWriter, r *http.Request, p room.Person) {
 	events, unsub, err := pp.hub.Subscribe(r.PathValue("id"))
 	if err != nil {
 		writeErr(w, 404, err)
@@ -317,6 +339,9 @@ func (pp *people) stream(w http.ResponseWriter, r *http.Request, _ room.Person) 
 				}
 			case <-due:
 				due = nil
+				if _, err := pp.hub.PersonByID(p.ID); err != nil {
+					return // revoked while watching: the open stream ends too
+				}
 				select {
 				case signals <- []byte(`{"type":"changed"}`):
 				default:

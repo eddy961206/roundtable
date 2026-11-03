@@ -129,7 +129,8 @@ func TestAgentsPausedStartsNoTurn(t *testing.T) {
 }
 
 // A person's task is a request from "user"; the seat's done signal leaves a
-// proposed card the person approves, and only then is it a current decision.
+// proposed card the person approves. The approved card stays on the card list,
+// out of the seats' standing brief.
 func TestAssignedTaskResultWaitsForApproval(t *testing.T) {
 	h, r, ps := controlledHub(t, "codex")
 	m, task, err := h.AssignTask(r.ID, "codex", "README 오타 고치기")
@@ -159,8 +160,13 @@ func TestAssignedTaskResultWaitsForApproval(t *testing.T) {
 	if _, err := h.UpdateDecision(r.ID, card.ID, DecisionInput{Status: ref("active")}); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.rooms[r.ID].activeDecisionTexts(r.Seq); len(got) != 1 {
-		t.Fatalf("an approved result is a current decision: %v", got)
+	snap, _ = h.Snapshot(r.ID)
+	if snap.Decisions[0].Status != "active" {
+		t.Fatalf("the approval must be recorded on the card: %+v", snap.Decisions[0])
+	}
+	// One seat's finished work is not a rule for every seat (review 2026-11-03).
+	if got := h.rooms[r.ID].activeDecisionTexts(r.Seq); len(got) != 0 {
+		t.Fatalf("an approved result entered every seat's brief: %v", got)
 	}
 	if _, _, err := h.AssignTask(r.ID, "codex", "두 줄\n과제"); err == nil {
 		t.Fatal("a multi-line task was accepted")
@@ -198,7 +204,7 @@ func TestRemoteSeatRunsOnWorker(t *testing.T) {
 	}
 	polled := make(chan *RemoteJob, 1)
 	go func() {
-		job, err := h.RemoteNext(context.Background(), token, 3*time.Second)
+		job, err := h.RemoteNext(context.Background(), token, "w1", 3*time.Second)
 		if err != nil {
 			t.Error(err)
 		}
@@ -219,10 +225,10 @@ func TestRemoteSeatRunsOnWorker(t *testing.T) {
 	if !strings.Contains(job.Prompt, "참가자 본인의 PC에서 실행") || strings.Contains(job.Prompt, r.Workspace) {
 		t.Fatalf("a remote seat's brief must not name this server's folder: %s", job.Prompt)
 	}
-	if err := h.RemoteFinish(token, "other-turn", RemoteResult{Text: "x"}); err == nil {
+	if err := h.RemoteFinish(token, "w1", "other-turn", RemoteResult{Text: "x"}); err == nil {
 		t.Fatal("a result for another turn was accepted")
 	}
-	if err := h.RemoteFinish(token, job.Turn, RemoteResult{Text: "원격에서 답함", SessionID: "s-remote", Usage: map[string]any{"input_tokens": 50.0, "cache_read_input_tokens": 950.0}}); err != nil {
+	if err := h.RemoteFinish(token, "w1", job.Turn, RemoteResult{Text: "원격에서 답함", SessionID: "s-remote", Usage: map[string]any{"input_tokens": 50.0, "cache_read_input_tokens": 950.0}}); err != nil {
 		t.Fatal(err)
 	}
 	waitIdle(t, h, r.ID)
@@ -249,15 +255,15 @@ func TestRemoteSeatCatchesUpAfterAway(t *testing.T) {
 	if countSystem(snap, "worker가 연결돼 있지 않음") != 1 || !snap.Room.participant(seat).RemoteMissed {
 		t.Fatalf("an away worker must be explained: %+v", snap.Messages)
 	}
-	job, err := h.RemoteNext(context.Background(), token, 3*time.Second)
+	job, err := h.RemoteNext(context.Background(), token, "w1", 3*time.Second)
 	if err != nil || job == nil || !strings.Contains(job.Prompt, "자리 비운 사이 질문") {
 		t.Fatalf("catch-up job %+v %v", job, err)
 	}
-	if err := h.RemoteFinish(token, job.Turn, RemoteResult{Text: "늦게 답함"}); err != nil {
+	if err := h.RemoteFinish(token, "w1", job.Turn, RemoteResult{Text: "늦게 답함"}); err != nil {
 		t.Fatal(err)
 	}
 	waitIdle(t, h, r.ID)
-	again, err := h.RemoteNext(context.Background(), token, 0)
+	again, err := h.RemoteNext(context.Background(), token, "w1", 0)
 	if err != nil || again != nil {
 		t.Fatalf("the catch-up runs once: %+v %v", again, err)
 	}
@@ -265,7 +271,7 @@ func TestRemoteSeatCatchesUpAfterAway(t *testing.T) {
 	if err != nil || reissued == token {
 		t.Fatal(err)
 	}
-	if _, err := h.RemoteNext(context.Background(), token, 0); !errors.Is(err, ErrRemoteAuth) {
+	if _, err := h.RemoteNext(context.Background(), token, "w1", 0); !errors.Is(err, ErrRemoteAuth) {
 		t.Fatalf("a replaced token must stop working: %v", err)
 	}
 	restarted, err := NewHub(h.store, h.reg, h.scratch, nil)
@@ -287,7 +293,7 @@ func TestReissuedTokenRevokesWaitingPoll(t *testing.T) {
 	seat := r.Participants[0].ID
 	polled := make(chan error, 1)
 	go func() {
-		job, err := h.RemoteNext(context.Background(), old, 3*time.Second)
+		job, err := h.RemoteNext(context.Background(), old, "w1", 3*time.Second)
 		if job != nil {
 			err = errors.New("the revoked poll got job " + job.Turn)
 		}
@@ -312,11 +318,11 @@ func TestReissuedTokenRevokesWaitingPoll(t *testing.T) {
 	if err := <-polled; !errors.Is(err, ErrRemoteAuth) {
 		t.Fatalf("the waiting poll of a replaced token: %v", err)
 	}
-	job, err := h.RemoteNext(context.Background(), fresh, 3*time.Second)
+	job, err := h.RemoteNext(context.Background(), fresh, "w1", 3*time.Second)
 	if err != nil || job == nil || !strings.Contains(job.Prompt, "새 토큰 이후의 일") {
 		t.Fatalf("the new token must still get the job: %+v %v", job, err)
 	}
-	if err := h.RemoteFinish(fresh, job.Turn, RemoteResult{Text: "새 worker가 답함"}); err != nil {
+	if err := h.RemoteFinish(fresh, "w1", job.Turn, RemoteResult{Text: "새 worker가 답함"}); err != nil {
 		t.Fatal(err)
 	}
 	waitIdle(t, h, r.ID)
@@ -360,7 +366,7 @@ func TestRemoteProgressStreamsAndStopReachesWorker(t *testing.T) {
 	if _, err := h.PostUser(r.ID, "길게 생각해 줘", seat); err != nil {
 		t.Fatal(err)
 	}
-	job, err := h.RemoteNext(context.Background(), token, 3*time.Second)
+	job, err := h.RemoteNext(context.Background(), token, "w1", 3*time.Second)
 	if err != nil || job == nil {
 		t.Fatalf("%+v %v", job, err)
 	}
@@ -373,11 +379,11 @@ func TestRemoteProgressStreamsAndStopReachesWorker(t *testing.T) {
 		}
 		return "(none)"
 	}
-	if err := h.RemoteProgress(token, job.Turn, "첫 문단을"); err != nil {
+	if err := h.RemoteProgress(token, "w1", job.Turn, "첫 문단을"); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return streaming() == "첫 문단을" })
-	if err := h.RemoteProgress(token, job.Turn, "첫 문단을 쓰는 중"); err != nil {
+	if err := h.RemoteProgress(token, "w1", job.Turn, "첫 문단을 쓰는 중"); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return streaming() == "첫 문단을 쓰는 중" })
@@ -385,14 +391,85 @@ func TestRemoteProgressStreamsAndStopReachesWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitIdle(t, h, r.ID)
-	if err := h.RemoteProgress(token, job.Turn, "더 쓴 내용"); !errors.Is(err, ErrRemoteTurnGone) {
+	if err := h.RemoteProgress(token, "w1", job.Turn, "더 쓴 내용"); !errors.Is(err, ErrRemoteTurnGone) {
 		t.Fatalf("a stopped turn's progress must tell the worker to stop: %v", err)
 	}
 }
 
+// Review 2026-11-03 (Sol61, Argon4): a second worker started with the same
+// token must not run a turn the first one is running, and a stopped poll must
+// not claim it. A worker that stops reporting loses the turn to the next poll.
+func TestRemoteClaimLeaseKeepsOneWorker(t *testing.T) {
+	h, r, token := remoteHub(t)
+	seat := r.Participants[0].ID
+	h.mu.Lock()
+	h.rooms[r.ID].room.participant(seat).RemoteSeenAt = nowMs()
+	h.mu.Unlock()
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	if job, err := h.RemoteNext(gone, token, "w0", 0); job != nil || err == nil {
+		t.Fatalf("a stopped poll got %+v %v", job, err)
+	}
+	if _, err := h.PostUser(r.ID, "한 번만 실행해 줘", seat); err != nil {
+		t.Fatal(err)
+	}
+	job, err := h.RemoteNext(context.Background(), token, "w1", 3*time.Second)
+	if err != nil || job == nil {
+		t.Fatalf("%+v %v", job, err)
+	}
+	if again, err := h.RemoteNext(context.Background(), token, "w2", 0); err != nil || again != nil {
+		t.Fatalf("a second worker took the running turn: %+v %v", again, err)
+	}
+	if err := h.RemoteProgress(token, "w2", job.Turn, "끼어듦"); !errors.Is(err, ErrRemoteTurnGone) {
+		t.Fatalf("a second worker's report was taken: %v", err)
+	}
+	if err := h.RemoteProgress(token, "w1", job.Turn, ""); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.remote[remoteKey(r.ID, seat)].beat = time.Now().Add(-remoteLease) // w1 went quiet
+	h.mu.Unlock()
+	taken, err := h.RemoteNext(context.Background(), token, "w2", 0)
+	if err != nil || taken == nil || taken.Turn != job.Turn {
+		t.Fatalf("a restarted worker must take the turn over: %+v %v", taken, err)
+	}
+	if err := h.RemoteFinish(token, "w1", job.Turn, RemoteResult{Text: "옛 worker"}); !errors.Is(err, ErrRemoteTurnGone) {
+		t.Fatalf("the old worker's answer was taken: %v", err)
+	}
+	if err := h.RemoteFinish(token, "w2", job.Turn, RemoteResult{Text: "새 worker가 답함"}); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, h, r.ID)
+	snap, _ := h.Snapshot(r.ID)
+	if last := snap.Messages[len(snap.Messages)-1]; last.Text != "새 worker가 답함" {
+		t.Fatalf("reply %q", last.Text)
+	}
+	if job, err := h.RemoteNext(context.Background(), token, "w2", 0); err != nil || job != nil {
+		t.Fatalf("%+v %v", job, err)
+	}
+	h.mu.Lock()
+	slots := len(h.remote)
+	h.remoteTokens["stale"] = remoteToken{Room: "deleted-room", Seat: "x"}
+	h.mu.Unlock()
+	if slots != 0 {
+		t.Fatalf("an idle seat keeps %d slots in memory", slots)
+	}
+	if _, err := h.IssueRemoteToken(r.ID, seat); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	_, stale := h.remoteTokens["stale"]
+	h.mu.Unlock()
+	if stale {
+		t.Fatal("a deleted room's token stayed after the next issue")
+	}
+}
+
 // Auto chat is off until a person turns it on; then a space quiet for the set
-// minutes gets one line from the seat that spoke least recently, which calls
-// nobody, and nothing happens outside the hours or while agents are paused.
+// minutes, with someone watching, gets one line from the seat that spoke least
+// recently, which calls nobody. Each unanswered line doubles the quiet time,
+// and after three it waits for a person. Nothing happens outside the hours or
+// while agents are paused.
 func TestAutoChatSpeaksInQuietSpaceOnly(t *testing.T) {
 	h, r, ps := controlledHub(t, "claude", "codex")
 	later := func(d time.Duration) time.Time { return time.Now().Add(d) }
@@ -401,6 +478,13 @@ func TestAutoChatSpeaksInQuietSpaceOnly(t *testing.T) {
 	if _, err := h.UpdateRoom(r.ID, RoomPatch{AutoChatMinutes: ref(10)}); err != nil {
 		t.Fatal(err)
 	}
+	h.AutoChatTick(later(11 * time.Minute))
+	noMoreCalls(t, ps[0]) // nobody has the space open
+	_, unsub, err := h.Subscribe(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsub()
 	h.AutoChatTick(later(5 * time.Minute))
 	noMoreCalls(t, ps[0]) // not quiet long enough
 	h.AutoChatTick(later(11 * time.Minute))
@@ -415,13 +499,13 @@ func TestAutoChatSpeaksInQuietSpaceOnly(t *testing.T) {
 	if got := snap.Messages[len(snap.Messages)-1]; got.Reason != "auto" {
 		t.Fatalf("the reply must be marked as auto chat: %+v", got)
 	}
-	h.AutoChatTick(later(5 * time.Minute))
-	noMoreCalls(t, ps[1]) // the space just spoke
 	h.AutoChatTick(later(11 * time.Minute))
+	noMoreCalls(t, ps[1]) // one unanswered line: 20 minutes now
+	h.AutoChatTick(later(21 * time.Minute))
 	finishCall(nextCall(t, ps[1]), "좋아요") // the seat that spoke least recently
 	waitIdle(t, h, r.ID)
 
-	hour := later(11 * time.Minute).Hour()
+	hour := later(41 * time.Minute).Hour()
 	away := fmt.Sprintf("%d-24", hour+1)
 	if hour == 23 {
 		away = "0-23"
@@ -429,17 +513,82 @@ func TestAutoChatSpeaksInQuietSpaceOnly(t *testing.T) {
 	if _, err := h.UpdateRoom(r.ID, RoomPatch{AutoChatHours: ref(away)}); err != nil {
 		t.Fatal(err)
 	}
-	h.AutoChatTick(later(11 * time.Minute))
+	h.AutoChatTick(later(41 * time.Minute))
 	noMoreCalls(t, ps[0])
 	if _, err := h.UpdateRoom(r.ID, RoomPatch{AutoChatHours: ref(""), AgentsPaused: ref(true)}); err != nil {
 		t.Fatal(err)
 	}
-	h.AutoChatTick(later(11 * time.Minute))
+	h.AutoChatTick(later(41 * time.Minute))
 	noMoreCalls(t, ps[0])
+	if _, err := h.UpdateRoom(r.ID, RoomPatch{AgentsPaused: ref(false)}); err != nil {
+		t.Fatal(err)
+	}
+	h.AutoChatTick(later(31 * time.Minute))
+	noMoreCalls(t, ps[0]) // two unanswered lines: 40 minutes
+	h.AutoChatTick(later(41 * time.Minute))
+	finishCall(nextCall(t, ps[0]), "커피 마시는 중")
+	waitIdle(t, h, r.ID)
+	h.AutoChatTick(later(24 * time.Hour))
+	noMoreCalls(t, ps[0]) // three lines nobody answered: wait for a person
+	noMoreCalls(t, ps[1])
+
+	h.mu.Lock()
+	rs := h.rooms[r.ID]
+	free := h.autoChatSeat(rs, later(3*time.Hour).UnixMilli())
+	rs.room.DailySpeakLimit = 2 // auto lines may use one of each seat's two
+	spent := h.autoChatSeat(rs, later(3*time.Hour).UnixMilli())
+	rs.room.DailySpeakLimit = 0
+	h.mu.Unlock()
+	if free == nil || spent != nil {
+		t.Fatalf("auto chat must leave half of the daily limit to people: %v %v", free, spent)
+	}
 	for _, bad := range []RoomPatch{{AutoChatMinutes: ref(5)}, {AutoChatHours: ref("18-9")}, {AutoChatHours: ref("아침")}} {
 		if _, err := h.UpdateRoom(r.ID, bad); err == nil {
 			t.Fatalf("accepted %+v", bad)
 		}
+	}
+}
+
+// Review 2026-11-03 (Opus55, GLM): a line of chat reads the latest talk, not
+// the whole backlog of a seat that has no session yet.
+func TestAutoChatReadsOnlyRecentTalk(t *testing.T) {
+	h, r, ps := controlledHub(t, "codex")
+	if _, err := h.UpdateRoom(r.ID, RoomPatch{AutoChatMinutes: ref(10)}); err != nil {
+		t.Fatal(err)
+	}
+	_, unsub, err := h.Subscribe(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsub()
+	h.mu.Lock()
+	rs := h.rooms[r.ID]
+	for i := 0; i < 20; i++ {
+		rs.nextMessage("system", "system", fmt.Sprintf("옛 이야기 %02d", i))
+	}
+	h.mu.Unlock()
+	h.AutoChatTick(time.Now().Add(11 * time.Minute))
+	call := nextCall(t, ps[0])
+	if !strings.Contains(call.opts.Prompt, "옛 이야기 19") || strings.Contains(call.opts.Prompt, "옛 이야기 07") {
+		t.Fatalf("auto chat history: %s", call.opts.Prompt)
+	}
+	finishCall(call, "네")
+	waitIdle(t, h, r.ID)
+}
+
+// Review 2026-11-03 (Opus55): an approved task result is one seat's work, not
+// a room rule. It must not join every seat's standing brief.
+func TestApprovedTaskStaysOutOfBriefs(t *testing.T) {
+	h, r, _ := controlledHub(t, "codex")
+	h.mu.Lock()
+	rs := h.rooms[r.ID]
+	rs.decisions = append(rs.decisions,
+		Decision{ID: "d1", Text: "보존 기간은 30일", Status: "active", At: 1},
+		Decision{ID: "d2", Text: "과제 결과: 디스크 경고 설계", Status: "active", Task: "q1", At: 2})
+	got := rs.activeDecisionTexts(rs.room.Seq)
+	h.mu.Unlock()
+	if len(got) != 1 || got[0] != "보존 기간은 30일" {
+		t.Fatalf("brief decisions %q", got)
 	}
 }
 

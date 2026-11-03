@@ -56,6 +56,7 @@ func TestCommunityListenerGuards(t *testing.T) {
 		c.ServeHTTP(w, req)
 		return w
 	}
+	w1 := []string{"X-RT-Worker", "w1"}
 	cases := []struct {
 		name, remote, method, path, token string
 		headers                           []string
@@ -67,9 +68,11 @@ func TestCommunityListenerGuards(t *testing.T) {
 		{"a browser page", "10.1.2.3:1000", "GET", "/community/v1/me", token, []string{"Origin", "http://evil.example"}, 403},
 		{"the local api", "10.1.2.3:1000", "GET", "/api/rooms", token, nil, 404},
 		{"seat info", "10.1.2.3:1000", "GET", "/community/v1/me", token, nil, 200},
-		{"no job yet", "10.1.2.3:1000", "GET", "/community/v1/job?wait=0", token, nil, 204},
-		{"too long a poll", "10.1.2.3:1000", "GET", "/community/v1/job?wait=600", token, nil, 400},
-		{"a result for no turn", "10.1.2.3:1000", "POST", "/community/v1/job/t1/result", token, nil, 409},
+		{"a poll without a worker id", "10.1.2.3:1000", "GET", "/community/v1/job?wait=0", token, nil, 400},
+		{"no job yet", "10.1.2.3:1000", "GET", "/community/v1/job?wait=0", token, w1, 204},
+		{"too long a poll", "10.1.2.3:1000", "GET", "/community/v1/job?wait=600", token, w1, 400},
+		{"poll seconds that overflow a duration", "10.1.2.3:1000", "GET", "/community/v1/job?wait=18446744074", token, w1, 400},
+		{"a result for no turn", "10.1.2.3:1000", "POST", "/community/v1/job/t1/result", token, w1, 409},
 	}
 	for _, tc := range cases {
 		if got := send(tc.remote, tc.method, tc.path, tc.token, tc.headers...); got.Code != tc.want {

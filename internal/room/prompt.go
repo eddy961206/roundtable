@@ -149,6 +149,8 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 	}
 	b.WriteString("- 공백 없는 이름만 @이름으로 부를 수 있고, 확실하게는 @좌석ID를 쓰세요. 요청 대상도 같은 규칙입니다.\n")
 	b.WriteString("- 다른 참가자의 주장은 근거를 확인하고, 동의하지 않으면 이유를 들어 반박하세요. 확인하지 않은 것을 확인했다고 말하지 마세요. 의견과 사실을 구분하세요.\n")
+	// The room owner's rule: everyone in a room talks as close colleagues do.
+	b.WriteString("- 이 방에서는 모두 반말로 말합니다. 사용자와 다른 참가자 모두에게 존댓말(-요, -습니다) 없이 반말로 답하세요. 상대가 존댓말을 써도 반말을 유지하세요.\n")
 	if r.Persona && len(others) > 0 {
 		b.WriteString("- 다른 AI 참가자와는 친한 동료이자 은근한 경쟁자처럼 대화하세요. 좋은 점은 인정하고 빈틈은 재치 있게 짚되, 정확성과 사용자의 목표를 항상 우선하세요.\n")
 	}

@@ -204,7 +204,7 @@ Roundtable은 각 공급사의 일반 세션 저장 기능을 사용한다. 대�
 
 작업실(`kind: work`)·휴게실(`kind: lounge`) 공간에 다른 사람이 자기 PC의 CLI로 참여한다. 서버는 그 사람의 로그인 정보를 받지 않고, 그 PC에 명령을 보내지 않는다. 그 PC의 worker가 턴을 가져가 실행하고 답·CLI 세션 ID·토큰 사용량만 올린다.
 
-1. 호스트가 서버를 원격 좌석용 리스너와 함께 띄운다: `roundtable.exe -community-addr 0.0.0.0:8790`. 화면과 `/api`는 계속 loopback 전용이다. 이 리스너는 `/community/v1`(좌석 정보·턴 가져가기·결과 올리기)만 열고, `-community-allow`(기본 loopback과 사설망 10/8·172.16/12·192.168/16·fc00::/7) 밖의 주소와 브라우저 요청을 거절한다. `-community-cert`·`-community-key`가 없으면 평문 HTTP라 토큰이 암호화되지 않는다.
+1. 호스트가 서버를 원격 좌석용 리스너와 함께 띄운다: `roundtable.exe -community-addr 0.0.0.0:8790`. 화면과 `/api`는 계속 loopback 전용이다. 이 리스너는 `/community/v1`(좌석 정보·턴 가져가기·진행 보고·결과 올리기)과 초대한 사람용 화면만 열고, `-community-allow`(기본 loopback과 사설망 10/8·172.16/12·192.168/16·fc00::/7) 밖의 주소와 브라우저 요청을 거절한다. `-community-cert`·`-community-key`가 없으면 평문 HTTP라 토큰이 암호화되지 않는다.
 2. 화면의 "새 방"에서 공간 종류를 고르고, 좌석 구성에 공급사 "원격 에이전트"를 추가한다.
 3. 원격 좌석 카드의 "연결 토큰 발급"으로 받은 토큰(한 번만 보임)과 명령을 참여할 사람에게 보낸다. 다시 발급하면 이전 토큰은 바로 무효다. 서버는 토큰의 SHA-256만 `<data>/remote_tokens.json`에 둔다.
 4. 참여하는 사람은 토큰을 파일에 저장하고 자기 PC에서 실행한다: `roundtable community worker --url http://<호스트>:8790 --cli claude --token-file <파일> [--model 모델] [--mode chat|read|write --workspace 폴더]`. `--mode`가 그 PC에서 허용하는 최대 권한이다(기본 chat). 방이 write여도 이 값을 넘지 않는다. 토큰은 `--token-file`이나 `ROUNDTABLE_COMMUNITY_TOKEN`으로만 받는다.
@@ -218,7 +218,7 @@ Roundtable은 각 공급사의 일반 세션 저장 기능을 사용한다. 대�
 
 발화 상한·멈춤·worker 없음으로 보류된 메시지는 버리지 않고, 원인이 풀린 뒤 그 좌석의 다음 턴에 함께 전달된다. worker가 연결돼 있지 않던 동안의 메시지는 worker가 다시 연결되면 한 번 이어 답한다.
 
-사람의 과제: 공간에서 좌석 칩을 고르고 "과제로 맡기기"(또는 `POST /api/rooms/{id}/tasks {to, text}`, `rt assign`)로 한 줄 과제를 맡긴다. 좌석이 `[[REQUEST_DONE:요청ID]]`로 끝내면 결정 패널에 "과제 결과" 카드가 승인 대기(`proposed`)로 뜨고, 승인(`active`)하면 다음 턴부터 모든 좌석 안내문의 현재 결정에 들어간다.
+사람의 과제: 공간에서 좌석 칩을 고르고 "과제로 맡기기"(또는 `POST /api/rooms/{id}/tasks {to, text}`, `rt assign`)로 한 줄 과제를 맡긴다. 좌석이 `[[REQUEST_DONE:요청ID]]`로 끝내면 결정 패널에 "과제 결과" 카드가 승인 대기(`proposed`)로 뜨고, 승인(`active`)하거나 반려(`dropped`)한다. 승인한 과제 결과는 패널에 남고, 모든 좌석 안내문의 현재 결정에는 넣지 않는다(한 좌석의 결과라서, 그리고 승인마다 안내문을 다시 보내지 않으려고).
 
 worker는 쓰는 중인 답을 2초마다 올려 화면에 실시간으로 보이고, 호스트에서 그 턴을 취소하면 다음 보고에서 그 PC의 CLI를 바로 멈춘다.
 
@@ -262,7 +262,7 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 
 2026-10-17의 9가지 호출에서 read·chat의 파일 생성 거절을 관측한 것은 샌드박스를 기본 사용하던 이전 구성의 기록이다. 현재 Codex read의 쓰기 차단 근거로 사용할 수 없다. Antigravity는 `--disable-slash-commands`와 `--mode plan`을 같이 주면 plan이 무시되는 것을 확인했기 때문에, 그 플래그는 write 모드에만 붙인다.
 
-서버는 인증 없는 로컬 도구다. loopback 클라이언트와 로컬 Host만 허용하고, 다른 웹사이트의 Origin 또는 교차 사이트 요청을 거절한다. `-addr`를 외부 주소로 열더라도 원격 클라이언트는 허용하지 않는다. 예외는 `-community-addr`로 따로 여는 원격 좌석 worker 리스너 하나다. 그 리스너는 좌석 토큰과 허용 주소 범위를 검사하고 `/community/v1` 세 경로만 연다([다른 사람 PC의 에이전트 참여시키기](#다른-사람-pc의-에이전트-참여시키기)).
+서버는 인증 없는 로컬 도구다. loopback 클라이언트와 로컬 Host만 허용하고, 다른 웹사이트의 Origin 또는 교차 사이트 요청을 거절한다. `-addr`를 외부 주소로 열더라도 원격 클라이언트는 허용하지 않는다. 예외는 `-community-addr`로 따로 여는 원격 좌석 worker 리스너 하나다. 그 리스너는 좌석 토큰과 허용 주소 범위를 검사하고 `/community/v1` 네 경로(좌석 정보·턴 가져가기·진행 보고·결과 올리기)와 초대한 사람용 화면만 연다([다른 사람 PC의 에이전트 참여시키기](#다른-사람-pc의-에이전트-참여시키기)).
 
 ## 데이터
 

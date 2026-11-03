@@ -7,6 +7,8 @@ package worker
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +40,7 @@ type Config struct {
 	Log       *log.Logger
 	retryBase time.Duration // first wait before re-uploading a result; 0 is a second
 	reportGap time.Duration // time between progress reports; 0 is reportEvery
+	id        string        // this process, sent as X-RT-Worker (set by Run)
 }
 
 // reportEvery is how often a running turn reports its answer so far. The
@@ -77,6 +80,11 @@ func Run(ctx context.Context, c Config) error {
 		return err
 	}
 	c.URL = strings.TrimRight(c.URL, "/")
+	raw := make([]byte, 8)
+	if _, err := rand.Read(raw); err != nil {
+		return err
+	}
+	c.id = hex.EncodeToString(raw)
 	var me room.RemoteSeatView
 	if err := c.call(ctx, http.MethodGet, "/community/v1/me", nil, &me); err != nil {
 		return err
@@ -176,13 +184,24 @@ func (c Config) report(ctx context.Context, cancel context.CancelFunc, turn stri
 	}
 	tick := time.NewTicker(gap)
 	defer tick.Stop()
+	sent := ""
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
 		}
-		err := c.call(ctx, http.MethodPost, "/community/v1/job/"+url.PathEscape(turn)+"/progress", map[string]string{"text": current()}, nil)
+		// An unchanged answer is not sent again: the empty report only keeps
+		// this worker's claim on the turn and asks whether it still runs.
+		text := current()
+		body := ""
+		if text != sent {
+			body = text
+		}
+		err := c.call(ctx, http.MethodPost, "/community/v1/job/"+url.PathEscape(turn)+"/progress", map[string]string{"text": body}, nil)
+		if err == nil {
+			sent = text
+		}
 		var status httpError
 		if errors.Is(err, ErrUnauthorized) || (errors.As(err, &status) && status.code < 500) {
 			c.Log.Printf("턴 %s를 호스트가 더 이상 실행하지 않아 이 PC의 CLI를 멈춤: %v", turn, err)
@@ -267,6 +286,7 @@ func (c Config) call(ctx context.Context, method, path string, body, into any) e
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("X-RT-Worker", c.id)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

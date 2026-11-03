@@ -155,6 +155,7 @@ function bindUI() {
     target: () => state.target,
     label: participantLabel,
     pick: (id) => setTarget(id, true),
+    canSend: () => true,
     showDecisions: showDecisionsPanel,
   });
   $("#form-room").onsubmit = onRoomSubmit;

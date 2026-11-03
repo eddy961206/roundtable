@@ -152,7 +152,7 @@ func runCommunity(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	logger := log.New(os.Stderr, "", log.LstdFlags)
-	err := worker.Run(ctx, worker.Config{URL: *url, Token: token, Provider: prov, Model: *model, Effort: *effort, Workspace: *workspace, Scratch: scratch, MaxMode: *mode, Once: *once, Client: &http.Client{}, Log: logger})
+	err := worker.Run(ctx, worker.Config{URL: *url, Token: token, Provider: prov, Model: *model, Effort: *effort, Workspace: *workspace, Scratch: scratch, MaxMode: *mode, Once: *once, Client: &http.Client{Timeout: 2 * room.MaxRemoteWait}, Log: logger})
 	if err != nil && ctx.Err() == nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

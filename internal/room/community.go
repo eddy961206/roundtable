@@ -101,11 +101,20 @@ func validateSpeakGuards(r *Room) error {
 // recently says a line. It obeys the pause, the daily limit, the speak
 // interval and the input budgets, and it calls nobody, so the token cost is
 // at most one turn per quiet interval per space.
+//
+// Lines nobody answers cost tokens for nothing (review 2026-11-03, after AI
+// Town, which stops its world without viewers): auto chat speaks only while
+// someone has the space open, each unanswered line doubles the quiet time
+// before the next, and after autoChatStreak of them it waits for a person or
+// a called turn. Auto lines use at most half of a seat's daily limit, so a
+// person can still call the seat.
 const (
-	minAutoChat = 10
-	maxAutoChat = 24 * 60
+	minAutoChat     = 10
+	maxAutoChat     = 24 * 60
+	autoChatStreak  = 3
+	autoChatHistory = 12 // newest messages an auto chat turn reads
 	// AutoChatPrompt follows the new messages of an auto chat turn.
-	AutoChatPrompt = "(자율 잡담) 사람이 부르지 않았지만 공간이 조용해서 당신 차례가 왔습니다. 위 대화에 이어 한두 문장으로 가볍게 말하세요. 새로 할 말이 없으면 \"커피 마시는 중\"처럼 아주 짧게 답하세요. 이번 턴에는 다른 참가자를 부르거나 일을 맡기지 마세요."
+	AutoChatPrompt = "(자율 잡담) 사람이 부르지 않았지만 공간이 조용해서 당신 차례가 왔습니다. 위 대화에 이어 이 공간의 규칙대로 짧게 말하세요. 직전 잡담과 같은 화제는 되풀이하지 말고, 새로 할 말이 없으면 \"커피 마시는 중\"처럼 한마디만 하세요. 이번 턴에는 다른 참가자를 부르거나 일을 맡기지 마세요."
 )
 
 // chatHours reads "9-18" (from 9:00 to before 18:00); "" is any time.
@@ -129,14 +138,18 @@ func (h *Hub) AutoChatTick(now time.Time) {
 	for _, rs := range h.rooms {
 		r := rs.room
 		from, to, _ := chatHours(r.AutoChatHours)
-		if r.AutoChatMinutes == 0 || r.AgentsPaused || len(rs.running) > 0 || len(rs.queue) > 0 || now.Hour() < from || now.Hour() >= to {
+		if r.AutoChatMinutes == 0 || r.AgentsPaused || len(rs.subs) == 0 || len(rs.running) > 0 || len(rs.queue) > 0 || now.Hour() < from || now.Hour() >= to {
+			continue
+		}
+		streak := rs.autoStreak()
+		if streak >= autoChatStreak {
 			continue
 		}
 		last := r.CreatedAt
 		if n := len(rs.msgs); n > 0 {
 			last = rs.msgs[n-1].TS
 		}
-		if now.UnixMilli()-last < int64(r.AutoChatMinutes)*60_000 {
+		if now.UnixMilli()-last < int64(r.AutoChatMinutes)*60_000<<streak {
 			continue
 		}
 		if p := h.autoChatSeat(rs, now.UnixMilli()); p != nil {
@@ -152,7 +165,11 @@ func (h *Hub) autoChatSeat(rs *roomState, now int64) *Participant {
 	var pick *Participant
 	var pickAt int64
 	for _, p := range rs.room.enabled() {
-		if seatHeld(p) || rs.budgetHold(p) != "" || rs.speakHold(p) != "" || (p.Provider == RemoteProvider && !h.remoteOnline(rs, p)) {
+		// A seat with a part at work would get the line in its part session.
+		if seatHeld(p) || rs.budgetHold(p) != "" || rs.speakHold(p) != "" || rs.activePart(p.ID) != nil || (p.Provider == RemoteProvider && !h.remoteOnline(rs, p)) {
+			continue
+		}
+		if limit := rs.room.DailySpeakLimit; limit > 0 && rs.autoRepliesSince(p.ID, now-24*time.Hour.Milliseconds())*2 >= limit {
 			continue
 		}
 		last := rs.lastReplyAt(p.ID)
@@ -178,6 +195,32 @@ func (h *Hub) RunAutoChat(ctx context.Context) {
 			h.AutoChatTick(now)
 		}
 	}
+}
+
+// autoStreak counts the auto chat lines at the end of the space, with no
+// other reply or person's message after them.
+func (rs *roomState) autoStreak() int {
+	n := 0
+	for i := len(rs.msgs) - 1; i >= 0; i-- {
+		m := rs.msgs[i]
+		if m.Kind == "agent" && m.Reason == "auto" {
+			n++
+		} else if m.Kind == "agent" || m.Kind == "user" {
+			break
+		}
+	}
+	return n
+}
+
+// autoRepliesSince counts the seat's auto chat lines started at or after since (ms).
+func (rs *roomState) autoRepliesSince(seat string, since int64) int {
+	n := 0
+	for i := len(rs.msgs) - 1; i >= 0 && rs.msgs[i].TS >= since; i-- {
+		if m := rs.msgs[i]; m.Kind == "agent" && m.Author == seat && m.Reason == "auto" {
+			n++
+		}
+	}
+	return n
 }
 
 // lastReplyAt is when the seat's latest reply started (ms); 0 when it has none.

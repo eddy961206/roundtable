@@ -156,7 +156,7 @@ func (h *Hub) SpaceKind(roomID string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	rs, ok := h.rooms[roomID]
-	if !ok || rs.room.Kind == "" {
+	if !ok || rs.room.Kind == "" || rs.room.Archived {
 		return "", fmt.Errorf("공간 없음: %s", roomID)
 	}
 	return rs.room.Kind, nil

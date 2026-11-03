@@ -1500,6 +1500,9 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		p.LastSeen, p.Unseen = seen, unseen
 		return nil
 	}
+	if t.Reason == "auto" && len(hist) > autoChatHistory {
+		hist = hist[len(hist)-autoChatHistory:] // a line of chat needs the latest talk, not the backlog
+	}
 	decisions := rs.activeDecisionTexts(cap)
 	brief := briefKey(standingBrief(rs.room, p, decisions, h.scratch))
 	forked := first && p.Fork != nil

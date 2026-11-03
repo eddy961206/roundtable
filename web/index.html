@@ -206,6 +206,9 @@
             <span class="sv-tools">
               <button type="button" id="sv-left" class="icon-btn" aria-label="왼쪽으로 돌리기" title="왼쪽으로 돌리기">⟲</button>
               <button type="button" id="sv-right" class="icon-btn" aria-label="오른쪽으로 돌리기" title="오른쪽으로 돌리기">⟳</button>
+              <button type="button" id="sv-zoom-out" class="icon-btn" aria-label="작게 보기" title="작게 보기 (Ctrl+휠)">−</button>
+              <button type="button" id="sv-zoom-in" class="icon-btn" aria-label="크게 보기" title="크게 보기 (Ctrl+휠)">+</button>
+              <button type="button" id="sv-replay" aria-pressed="false" title="최근 대화 20개를 한 메시지씩 말풍선으로 다시 봅니다. 토큰을 쓰지 않습니다.">▶ 다시 보기</button>
               <button type="button" id="sv-reset" title="처음 각도와 크기로">정면</button>
               <button type="button" id="sv-close" class="icon-btn" aria-label="3D 보기 닫기" title="대화 보기로 돌아가기">✕</button>
             </span>
@@ -213,7 +216,7 @@
           <div id="sv-attn" class="sv-attn" role="status" aria-live="polite" aria-label="지금 상태와 할 일"></div>
           <div id="sv-stage" class="sv-stage" tabindex="0" aria-label="3D 사무실. 왼쪽·오른쪽 화살표로 돌립니다.">
             <div id="sv-world" class="sv-world"></div>
-            <p class="sv-legend" aria-hidden="true"><span class="sv-legend-glow"></span> 답하는 중 · <b>!</b> 승인 필요 · ⏱ 차례 대기 · ⏸ 보류 · 📡 다른 PC · 💬 지난 말(올리면 보임) · 고리 = 다음 메시지 대상</p>
+            <p class="sv-legend" aria-hidden="true"><span class="sv-legend-glow"></span> 답하는 중 · <b>!</b> 승인 필요 · ⏱ 차례 대기 · ⏸ 보류 · 📡 다른 PC · 💬 지난 말 · <span class="sv-legend-link"></span> 부른 상대 · 고리 = 다음 메시지 대상</p>
           </div>
         </section>
         <button type="button" id="btn-jump-bottom" class="jump-bottom-btn" aria-label="맨 아래로 이동" title="맨 아래로 이동" hidden>

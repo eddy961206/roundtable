@@ -87,6 +87,7 @@ async function openSpace(id) {
   renderSpaces();
   $("#pp-empty").hidden = true;
   await reload();
+  if (id !== openSpaceId) return; // another space opened while this one loaded
   if (stream) stream.close();
   stream = new EventSource("/people/api/spaces/" + encodeURIComponent(id) + "/stream");
   stream.onmessage = () => {
@@ -143,6 +144,13 @@ function renderApprovals() {
     const li = el("li", "pp-card-item waiting");
     li.appendChild(el("div", "pp-card-text", d.text));
     li.appendChild(el("div", "muted small-note", seatLabel(d.by) + (d.evidence ? " · " + d.evidence : "")));
+    // Approve on what the seat wrote, not on its title: a seat can claim
+    // work it did not do (AI Village's fabrication reports).
+    const answer = snap.messages.find((m) => m.id === d.source_msg);
+    if (answer) {
+      const said = plain(answer.text);
+      li.appendChild(el("blockquote", "pp-card-answer", said.length > 280 ? said.slice(0, 279) + "…" : said));
+    }
     if (me.role === "member") {
       const row = el("div", "pp-card-actions");
       const ok = el("button", "primary pp-approve", "승인");
@@ -225,11 +233,11 @@ bindSpaceView({
   decisions: () => (snap ? snap.decisions : []),
   target: () => target,
   label: seatLabel,
+  canSend: () => !!me && me.role === "member",
   pick: (id) => {
     target = id;
     if (snap) renderComposer();
     scheduleSpaceView();
-    if (me && me.role === "member") $("#pp-input").focus();
   },
   showDecisions: () => {
     $("#pp-approvals").scrollIntoView({ block: "center" });

@@ -29,8 +29,11 @@ const (
 	// so its messages are delivered by the seat's next turn.
 	remoteClaimTimeout = 2 * time.Minute
 	MaxRemoteWait      = 60 * time.Second // longest single job poll
-	maxRemoteText      = 256 << 10
-	remoteTokenPrefix  = "rtc_"
+	// A claimed job stays with its worker while that worker reports within
+	// this time (it reports every 2 s); after it, another poll takes it over.
+	remoteLease       = 15 * time.Second
+	maxRemoteText     = 256 << 10
+	remoteTokenPrefix = "rtc_"
 )
 
 // ErrRemoteAuth is a missing, unknown or revoked connection token.
@@ -88,6 +91,8 @@ type RemoteResult struct {
 type remoteSlot struct {
 	job     *RemoteJob
 	claimed bool
+	by      string    // the worker process (X-RT-Worker) that holds the claimed job
+	beat    time.Time // its last claim or report
 	polling int
 	wake    chan struct{} // closed when a job is offered
 }
@@ -133,6 +138,15 @@ func (s *Store) saveRemoteTokens(tokens map[string]remoteToken) error {
 	return os.Rename(tmp, s.remoteTokensPath())
 }
 
+// releaseSlot forgets a slot nobody uses: no job and no waiting poll. Slots
+// of finished turns, removed seats and deleted rooms do not pile up in a
+// long-running server. Caller holds h.mu.
+func (h *Hub) releaseSlot(key string, sl *remoteSlot) {
+	if h.remote[key] == sl && sl.job == nil && sl.polling == 0 {
+		delete(h.remote, key)
+	}
+}
+
 func (h *Hub) slot(key string) *remoteSlot {
 	sl := h.remote[key]
 	if sl == nil {
@@ -173,10 +187,17 @@ func (h *Hub) IssueRemoteToken(roomID, seat string) (string, error) {
 		return "", err
 	}
 	token := remoteTokenPrefix + hex.EncodeToString(raw)
+	// The seat's earlier token goes, and so do tokens of deleted rooms and
+	// removed seats, so the file and the map do not keep dead entries.
 	next := map[string]remoteToken{}
 	for hash, t := range h.remoteTokens {
-		if t.Room != roomID || t.Seat != seat {
-			next[hash] = t
+		if t.Room == roomID && t.Seat == seat {
+			continue
+		}
+		if other, ok := h.rooms[t.Room]; ok {
+			if q := other.room.participant(t.Seat); q != nil && !q.Removed {
+				next[hash] = t
+			}
 		}
 	}
 	next[hashToken(token)] = remoteToken{Room: roomID, Seat: seat, At: nowMs()}
@@ -230,13 +251,15 @@ func (h *Hub) RemoteMe(token string) (RemoteSeatView, error) {
 	return RemoteSeatView{Room: rs.room.ID, RoomTitle: rs.room.Title, Kind: rs.room.Kind, Mode: rs.room.Mode, Seat: p.ID, Label: p.Label, Enabled: p.Enabled}, nil
 }
 
-// claim hands the slot's job to the polling worker. A job already claimed is
-// handed again: its worker restarted while it ran. Caller holds h.mu.
-func (sl *remoteSlot) claim() *RemoteJob {
-	if sl.job == nil {
+// claim hands the slot's job to the polling worker. A job another worker holds
+// is handed over only when that worker stopped reporting: it restarted while
+// the turn ran. A second worker started with the same token does not run the
+// turn twice. Caller holds h.mu.
+func (sl *remoteSlot) claim(worker string, now time.Time) *RemoteJob {
+	if sl.job == nil || (sl.claimed && sl.by != worker && now.Sub(sl.beat) < remoteLease) {
 		return nil
 	}
-	sl.claimed = true
+	sl.claimed, sl.by, sl.beat = true, worker, now
 	job := *sl.job
 	job.done = nil
 	return &job
@@ -245,7 +268,7 @@ func (sl *remoteSlot) claim() *RemoteJob {
 // RemoteNext is one worker poll: the seat's job, or nil after wait. A poll
 // marks the worker online, and the first poll after turns were dropped while
 // it was away queues one catch-up turn for the messages it missed.
-func (h *Hub) RemoteNext(ctx context.Context, token string, wait time.Duration) (*RemoteJob, error) {
+func (h *Hub) RemoteNext(ctx context.Context, token, worker string, wait time.Duration) (*RemoteJob, error) {
 	h.mu.Lock()
 	if h.closing {
 		h.mu.Unlock()
@@ -259,7 +282,7 @@ func (h *Hub) RemoteNext(ctx context.Context, token string, wait time.Duration) 
 	key := remoteKey(rs.room.ID, p.ID)
 	sl := h.slot(key)
 	h.remoteSeen(rs, p)
-	if job := sl.claim(); job != nil {
+	if job := sl.claim(worker, time.Now()); job != nil {
 		h.mu.Unlock()
 		return job, nil
 	}
@@ -284,13 +307,17 @@ func (h *Hub) RemoteNext(ctx context.Context, token string, wait time.Duration) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	sl.polling--
+	defer h.releaseSlot(key, sl) // runs before the unlock
 	// The token may have been re-issued, or the seat removed, while this poll
 	// waited: a revoked poll must not take the next job (PR #4 review).
 	if _, _, err := h.remoteSeat(token); err != nil {
 		return nil, err
 	}
 	h.remoteSeen(rs, p)
-	return sl.claim(), nil
+	if ctx.Err() != nil {
+		return nil, ctx.Err() // nobody reads the answer: a job claimed now would wait for its lease
+	}
+	return sl.claim(worker, time.Now()), nil
 }
 
 func (rs *roomState) queued(seat string) bool {
@@ -314,7 +341,7 @@ func (h *Hub) remoteSeen(rs *roomState, p *Participant) {
 }
 
 // RemoteFinish takes a worker's answer for the job it claimed.
-func (h *Hub) RemoteFinish(token, turn string, res RemoteResult) error {
+func (h *Hub) RemoteFinish(token, worker, turn string, res RemoteResult) error {
 	if len(res.Text) > maxRemoteText {
 		return fmt.Errorf("답이 너무 김: 최대 %dKB", maxRemoteText>>10)
 	}
@@ -325,7 +352,7 @@ func (h *Hub) RemoteFinish(token, turn string, res RemoteResult) error {
 		return err
 	}
 	sl := h.remote[remoteKey(rs.room.ID, p.ID)]
-	if sl == nil || sl.job == nil || sl.job.Turn != turn || !sl.claimed {
+	if sl == nil || sl.job == nil || sl.job.Turn != turn || !sl.claimed || sl.by != worker {
 		return fmt.Errorf("%w: %s", ErrRemoteTurnGone, turn)
 	}
 	sl.job.done <- res // buffered; the slot drops the job once runRemote reads it
@@ -336,7 +363,7 @@ func (h *Hub) RemoteFinish(token, turn string, res RemoteResult) error {
 // RemoteProgress takes the answer a worker has written so far. An error tells
 // the worker the turn is no longer its own (cancelled here, timed out, or
 // taken by a newer token), so it stops its CLI instead of spending more tokens.
-func (h *Hub) RemoteProgress(token, turn, text string) error {
+func (h *Hub) RemoteProgress(token, worker, turn, text string) error {
 	if len(text) > maxRemoteText {
 		return fmt.Errorf("답이 너무 김: 최대 %dKB", maxRemoteText>>10)
 	}
@@ -347,8 +374,12 @@ func (h *Hub) RemoteProgress(token, turn, text string) error {
 		return err
 	}
 	sl := h.remote[remoteKey(rs.room.ID, p.ID)]
-	if sl == nil || sl.job == nil || sl.job.Turn != turn || !sl.claimed {
+	if sl == nil || sl.job == nil || sl.job.Turn != turn || !sl.claimed || sl.by != worker {
 		return fmt.Errorf("%w: %s", ErrRemoteTurnGone, turn)
+	}
+	sl.beat = time.Now()
+	if text == "" {
+		return nil // a report with nothing new keeps the lease only
 	}
 	select { // keep only the newest report; runRemote reads it soon
 	case <-sl.job.progress:
@@ -371,11 +402,17 @@ func (h *Hub) runRemote(ctx context.Context, job *RemoteJob, emit func(agent.Eve
 	job.progress = make(chan string, 1)
 	shown := "" // the part of the answer already streamed into the reply
 	h.mu.Lock()
-	sl := h.slot(remoteKey(job.Room, job.Seat))
+	key := remoteKey(job.Room, job.Seat)
+	sl := h.slot(key)
 	sl.job, sl.claimed = job, false
 	close(sl.wake)
 	sl.wake = make(chan struct{})
 	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.releaseSlot(key, sl)
+	}()
 	drop := func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -395,10 +432,7 @@ func (h *Hub) runRemote(ctx context.Context, job *RemoteJob, emit func(agent.Eve
 				shown = text
 			}
 		case res := <-job.done:
-			if res.Error != "" {
-				return agent.Result{Text: res.Text, SessionID: res.SessionID, Usage: res.Usage}, errors.New("원격 worker 실행 오류: " + res.Error)
-			}
-			return agent.Result{Text: res.Text, SessionID: res.SessionID, Usage: res.Usage}, nil
+			return remoteAnswer(res)
 		case <-ctx.Done():
 			drop()
 			return agent.Result{}, ctx.Err()
@@ -407,9 +441,22 @@ func (h *Hub) runRemote(ctx context.Context, job *RemoteJob, emit func(agent.Eve
 			claimed := sl.claimed && sl.job == job
 			h.mu.Unlock()
 			if !claimed {
+				select {
+				case res := <-job.done: // finished just as the timer fired
+					return remoteAnswer(res)
+				default:
+				}
 				drop()
 				return agent.Result{}, fmt.Errorf("원격 worker가 %s 안에 턴을 가져가지 않음", remoteClaimTimeout)
 			}
 		}
 	}
+}
+
+func remoteAnswer(res RemoteResult) (agent.Result, error) {
+	out := agent.Result{Text: res.Text, SessionID: res.SessionID, Usage: res.Usage}
+	if res.Error != "" {
+		return out, errors.New("원격 worker 실행 오류: " + res.Error)
+	}
+	return out, nil
 }

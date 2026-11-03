@@ -72,6 +72,10 @@ func (c *Community) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "브라우저 요청은 받지 않음", http.StatusForbidden)
 		return
 	}
+	if worker && r.URL.Path != "/community/v1/me" && r.Header.Get(workerHeader) == "" {
+		http.Error(w, workerHeader+" 헤더(worker 프로세스 식별자)가 필요함", http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
 	if !worker { // the people page: its own scripts only, never inside another site's frame
@@ -90,6 +94,10 @@ func (c *Community) allowed(ip net.IP) bool {
 	}
 	return false
 }
+
+// workerHeader names the worker process; a token's second worker must not take
+// the first one's running turn (room.RemoteNext).
+const workerHeader = "X-RT-Worker"
 
 func bearer(r *http.Request) string {
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -121,13 +129,13 @@ func (c *Community) job(w http.ResponseWriter, r *http.Request) {
 	wait := 30 * time.Second
 	if raw := r.URL.Query().Get("wait"); raw != "" {
 		seconds, err := strconv.Atoi(raw)
-		if err != nil || seconds < 0 || time.Duration(seconds)*time.Second > room.MaxRemoteWait {
+		if err != nil || seconds < 0 || seconds > int(room.MaxRemoteWait/time.Second) {
 			writeErr(w, 400, fmt.Errorf("wait는 0~%d초여야 함", int(room.MaxRemoteWait.Seconds())))
 			return
 		}
 		wait = time.Duration(seconds) * time.Second
 	}
-	job, err := c.hub.RemoteNext(r.Context(), bearer(r), wait)
+	job, err := c.hub.RemoteNext(r.Context(), bearer(r), r.Header.Get(workerHeader), wait)
 	if err != nil {
 		writeRemoteErr(w, err)
 		return
@@ -145,7 +153,7 @@ func (c *Community) result(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	if err := c.hub.RemoteFinish(bearer(r), r.PathValue("turn"), res); err != nil {
+	if err := c.hub.RemoteFinish(bearer(r), r.Header.Get(workerHeader), r.PathValue("turn"), res); err != nil {
 		writeRemoteErr(w, err)
 		return
 	}
@@ -162,7 +170,7 @@ func (c *Community) progress(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	if err := c.hub.RemoteProgress(bearer(r), r.PathValue("turn"), body.Text); err != nil {
+	if err := c.hub.RemoteProgress(bearer(r), r.Header.Get(workerHeader), r.PathValue("turn"), body.Text); err != nil {
 		writeRemoteErr(w, err)
 		return
 	}

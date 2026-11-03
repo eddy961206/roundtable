@@ -152,7 +152,10 @@ func (rs *roomState) activeDecisionTexts(cap int64) []string {
 	}
 	var picked []int
 	for i, d := range rs.decisions {
-		if d.Status == "active" && (d.SourceMsg == "" || sources[d.SourceMsg] <= cap) {
+		// An approved task result is one seat's finished work, not a rule
+		// for the room: in every seat's brief it would grow the brief and
+		// resend it to all seats on each approval (review 2026-11-03).
+		if d.Status == "active" && d.Task == "" && (d.SourceMsg == "" || sources[d.SourceMsg] <= cap) {
 			picked = append(picked, i)
 		}
 	}

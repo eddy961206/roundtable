@@ -177,9 +177,11 @@ func (c *slowCLI) Run(ctx context.Context, o agent.RunOptions, emit func(agent.E
 func TestWorkerReportsProgressAndStopsCancelledTurn(t *testing.T) {
 	var mu sync.Mutex
 	var reports []string
+	workers := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
+		workers[r.Header.Get("X-RT-Worker")] = true
 		switch r.URL.Path {
 		case "/community/v1/me":
 			_, _ = w.Write([]byte(`{"room":"r","seat":"s"}`))
@@ -217,8 +219,12 @@ func TestWorkerReportsProgressAndStopsCancelledTurn(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(reports) < 2 || reports[0] != "쓰는 중" {
+	// The unchanged answer is not sent again; the empty report keeps the claim.
+	if len(reports) < 2 || reports[0] != "쓰는 중" || reports[1] != "" {
 		t.Fatalf("progress reports %q", reports)
+	}
+	if len(workers) != 1 || workers[""] {
+		t.Fatalf("worker ids %v: every request carries this process's one id", workers)
 	}
 }
 

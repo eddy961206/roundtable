@@ -179,6 +179,79 @@ func TestPeopleAccess(t *testing.T) {
 	}
 }
 
+// Review 2026-11-03 (Terra61): an archived space is closed to people, a
+// revoked person's open stream ends, a logout needs the page header, and one
+// invite cannot fill the memory with sessions.
+func TestPeopleAccessLimits(t *testing.T) {
+	store, _ := room.NewStore(t.TempDir())
+	hub, err := room.NewHub(store, agent.NewRegistry(echoProvider{}), t.TempDir(), log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = hub.Shutdown(context.Background()) })
+	space, err := hub.CreateRoom(room.RoomSpec{Title: "휴게실", Kind: room.KindLounge, Mode: agent.ModeChat, Participants: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := hub.CreateRoom(room.RoomSpec{Title: "지난 공간", Kind: room.KindWork, Mode: agent.ModeChat, Participants: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archived := true
+	if _, err := hub.UpdateRoom(old.ID, room.RoomPatch{Archived: &archived}); err != nil {
+		t.Fatal(err)
+	}
+	member, token, err := hub.InvitePerson("부장님", room.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow, _ := ParseAllow(DefaultCommunityAllow)
+	c := NewCommunity(hub, allow, fstest.MapFS{"people.html": {Data: []byte("<html>people</html>")}})
+
+	first := &peopleClient{t: t, c: c}
+	first.login(token)
+	if w := first.do("GET", "/people/api/spaces/"+old.ID, ""); w.Code != 404 {
+		t.Fatalf("an archived space: %d", w.Code)
+	}
+	if w := first.do("POST", "/people/logout", ""); w.Code != 403 {
+		t.Fatalf("a logout without the page header: %d", w.Code)
+	}
+	for i := 0; i < maxPersonSessions; i++ {
+		(&peopleClient{t: t, c: c}).login(token)
+	}
+	if w := first.do("GET", "/people/api/me", ""); w.Code != 401 {
+		t.Fatalf("the oldest of too many sessions must end: %d", w.Code)
+	}
+
+	watcher := &peopleClient{t: t, c: c}
+	watcher.login(token)
+	ts := httptest.NewServer(c)
+	t.Cleanup(ts.Close)
+	req, _ := http.NewRequest("GET", ts.URL+"/people/api/spaces/"+space.ID+"/stream", nil)
+	req.AddCookie(&http.Cookie{Name: personCookie, Value: watcher.cookie})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("stream %v %v", resp, err)
+	}
+	defer resp.Body.Close()
+	ended := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		close(ended)
+	}()
+	if err := hub.RevokePerson(member.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.PostUser(space.ID, "취소 뒤 새 말", ""); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a revoked person's stream kept receiving the space's changes")
+	}
+}
+
 // markerProvider is a seat that proposes a decision card in every answer.
 type markerProvider struct{ echoProvider }
 
