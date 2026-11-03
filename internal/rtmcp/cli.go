@@ -159,10 +159,13 @@ func (s *Server) cliUsage(w io.Writer) {
 	fmt.Fprintln(w, "사용법: roundtable rt [--url http://127.0.0.1:8787] <명령> [--인자 값 ...]")
 	fmt.Fprintln(w, "결과는 한 줄 JSON(stdout). 실패하면 사유를 stderr에 쓰고 종료 코드 1(검증·실행) 또는 2(명령 형식). 문자열 값 - 는 stdin에서 읽음.")
 	fmt.Fprintln(w, "명령:")
+	// One line a command keeps the list cheap to read (the full descriptions
+	// are about as long as the MCP tool list); <명령> --help has the rest.
 	for _, t := range s.tools() {
-		fmt.Fprintf(w, "  %-15s %s\n", strings.TrimPrefix(t.Name, "rt_"), t.Description)
+		first, _, _ := strings.Cut(t.Description, ". ")
+		fmt.Fprintf(w, "  %-15s %s\n", strings.TrimPrefix(t.Name, "rt_"), first)
 	}
-	fmt.Fprintln(w, "명령별 인자: roundtable rt <명령> --help")
+	fmt.Fprintln(w, "명령별 설명·인자: roundtable rt <명령> --help")
 }
 
 func toolUsage(w io.Writer, t tool) {

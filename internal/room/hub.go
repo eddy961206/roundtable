@@ -1494,13 +1494,13 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		cap = max(cap, p.HistoryFrom)
 	}
 	hist, seen, unseen := rs.deltaFor(p, first, cap)
-	if len(hist) == 0 && t.Reason != "discussion" && t.Reason != "handoff" && t.Reason != "auto" && len(rs.pendingNotices(p.ID, "")) == 0 {
+	if len(hist) == 0 && t.Reason != "discussion" && t.Reason != "handoff" && !autoReason(t.Reason) && len(rs.pendingNotices(p.ID, "")) == 0 {
 		// No CLI call is needed to acknowledge own/filtered messages. Keep
 		// unfinished replies as holes for a later cap to deliver exactly once.
 		p.LastSeen, p.Unseen = seen, unseen
 		return nil
 	}
-	if t.Reason == "auto" && len(hist) > autoChatHistory {
+	if autoReason(t.Reason) && len(hist) > autoChatHistory {
 		hist = hist[len(hist)-autoChatHistory:] // a line of chat needs the latest talk, not the backlog
 	}
 	decisions := rs.activeDecisionTexts(cap)
@@ -1514,7 +1514,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 		tc.TotalRounds, tc.BlindFirst = rs.disc.Total, rs.disc.Blind
 	}
 	prompt := BuildPrompt(rs.room, p, hist, tc)
-	if t.Reason == "handoff" || t.Reason == "auto" {
+	if t.Reason == "handoff" || autoReason(t.Reason) {
 		prompt += "\n\n" + t.prompt
 	}
 	opts := agent.RunOptions{Prompt: prompt, SessionID: p.SessionID, Model: p.Model, Effort: p.Effort, Mode: rs.room.Mode, Workspace: rs.room.Workspace, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
@@ -1985,9 +1985,12 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if workDone && msg.Status == "done" && pr.stopGen == rs.stopGen {
 		h.submitAsync(rs, pr.part.ID)
 	}
-	// An auto chat turn calls nobody: the banter grows one quiet interval at a
-	// time, never as a chain of turns (community.go).
-	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" && t.Reason != "auto" {
+	// An auto line calls at most one seat, which answers once and calls
+	// nobody: the banter grows one quiet interval at a time (community.go).
+	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason == "auto" {
+		h.autoChain(rs, msg, t)
+	}
+	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" && !autoReason(t.Reason) {
 		h.chainMentions(rs, msg, t)
 	}
 	if pr.stopGen == rs.stopGen && t.Reason == "discussion" {
@@ -2260,5 +2263,5 @@ func workspaceMissing(o agent.RunOptions) error {
 	if info, err := os.Stat(o.Workspace); err == nil && info.IsDir() {
 		return nil
 	}
-	return fmt.Errorf("작업 폴더가 없어 실행하지 않았어: %s (지워졌거나 옮겨졌으면 같은 경로에 다시 만들거나 새 방을 만들어)", o.Workspace)
+	return fmt.Errorf("작업 폴더가 없어 실행하지 않았어: %s (옮겨졌으면 rt update_room --room 방 --workspace 새폴더로 세션을 유지한 채 바꾸고, 지워졌으면 같은 경로에 다시 만들어)", o.Workspace)
 }

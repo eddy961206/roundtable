@@ -195,6 +195,7 @@ function renderFeed() {
     head.appendChild(el("strong", "", who));
     if (m.target) head.appendChild(el("span", "muted", " → " + seatLabel(m.target)));
     if (m.reason === "auto") head.appendChild(el("span", "badge", "☕ 자율 잡담"));
+    if (m.reason === "auto-reply") head.appendChild(el("span", "badge", "☕ 자율 대화"));
     head.appendChild(el("span", "muted", " " + new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })));
     li.appendChild(head);
     const body = m.status === "streaming" && !plain(m.text) ? "답하는 중…" : m.status === "error" ? "⚠ 답하지 못함" : plain(m.text);

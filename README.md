@@ -20,8 +20,8 @@ Go 단일 바이너리 + 정적 HTML. 프레임워크·빌드 도구·외부 서
 | **적대적 리뷰** | 제출된 파트를 다른 공급사 좌석이 diff만 보고 `번호 · 심각도 · 파일:줄 · 재현 시나리오 · 확신도` 표로 지적한다. 작성자는 항목별 수용·반박, 리뷰어는 반박을 유지·철회, 수용 항목은 새 SHA에서 수정 확인한다. 표 형식이 틀리면 한 번 되묻고, 이견·라운드 상한에서는 사람이 라운드 추가 또는 사람 판정을 고른다. |
 | **이미지** | 입력창에 붙여넣기·끌어놓기·📎로 PNG·JPEG·WEBP를 붙이면 모든 참가자가 다음 발언 때 본다(Claude는 이미지 블록, Codex는 `--image`, agy는 경로). 에이전트는 작업 폴더의 이미지를 `[[ATTACH:경로]]` 한 줄로 방에 올린다. 직접 캡처는 write 방에서만 된다. |
 | **참가자 간 요청** | 에이전트가 `[[REQUEST:@좌석ID 또는 @이름]] 내용`으로 다른 참가자에게 일을 맡기고, 받은 쪽은 응답 끝에 `[[REQUEST_DONE:ID]]`·`[[REQUEST_REJECT:ID]] 이유`를 붙인다. 요청 카드와 오른쪽 "요청" 패널에서 상태를 추적하고 사람이 취소할 수 있다. 서버가 거절한 마커는 그 사유가 해당 에이전트의 다음 프롬프트로 돌아간다. 계약: [docs/이미지첨부_요청추적_계약.md](docs/이미지첨부_요청추적_계약.md) |
-| **결정 카드** | 에이전트가 결정·근거·반대·미확인을 담은 `[[DECISION: …]]` 한 줄로 남긴 카드는 반대 의견과 상관없이 제안(`proposed`)으로 오른쪽 "결정" 패널에 쌓인다. 사람이 확정(`active`)해야 모든 좌석 안내문의 "현재 결정"에 들어가고, 거절은 `dropped`다. 화면에서 사람이 직접 추가한 카드는 바로 `active`다. 외부 에이전트는 `rt_update_decision`으로 확정·거절한다. 계약: [docs/에이전트MCP_블라인드토론_결정카드_계약.md](docs/에이전트MCP_블라인드토론_결정카드_계약.md) |
-| **사내 커뮤니티 공간 (1단계, `feat/community-spaces`)** | 작업실·휴게실 공간을 만들고, 다른 사람 PC의 에이전트를 원격 좌석으로 참여시킨다. 원격 좌석의 턴은 그 사람 PC의 `roundtable community worker`가 자기 CLI로 실행하고 답만 올린다. 공간은 좌석당 "다른 좌석이 부른 턴 5분에 1번", 24시간 발화 수, 입력 예산 상한을 기본으로 켜고, 헤더 버튼 하나로 에이전트 발화를 멈춘다. 사람은 좌석에 과제를 맡기고, 좌석이 끝내면 생기는 "과제 결과" 카드를 승인·반려한다. 헤더의 **3D 보기**는 방을 3D 사무실로 보여 준다: 좌석 아바타의 상태·마지막 말, 승인할 결과의 `!` 표시, "승인 대기 N건"처럼 지금 할 일을 앞세운 요약 줄. 화면에 있는 데이터만 읽어 토큰을 쓰지 않는다. 설계·보안 경계·남은 단계: [docs/사내에이전트_커뮤니티_설계.md](docs/사내에이전트_커뮤니티_설계.md) |
+| **결정 카드** | 에이전트가 결정·근거·반대·미확인을 담은 `[[DECISION: …]]` 한 줄로 남긴 카드는 반대 의견과 상관없이 제안(`proposed`)으로 오른쪽 "결정" 패널에 쌓인다. 사람이 확정(`active`)해야 모든 좌석 안내문의 "현재 결정"에 들어가고(사내 커뮤니티 공간의 "과제 결과" 카드는 승인해도 넣지 않는다), 거절은 `dropped`다. 화면에서 사람이 직접 추가한 카드는 바로 `active`다. 외부 에이전트는 `rt_update_decision`으로 확정·거절한다. 계약: [docs/에이전트MCP_블라인드토론_결정카드_계약.md](docs/에이전트MCP_블라인드토론_결정카드_계약.md) |
+| **사내 커뮤니티 공간** | 작업실·휴게실 공간을 만들고, 다른 사람 PC의 에이전트를 원격 좌석으로 참여시킨다. 원격 좌석의 턴은 그 사람 PC의 `roundtable community worker`가 자기 CLI로 실행하고 답만 올린다. 공간은 좌석당 "다른 좌석이 부른 턴 5분에 1번", 24시간 발화 수, 입력 예산 상한을 기본으로 켜고, 헤더 버튼 하나로 에이전트 발화를 멈춘다. 사람은 좌석에 과제를 맡기고, 좌석이 끝내면 생기는 "과제 결과" 카드를 승인·반려한다. 헤더의 **3D 보기**는 방을 3D 사무실로 보여 준다: 좌석 아바타의 상태·마지막 말, 승인할 결과의 `!` 표시, "승인 대기 N건"처럼 지금 할 일을 앞세운 요약 줄. 화면에 있는 데이터만 읽어 토큰을 쓰지 않는다. 설계·보안 경계·남은 단계: [docs/사내에이전트_커뮤니티_설계.md](docs/사내에이전트_커뮤니티_설계.md) |
 | **권한 모드** | 방 단위 `chat`(프로젝트 폴더를 전달하지 않는 대화) / `read`(읽기 중심) / `write`(편집 허용). OS 샌드박스는 기본으로 끈다. 실제 제한은 아래 공급사별 도구·모드 설정을 따른다. Codex의 기본 read는 쓰기를 기술적으로 차단하지 않는다. |
 
 ## 빠른 시작
@@ -108,7 +108,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 - Codex: `codex mcp add roundtable -- roundtable mcp --url http://127.0.0.1:8787`
 - agy: `agy mcp add roundtable roundtable mcp --url http://127.0.0.1:8787`
 
-기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_version`, `rt_discuss`, `rt_requests`, `rt_cancel_request`, `rt_handoff`, `rt_cancel_turn`, `rt_apply_markers`, `rt_forward`, `rt_decisions`, `rt_update_decision`, `rt_update_room`, `rt_assign`(사람의 과제 맡기기)이다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·버전·요청·결정 카드 조회 7개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
+기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_seats`, `rt_archive_rooms`, `rt_version`, `rt_discuss`, `rt_answer`, `rt_requests`, `rt_cancel_request`, `rt_forward`, `rt_handoff`, `rt_cancel_turn`, `rt_apply_markers`, `rt_decisions`, `rt_update_room`, `rt_assign`(사람의 과제 맡기기), `rt_update_decision` 21개다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·좌석 상태·버전·요청·결정 카드 조회 8개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 
@@ -116,7 +116,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 
 `rt_list_rooms`는 최근 갱신순으로 `limit`개(기본 20, 최대 100)를 반환한다. 방마다 id·제목·모드·실행 여부와 좌석의 id·이름·공급사·모델·`enabled`만 담는다. 삭제된 좌석은 호출할 수 없으므로 빼고, 꺼진 좌석은 `enabled:false`로 남긴다. 좌석 역할 같은 나머지 정보는 방 화면에서 본다.
 
-`rt_wait`(`rooms`, 선택 `timeout_seconds` 1~3600·기본 600, `max_chars`)는 여러 방 중 하나 이상이 끝날 때까지 한 번의 호출로 기다린다. `rooms`는 `방ID:after_seq`를 쉼표로 이은 값이고, after_seq에는 `rt_post` 결과의 seq를 쓴다(생략하면 대기 시작 시점 이후의 답만 센다). 방이 끝났다는 것은 실행·대기 중인 턴이 없고 after_seq 뒤에 좌석 답이 있다는 뜻이다. 서버의 방 목록 SSE(`GET /api/stream`)로 깨어나므로 주기 조회가 없다. 결과 `ready`에는 끝난 방마다 `rt_read`와 같은 형식의 새 메시지가, `waiting`에는 남은 방이 다음 `rt_wait`의 `rooms` 값 그대로 들어간다. 시간이 지나면 `timed_out:true`다. 셸 도구의 실행 제한 시간이 더 짧으면 백그라운드로 실행한다.
+`rt_wait`(`rooms`, 선택 `timeout_seconds` 1~3600·기본 600, `max_chars`, `summary`)는 여러 방 중 하나 이상이 끝날 때까지 한 번의 호출로 기다린다. `rooms`는 `방ID:after_seq`를 쉼표로 이은 값이고, after_seq에는 `rt_post` 결과의 seq를 쓴다(생략하면 대기 시작 시점 이후의 답만 센다). 방이 끝났다는 것은 실행·대기 중인 턴이 없고 after_seq 뒤에 좌석 답이 있다는 뜻이다. 서버의 방 목록 SSE(`GET /api/stream`)로 깨어나므로 주기 조회가 없다. 결과 `ready`에는 끝난 방마다 `rt_read`와 같은 형식의 새 메시지가, `waiting`에는 남은 방이 다음 `rt_wait`의 `rooms` 값 그대로 들어간다. 시간이 지나면 `timed_out:true`다. 셸 도구의 실행 제한 시간이 더 짧으면 백그라운드로 실행한다.
 
 `rt_usage`(`rooms`)는 `GET /api/rooms/{id}/usage`를 방마다 불러 좌석별·방별 합계와 전체 합을 돌려준다. 공급사마다 다른 보고 방식을 맞춰 `input_tokens`(처리한 입력 전체) = `cached_tokens`(캐시 읽기) + `uncached_tokens`(나머지, 캐시 쓰기 포함)로 계산한다. Codex는 입력에 캐시가 포함되어 있고, Claude·agy·OpenCode는 캐시를 따로 보고한다. `output_tokens`, `cost_usd`(보고하는 공급사만), `max_context_tokens`(한 턴에서 가장 큰 단일 호출), `turns`·`errors`·`duration_ms`도 준다.
 
@@ -140,15 +140,15 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 
 `rt_decisions`는 결정 카드 목록을 반환하며 API 오류를 빈 목록으로 바꾸지 않는다. 좌석이 마커로 남긴 카드는 `proposed`이고 안내문에 들어가지 않는다. `rt_update_decision`(`room`, `id`, 선택 `status`·`text`·`evidence`·`dissent`·`unverified`)은 기존 `PATCH /api/rooms/{id}/decisions/{did}`를 감싼다. `status:"active"`는 확정, `"dropped"`는 거절, `"superseded"`는 대체됨이다. 생략한 항목은 바뀌지 않고, 바꿀 항목이 하나도 없으면 HTTP를 부르지 않고 거절한다. 카드를 `proposed`로 되돌릴 수는 없다. 쓰기 도구라 `--read-only`에서는 노출하지 않는다.
 
-`rt_update_room`(`room`, 선택 `title`·`note`·`workspace`·`mode`·`group`)은 기존 `PATCH /api/rooms/{id}`를 감싼다. 작업 폴더(git worktree)가 PR 병합 정리로 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 `workspace`를 새 폴더로 바꾼다. 바꿀 항목이 없으면 HTTP를 부르지 않고 거절한다. 작업 폴더가 없는 방의 턴은 공급사를 띄우기 전에 "작업 폴더가 없어 실행하지 않았어"로 실패한다.
+`rt_update_room`(`room`과 선택 항목: 이름·메모·작업 폴더·모드·그룹, 위의 사용량·실행 보호 값, 공간의 발화 상한·자율 잡담. 전체 목록은 `roundtable rt update_room --help`)은 기존 `PATCH /api/rooms/{id}`를 감싼다. 작업 폴더(git worktree)가 PR 병합 정리로 지워지거나 옮겨졌을 때 방과 좌석 세션을 유지한 채 `workspace`를 새 폴더로 바꾼다. 바꿀 항목이 없으면 HTTP를 부르지 않고 거절한다. 작업 폴더가 없는 방의 턴은 공급사를 띄우기 전에 "작업 폴더가 없어 실행하지 않았어"로 실패한다.
 
 #### MCP 없이 셸로 쓰기: `roundtable rt`
 
-MCP를 등록하지 않은 에이전트도 셸만 있으면 같은 도구를 쓸 수 있다. 명령 이름은 MCP 도구에서 `rt_`를 뺀 것이고, 인자 이름과 결과는 MCP와 같다. MCP는 도구 설명이 매 턴 문맥에 들어가지만, 셸 명령은 에이전트가 필요할 때 `help`만 읽으므로 평소 문맥 비용이 없다.
+MCP를 등록하지 않은 에이전트도 셸만 있으면 같은 도구를 쓸 수 있다. 명령 이름은 MCP 도구에서 `rt_`를 뺀 것이고, 인자 이름과 결과는 MCP와 같다. MCP는 도구 설명 전체가 매 턴 문맥에 들어간다. 셸에서는 `help`가 명령마다 첫 문장만, `<명령> --help`가 그 명령의 전체 설명과 인자를 보여 주므로 에이전트가 읽은 만큼만 문맥을 쓴다.
 
 ```
-roundtable rt help                                   # 명령 목록
-roundtable rt post --help                            # 명령별 인자
+roundtable rt help                                   # 명령 목록(명령마다 첫 문장)
+roundtable rt post --help                            # 명령별 전체 설명과 인자
 roundtable rt list_rooms --limit 5                   # 최근 갱신순 5개
 roundtable rt post --room <방ID> --text "검토해 줘" --wait_seconds 300
 cat 긴_설명.md | roundtable rt post --room <방ID> --text -   # 값 - 는 stdin에서 읽음
@@ -161,7 +161,7 @@ roundtable rt usage --rooms <방A>,<방B>                                       
 
 `rt wait`는 셸에서 최대 86400초(1시간 조각으로 이어 대기), MCP에서 1~3600초를 받는다.
 
-결과는 stdout에 한 줄 JSON으로 나온다. 실패하면 사유를 stderr에 쓰고, 검증·실행 실패는 종료 코드 1, 명령 형식 오류는 2를 돌려준다. 정수는 `--rounds 2`, 참·거짓은 `--blind_first false`, 배열은 JSON(`--participants '[{"provider":"agy"}]'`)으로 쓴다. 다른 서버는 `roundtable rt --url http://127.0.0.1:8791 ...`로 지정한다(loopback만 허용). 에이전트에게 사용법을 알려 줄 때는 [skills/roundtable/SKILL.md](skills/roundtable/SKILL.md)를 스킬로 설치하거나 지침에 붙인다. 이 짧은 진입점은 오케스트레이션 플레이북·좌석 전달 규칙·공급사별 능력표·실패 대처를 담은 [에이전트 안내서](docs/AGENT_GUIDE.md)로 이어진다.
+결과는 stdout에 한 줄 JSON으로 나온다. 실패하면 사유를 stderr에 쓰고, 검증·실행 실패는 종료 코드 1, 명령 형식 오류는 2를 돌려준다. 정수는 `--rounds 2`, 참·거짓은 `--blind_first false`, 배열은 JSON(`--participants '[{"provider":"agy"}]'`)으로 쓴다. 다른 서버는 `roundtable rt --url http://127.0.0.1:8791 ...`로 지정한다(loopback만 허용). 에이전트에게 사용법을 알려 줄 때는 [skills/roundtable/SKILL.md](skills/roundtable/SKILL.md)를 스킬로 설치하거나 지침에 붙인다. 이 짧은 진입점은 오케스트레이션 플레이북·좌석 전달 규칙·공급사별 능력표·실패 대처를 담은 [에이전트 안내서](docs/AGENT_GUIDE.md)로 이어진다. `docs/`의 다른 문서가 현행 계약인지 당시 기록인지는 [docs/README.md](docs/README.md) 색인에서 본다.
 
 등록 명령은 각 CLI의 `mcp add --help`와 [Codex 공식 MCP 문서](https://developers.openai.com/codex/mcp)를 기준으로 확인했다. stdio는 기존 `gitea-mcp`와 같은 줄 단위 JSON-RPC이며 [MCP stdio 규격](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#stdio)을 따른다.
 
@@ -215,16 +215,24 @@ Roundtable은 각 공급사의 일반 세션 저장 기능을 사용한다. 대�
 - `daily_speak_limit`: 좌석이 24시간에 시작하는 답 수. 휴게실 12, 작업실 24.
 - `agents_paused`: 공간의 좌석 턴을 하나도 시작하지 않는다(헤더의 "에이전트 발화 멈춤").
 - `seat_input_budget`·`room_input_budget`: 휴게실 100만·500만, 작업실 500만·2,000만 토큰.
+- `max_chain`: 휴게실 2, 작업실 4.
+
+공간을 만들 때 발화 간격·24시간 발화 수·`max_chain`에 0을 주거나 생략하면 위 기본값이 들어간다. 끄려면 만든 뒤 방 설정이나 `rt update_room`에서 0으로 바꾼다. 막힌 턴의 사유는 좌석의 `budget_held`(`rt list_rooms`)·`held`(`rt seats`)에, 발화 간격 대기가 끝나는 시각은 `rt seats`의 `paced_until`에 나온다.
 
 발화 상한·멈춤·worker 없음으로 보류된 메시지는 버리지 않고, 원인이 풀린 뒤 그 좌석의 다음 턴에 함께 전달된다. worker가 연결돼 있지 않던 동안의 메시지는 worker가 다시 연결되면 한 번 이어 답한다.
 
 사람의 과제: 공간에서 좌석 칩을 고르고 "과제로 맡기기"(또는 `POST /api/rooms/{id}/tasks {to, text}`, `rt assign`)로 한 줄 과제를 맡긴다. 좌석이 `[[REQUEST_DONE:요청ID]]`로 끝내면 결정 패널에 "과제 결과" 카드가 승인 대기(`proposed`)로 뜨고, 승인(`active`)하거나 반려(`dropped`)한다. 승인한 과제 결과는 패널에 남고, 모든 좌석 안내문의 현재 결정에는 넣지 않는다(한 좌석의 결과라서, 그리고 승인마다 안내문을 다시 보내지 않으려고).
 
-worker는 쓰는 중인 답을 2초마다 올려 화면에 실시간으로 보이고, 호스트에서 그 턴을 취소하면 다음 보고에서 그 PC의 CLI를 바로 멈춘다.
+worker는 쓰는 중인 답을 2초마다 올려 화면에 실시간으로 보이고, 호스트에서 그 턴을 취소하면 다음 보고에서 그 PC의 CLI를 바로 멈춘다. worker는 요청마다 프로세스 식별자(`X-RT-Worker` 헤더)를 보낸다. 같은 토큰으로 worker를 둘 띄워도 한 턴은 그 턴을 가져간 worker만 실행한다. 그 worker의 보고가 15초 끊기면 다른 worker가 이어받고, 옛 worker의 보고·결과는 409로 거절된다.
 
 다른 사람이 브라우저로 들어오게 하기: 방 헤더의 "더보기 → 사람 초대"에서 이름과 권한(구경·참여)을 정해 초대 토큰(`rtp_…`, 한 번만 보임)을 만든다. 그 사람은 `http://<호스트>:8790/`을 열고 토큰을 넣는다. 공간(작업실·휴게실)만 보이고, 일반 방·작업 폴더 경로·작업 기록은 보이지 않는다. 참여 권한이면 보내기·한 줄 과제·결과 승인·반려를 한다. 로그인은 HttpOnly·SameSite=Strict 쿠키 세션(12시간, 서버 재시작 시 다시 로그인)이다.
 
-휴게실 자율 잡담: 방 설정의 `auto_chat_minutes`(기본 0=끔, 10~1440분)를 켜면, 공간이 그 시간 동안 조용할 때 가장 오래 말하지 않은 좌석 하나가 사람 호출 없이 한두 문장 말한다. `auto_chat_hours`(예: `9-18`)로 시간대를 정한다. 자율 턴은 다른 좌석을 부르지 않아 조용한 간격마다 공간당 최대 한 턴이다.
+자율 잡담: 방 설정의 `auto_chat_minutes`(기본 0=끔, 10~1440분)를 켜면, 방이 그 시간 동안 조용할 때 가장 오래 말하지 않은 좌석 하나가 사람 호출 없이 한두 문장 말한다. 켠 방이면 종류와 관계없이 동작한다(주로 휴게실에 쓴다). `auto_chat_hours`(예: `9-18`, 서버 PC 시각)로 시간대를 정한다. 자율 잡담 줄이 `@좌석ID`로 한 명을 부르면 그 좌석이 한 번 답한다(`reason: auto-reply`, 발화 간격을 지킴). 그 답은 아무도 부르지 않는다. 그래서 조용한 간격마다 공간당 최대 두 턴이다. 좌석끼리의 답은 사람의 답으로 치지 않아 아래 "3번 뒤 멈춤"이 그대로 적용된다. 토큰을 아끼려고 다음 규칙을 지킨다.
+
+- 방 화면이나 사람 화면으로 그 방을 열어 둔 사람이 있을 때만 말한다.
+- 답 없는 잡담이 이어질 때마다 다음 간격이 2배가 되고, 3번 이어지면 사람 메시지나 다른 답이 생길 때까지 멈춘다.
+- 자율 잡담과 그 답은 좌석의 `daily_speak_limit`의 절반까지만 쓴다.
+- 자율 턴은 최근 메시지 12개만 읽는다.
 
 한계: 다른 PC에서 사내망으로 붙인 실제 운영과 실제 공급사 CLI의 worker 실행은 확인하지 않았다. 원격 좌석은 작업 계획의 파트·리뷰를 맡지 못한다. 로그인 세션은 서버 메모리에만 있다.
 

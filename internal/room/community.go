@@ -99,23 +99,47 @@ func validateSpeakGuards(r *Room) error {
 // until a person turns it on for the space; then, whenever the space has been
 // quiet for AutoChatMinutes within AutoChatHours, the seat that spoke least
 // recently says a line. It obeys the pause, the daily limit, the speak
-// interval and the input budgets, and it calls nobody, so the token cost is
-// at most one turn per quiet interval per space.
+// interval and the input budgets.
+//
+// Seats talk among themselves a little (2026-11-03, "구경하는 맛"): an auto
+// line may call one other seat with @, and that seat answers once
+// ("auto-reply", paced like any called turn). The answer calls nobody, so a
+// quiet interval costs at most two turns per space.
 //
 // Lines nobody answers cost tokens for nothing (review 2026-11-03, after AI
 // Town, which stops its world without viewers): auto chat speaks only while
 // someone has the space open, each unanswered line doubles the quiet time
 // before the next, and after autoChatStreak of them it waits for a person or
-// a called turn. Auto lines use at most half of a seat's daily limit, so a
-// person can still call the seat.
+// a called turn. The seats' own answers to auto lines do not count as an
+// answer: only a person or a called turn ends the streak. Auto lines and
+// their answers use at most half of a seat's daily limit, so a person can
+// still call the seat.
 const (
 	minAutoChat     = 10
 	maxAutoChat     = 24 * 60
 	autoChatStreak  = 3
 	autoChatHistory = 12 // newest messages an auto chat turn reads
 	// AutoChatPrompt follows the new messages of an auto chat turn.
-	AutoChatPrompt = "(자율 잡담) 사람이 부르지 않았지만 공간이 조용해서 당신 차례가 왔습니다. 위 대화에 이어 이 공간의 규칙대로 짧게 말하세요. 직전 잡담과 같은 화제는 되풀이하지 말고, 새로 할 말이 없으면 \"커피 마시는 중\"처럼 한마디만 하세요. 이번 턴에는 다른 참가자를 부르거나 일을 맡기지 마세요."
+	AutoChatPrompt = "(자율 잡담) 사람이 부르지 않았지만 공간이 조용해서 당신 차례가 왔습니다. 위 대화에 이어 이 공간의 규칙대로 짧게 말하세요. 직전 잡담과 같은 화제는 되풀이하지 마세요. 다른 참가자에게 묻거나 농담을 걸고 싶으면 한 명만 @좌석ID로 부르세요. 그 참가자가 한 번 답합니다. 일은 맡기지 마세요. 새로 할 말이 없으면 \"커피 마시는 중\"처럼 한마디만 하세요."
+	// autoReplyPrompt follows the new messages of a seat an auto line called.
+	autoReplyPrompt = "(자율 대화) @%s가 잡담 중에 당신에게 말을 걸었습니다. 이 공간의 규칙대로 짧게 답하세요. 이번 턴에는 다른 참가자를 부르거나 일을 맡기지 마세요."
 )
+
+// autoChain lets an auto line's first @mention answer once. Caller holds h.mu.
+func (h *Hub) autoChain(rs *roomState, msg *Message, t *Turn) {
+	if t.Depth+1 > rs.room.MaxChain {
+		return
+	}
+	for _, id := range msg.mentionIDs(rs.room.Participants) {
+		if p := rs.room.participant(id); p != nil && p.Enabled && !p.Removed && p.ID != msg.Author {
+			rs.enqueue(&Turn{ID: newID(), Agent: id, Reason: "auto-reply", Group: msg.ID, Cap: msg.Seq, Depth: t.Depth + 1, Created: nowMs(), Status: "queued", prompt: fmt.Sprintf(autoReplyPrompt, msg.Author)})
+			return
+		}
+	}
+}
+
+// autoReason tells a reply that auto chat started (a line or its answer).
+func autoReason(reason string) bool { return reason == "auto" || reason == "auto-reply" }
 
 // chatHours reads "9-18" (from 9:00 to before 18:00); "" is any time.
 func chatHours(spec string) (from, to int, err error) {
@@ -203,10 +227,12 @@ func (rs *roomState) autoStreak() int {
 	n := 0
 	for i := len(rs.msgs) - 1; i >= 0; i-- {
 		m := rs.msgs[i]
-		if m.Kind == "agent" && m.Reason == "auto" {
+		switch {
+		case m.Kind == "agent" && m.Reason == "auto":
 			n++
-		} else if m.Kind == "agent" || m.Kind == "user" {
-			break
+		case m.Kind == "agent" && m.Reason == "auto-reply": // a seat's own answer is not an answer from people
+		case m.Kind == "agent" || m.Kind == "user":
+			return n
 		}
 	}
 	return n
@@ -216,7 +242,7 @@ func (rs *roomState) autoStreak() int {
 func (rs *roomState) autoRepliesSince(seat string, since int64) int {
 	n := 0
 	for i := len(rs.msgs) - 1; i >= 0 && rs.msgs[i].TS >= since; i-- {
-		if m := rs.msgs[i]; m.Kind == "agent" && m.Author == seat && m.Reason == "auto" {
+		if m := rs.msgs[i]; m.Kind == "agent" && m.Author == seat && autoReason(m.Reason) {
 			n++
 		}
 	}
@@ -251,7 +277,7 @@ func (rs *roomState) repliesSince(seat string, since int64) int {
 // discussion and work-plan turns run as before.
 func (rs *roomState) paceUntil(p *Participant, t *Turn) int64 {
 	interval := rs.room.SpeakIntervalSeconds
-	if interval == 0 || t.Depth == 0 || t.Reason != "mention" {
+	if interval == 0 || t.Depth == 0 || (t.Reason != "mention" && t.Reason != "auto-reply") {
 		return 0
 	}
 	last := rs.lastReplyAt(p.ID)

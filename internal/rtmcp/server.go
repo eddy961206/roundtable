@@ -21,18 +21,18 @@ import (
 const protocolVersion = "2024-11-05"
 
 // instructions is what an MCP-only agent learns before reading any tool
-// description; the full guide lives in docs/AGENT_GUIDE.md.
+// description; the full guide lives in docs/AGENT_GUIDE.md. Serial position:
+// the rule that saves the most tokens comes first and the one that protects
+// people comes last; the middle does not repeat tool descriptions.
 const instructions = "Roundtable: 서로 다른 공급사의 AI CLI 좌석이 한 방에서 일하는 로컬 서버의 HTTP API.\n" +
-	"- 작업 하나에 방 하나를 쓴다. 작성 좌석과 다른 공급사의 검수 좌석을 같은 방에 두고 [[REQUEST:@좌석ID]]로 직접 주고받게 한다. 오케스트레이터는 검수 원문을 옮기지 말고 판정 줄과 head만 읽는다. 끝난 방에는 더 보내지 않는다.\n" +
+	"- 작업 하나에 방 하나를 쓴다. 작성 좌석과 다른 공급사의 검수 좌석을 같은 방에 두고 [[REQUEST:@좌석ID]]로 직접 주고받게 한다. 오케스트레이터는 원문을 옮기지 않고 판정 줄만 읽는다(rt_wait summary:true, 다른 방 답은 rt_forward). 끝난 방에는 보내지 않고 rt_archive_rooms로 보관한다.\n" +
 	"- 좌석은 이름이 아니라 id로 부른다. target 없이 보낸 메시지는 켜진 좌석 전원을 부른다.\n" +
-	"- 여러 방은 wait_seconds 없이 rt_post하고 받은 seq로 rt_wait(rooms=방:seq,...)를 부른다. 폴링하지 않는다. 판정만 필요하면 rt_wait summary:true. 다른 방의 답은 rt_forward로 원문 그대로 넘긴다(읽고 다시 쓰지 않는다).\n" +
-	"- 작성·검수 방은 rt_create_room quiet_done:true로 만든다. 검수 통과 뒤 작성 좌석이 문맥 전체를 다시 읽으며 \"승인됐어\"만 쓰는 턴이 없어지고, 수정은 검수 좌석의 [[REQUEST:@작성]]으로 그대로 돈다.\n" +
-	"- 좌석 세션이 길어지면(문맥 경보, 작업이 바뀌는 지점) rt_handoff로 인계 요약을 남기고 새 세션으로 바꾼다. 모델 호출마다 문맥 전체를 다시 읽으므로 긴 세션은 턴마다 비싸진다. 여러 방의 좌석 문맥은 rt_seats로 한 번에 본다. 끝난 방은 rt_archive_rooms로 보관한다(삭제 아님).\n" +
-	"- 409 작업 폴더 사용 중은 같은 폴더의 다른 방이 끝난 뒤 다시 보낸다. 좌석의 held_until(한도 오류)·budget_held(입력 예산) 보류 안내가 있으면 같은 좌석으로 곧장 재시도하지 않는다.\n" +
-	"- rt_post의 timed_out은 대기만 종료하며 실행 중인 턴을 취소하지 않는다. timed_out이면 같은 메시지를 다시 보내지 말고 결과의 resume_after_seq를 after_seq로 주어 rt_read로 이어 읽는다(live:true면 기존 답의 seq가 보낸 seq보다 작아 보낸 seq로는 그 답이 빠진다).\n" +
-	"- 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.\n" +
-	"- 좌석이 턴 중 사용자에게 한 질문(Codex request_user_input_async)은 rt_read·rt_wait의 asks, rt_wait의 asking, rt_seats 좌석의 asks에 나온다. 새 질문이 생기면 rt_wait가 asked:true로 일찍 끝난다. 좌석은 답을 기다리지 않고 진행한다. rt_answer로 답하되, 권한·파괴적 작업 승인처럼 사람이 정할 답은 사람에게 확인받는다.\n" +
-	"- 좌석 추가·좌석 켜기는 HTTP 전용이다. 기능 색인·전달 규칙·공급사별 능력·실패 대처는 Roundtable 저장소의 docs/AGENT_GUIDE.md(https://github.com/eddy961206/roundtable/blob/main/docs/AGENT_GUIDE.md)를 읽는다."
+	"- 여러 방은 wait_seconds 없이 rt_post하고 받은 seq로 rt_wait(rooms=방:seq,...)를 부른다. 폴링하지 않는다.\n" +
+	"- timed_out은 대기만 끝낸 것이다. 같은 메시지를 다시 보내지 말고 결과의 resume_after_seq를 after_seq로 주어 rt_read로 이어 읽는다.\n" +
+	"- 좌석이 보류되면(held_until·budget_held·paced_until, 409 작업 폴더 사용 중) 같은 좌석으로 곧장 재시도하지 않고 사유의 다음 행동을 따른다. 세션이 길어지면 rt_handoff.\n" +
+	"- 좌석 안내문에는 '모두 반말' 규칙이 있다. 외부에 게시할 초안을 맡길 때는 지시에 문체를 따로 적는다.\n" +
+	"- 좌석 추가·좌석 켜기는 HTTP 전용이다. 세부는 Roundtable 저장소의 docs/AGENT_GUIDE.md(https://github.com/eddy961206/roundtable/blob/main/docs/AGENT_GUIDE.md) 맨 앞 '읽는 법'에서 필요한 절만 읽는다.\n" +
+	"- 사람이 진행 중인 방이나 공간에서 흐름을 바꾸는 호출(토론 시작·요청 취소·결정 확정·과제 배정·권한을 묻는 좌석 질문에 답하기)은 먼저 사람에게 확인받는다."
 
 type Server struct {
 	base     string

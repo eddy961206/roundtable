@@ -493,16 +493,22 @@ func TestAutoChatSpeaksInQuietSpaceOnly(t *testing.T) {
 		t.Fatalf("the auto turn must say why it speaks: %s", call.opts.Prompt)
 	}
 	finishCall(call, "@codex 커피 한잔 어때요")
-	noMoreCalls(t, ps[1]) // an auto turn calls nobody
+	reply := nextCall(t, ps[1]) // the called seat answers once
+	if !strings.Contains(reply.opts.Prompt, "(자율 대화) @claude가") {
+		t.Fatalf("the called seat must know who talked to it: %s", reply.opts.Prompt)
+	}
+	finishCall(reply, "@claude 좋아, 라떼로")
+	noMoreCalls(t, ps[0]) // the answer calls nobody
 	waitIdle(t, h, r.ID)
 	snap, _ := h.Snapshot(r.ID)
-	if got := snap.Messages[len(snap.Messages)-1]; got.Reason != "auto" {
-		t.Fatalf("the reply must be marked as auto chat: %+v", got)
+	if n := len(snap.Messages); snap.Messages[n-2].Reason != "auto" || snap.Messages[n-1].Reason != "auto-reply" {
+		t.Fatalf("the line and its answer must be marked as auto chat: %+v", snap.Messages[n-2:])
 	}
 	h.AutoChatTick(later(11 * time.Minute))
-	noMoreCalls(t, ps[1]) // one unanswered line: 20 minutes now
+	noMoreCalls(t, ps[0]) // the seats' own answer is no answer: 20 minutes now
+	noMoreCalls(t, ps[1])
 	h.AutoChatTick(later(21 * time.Minute))
-	finishCall(nextCall(t, ps[1]), "좋아요") // the seat that spoke least recently
+	finishCall(nextCall(t, ps[0]), "좋아요") // the seat that spoke least recently
 	waitIdle(t, h, r.ID)
 
 	hour := later(41 * time.Minute).Hour()
@@ -526,7 +532,7 @@ func TestAutoChatSpeaksInQuietSpaceOnly(t *testing.T) {
 	h.AutoChatTick(later(31 * time.Minute))
 	noMoreCalls(t, ps[0]) // two unanswered lines: 40 minutes
 	h.AutoChatTick(later(41 * time.Minute))
-	finishCall(nextCall(t, ps[0]), "커피 마시는 중")
+	finishCall(nextCall(t, ps[1]), "커피 마시는 중")
 	waitIdle(t, h, r.ID)
 	h.AutoChatTick(later(24 * time.Hour))
 	noMoreCalls(t, ps[0]) // three lines nobody answered: wait for a person
@@ -535,7 +541,7 @@ func TestAutoChatSpeaksInQuietSpaceOnly(t *testing.T) {
 	h.mu.Lock()
 	rs := h.rooms[r.ID]
 	free := h.autoChatSeat(rs, later(3*time.Hour).UnixMilli())
-	rs.room.DailySpeakLimit = 2 // auto lines may use one of each seat's two
+	rs.room.DailySpeakLimit = 2 // auto lines and answers may use one of each seat's two
 	spent := h.autoChatSeat(rs, later(3*time.Hour).UnixMilli())
 	rs.room.DailySpeakLimit = 0
 	h.mu.Unlock()

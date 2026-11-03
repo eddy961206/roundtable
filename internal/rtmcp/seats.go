@@ -22,6 +22,7 @@ type seatState struct {
 	Session string `json:"session_id"`
 	Turns   int    `json:"turns"`
 	Held    string `json:"budget_held"`
+	Paced   int64  `json:"paced_until"`
 }
 
 type seatRow struct {
@@ -34,8 +35,10 @@ type seatRow struct {
 	Session bool   `json:"session"`
 	Turns   int    `json:"turns"`
 	Held    string `json:"held,omitempty"`
-	LastSeq int64  `json:"last_seq,omitempty"`
-	Last    string `json:"last,omitempty"`
+	// PacedUntil is when a queued seat's speak interval ends (community spaces).
+	PacedUntil int64  `json:"paced_until,omitempty"`
+	LastSeq    int64  `json:"last_seq,omitempty"`
+	Last       string `json:"last,omitempty"`
 	// Asks are this seat's questions to the person still waiting or open.
 	Asks []askView `json:"asks,omitempty"`
 }
@@ -91,7 +94,7 @@ func (s *Server) seats(ctx context.Context, rooms string, limit int) (any, error
 			if sp.Removed || !sp.Enabled {
 				continue
 			}
-			row := seatRow{ID: sp.ID, Label: sp.Label, Model: sp.Model, Status: sp.Status, Context: sp.Context, Window: sp.Window, Session: sp.Session != "", Turns: sp.Turns, Held: sp.Held}
+			row := seatRow{ID: sp.ID, Label: sp.Label, Model: sp.Model, Status: sp.Status, Context: sp.Context, Window: sp.Window, Session: sp.Session != "", Turns: sp.Turns, Held: sp.Held, PacedUntil: sp.Paced}
 			if m, ok := last[sp.ID]; ok {
 				row.LastSeq = m.Seq
 				row.Last = m.Status + ": " + clipLine(strings.ReplaceAll(summarizeText(m.Text), "\n", " / "), 120)
