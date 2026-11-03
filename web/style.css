@@ -3048,6 +3048,10 @@ dialog.dlg-message { width: min(440px, 94vw); }
 /* Law of proximity: turning, zooming and replay are three groups of tools. */
 .sv-tools #sv-zoom-out, .sv-tools #sv-replay { margin-left: 8px; }
 .sv-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; perspective: 1700px; perspective-origin: 50% 25%; cursor: grab; touch-action: pan-y; } /* a vertical swipe scrolls the page; a sideways drag turns the room */
+/* Dragging turns the room: it must not select the legend and the bubbles' text.
+   The seat card stays selectable, since a person may copy a seat's words. */
+.sv-stage { -webkit-user-select: none; user-select: none; }
+.sv-stage .sv-card { -webkit-user-select: text; user-select: text; }
 .sv-stage:active { cursor: grabbing; }
 .sv-stage:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sv-world { position: absolute; left: 50%; top: 58%; width: 900px; height: 600px; transform-style: preserve-3d; transform-origin: 50% 50%; transition: transform .35s ease; }
