@@ -292,8 +292,11 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 ## 개발
 
 ```bash
-go test ./...
+python tools/check.py        # origin/main 대비 바뀐 영역의 검사 전부 (--all이면 모든 검사)
+go test ./...                # Go 시험만
 ```
+
+push 전 검사를 자동으로 돌리려면 checkout마다 한 번 `git config core.hooksPath .githooks`를 한다. 결함을 고칠 때는 재발 방지 장치를 함께 넣는다([CONTRIBUTING.md](CONTRIBUTING.md#결함-수정과-재발-방지)).
 
 - `internal/agent` — CLI 실행과 스트림 파서. `testdata/` 는 실제 CLI 출력 캡처(로컬 경로 정제).
 - `internal/room` — 방·메시지·대기열·토론·SSE 팬아웃, JSONL 저장.
