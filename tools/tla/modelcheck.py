@@ -76,6 +76,8 @@ def unreached(java, jar, spec, cfg):
     lines = open(os.path.join(HERE, spec + ".tla"), encoding="utf-8").read().rstrip().split("\n")
     end = max(i for i, l in enumerate(lines) if l.startswith("===="))
     config = open(os.path.join(HERE, cfg), encoding="utf-8").read()
+    if "\nINVARIANTS " not in config:
+        sys.exit(f"{cfg}: reach 검사는 한 줄짜리 'INVARIANTS ...' 줄에 불변식을 더함; 그 줄이 없음")
     missed = []
     for i, goal in enumerate(header(os.path.join(HERE, spec + ".tla"), "reach")):
         name = f"Unreached{i}"

@@ -41,7 +41,7 @@ VARIABLES
     q,          \* plan.Queue
     approved,   \* part.Approval is valid
     gone,       \* part.WorktreeRemoved
-    held,       \* Block.From of a blocked part: "queue" (merge side) or "review"
+    held,       \* why a part is blocked: "verify", "queue" (conflict, worktree), "review", "restart" (from reviewing)
     mstep,      \* mergePart goroutine: "none", "verify", "move" (update-ref), "moved", "refused"
     intent,     \* plan.Merging on disk
     tip,        \* commits on the integration branch
@@ -115,7 +115,7 @@ Verified ==
            THEN /\ intent' = SaveIntent /\ mstep' = "move"
                 /\ UNCHANGED <<st, approved, held>>
            ELSE /\ st' = [st EXCEPT ![Front] = "blocked"] /\ approved' = [approved EXCEPT ![Front] = FALSE]
-                /\ held' = [held EXCEPT ![Front] = "queue"]
+                /\ held' = [held EXCEPT ![Front] = "verify"]
                 /\ mstep' = "none" /\ UNCHANGED intent
     /\ UNCHANGED <<q, gone, tip, cleaning, restarts>>
 
@@ -167,12 +167,26 @@ Cleaned ==
     /\ UNCHANGED <<q, approved, held, mstep, intent, tip, restarts, fails>>
     /\ st' = Advance(st, q)
 
-\* The person retries a blocked part: back to Block.From (the queue, or the review).
+\* The person retries a blocked part (RetryPart). verify: the part leaves the
+\* queue for a fix, a new commit and a new review ("reviewing" stands for that
+\* path). A disputed review or a restart in review: the review runs again.
+\* A conflict or a lost worktree: back to the queue.
 Retry(p) ==
     /\ st[p] = "blocked"
-    /\ UNCHANGED <<q, approved, gone, held, intent, tip, cleaning, restarts, fails>>
-    /\ LET s == [st EXCEPT ![p] = IF held[p] = "review" THEN "reviewing" ELSE "queued"]
-           n == Advance(s, q)
+    /\ UNCHANGED <<approved, gone, held, intent, tip, cleaning, restarts, fails>>
+    /\ LET rest == IF held[p] = "verify" THEN SelectSeq(q, LAMBDA x : x # p) ELSE q
+           s == [st EXCEPT ![p] = IF held[p] = "queue" THEN "queued" ELSE "reviewing"]
+           n == Advance(s, rest)
+       IN /\ q' = rest /\ st' = n
+          /\ mstep' = IF StartsMerge(s, n) THEN "verify" ELSE mstep
+
+\* The person waives a blocked review (ResolvePart): the part joins the queue.
+Resolve(p) ==
+    /\ st[p] = "blocked" /\ held[p] = "review"
+    /\ q' = Append(q, p)
+    /\ UNCHANGED <<approved, gone, held, intent, tip, cleaning, restarts, fails>>
+    /\ LET s == [st EXCEPT ![p] = "queued"]
+           n == Advance(s, q')
        IN st' = n /\ mstep' = IF StartsMerge(s, n) THEN "verify" ELSE mstep
 
 Abandon(p) ==
@@ -192,16 +206,19 @@ Restart ==
     /\ LET merging == {p \in Parts : st[p] = "merging"}
            \* With the intent on disk the tip says whether the ref moved.
            landed == intent /\ tip = Cardinality(Merged) + 1
-           s == [p \in Parts |-> IF p \in merging THEN (IF landed THEN "merged" ELSE "blocked") ELSE st[p]]
+           \* A review in progress is lost too: blocked{restart} (recoverWork).
+           s == [p \in Parts |-> IF p \in merging THEN (IF landed THEN "merged" ELSE "blocked")
+                                ELSE IF st[p] = "reviewing" THEN "blocked" ELSE st[p]]
            rest == IF landed THEN Tail(q) ELSE q
        IN /\ q' = rest
-          /\ held' = [p \in Parts |-> IF p \in merging /\ ~landed THEN "queue" ELSE held[p]]
+          /\ held' = [p \in Parts |-> IF p \in merging /\ ~landed THEN "queue"
+                                     ELSE IF st[p] = "reviewing" THEN "restart" ELSE held[p]]
           \* resumeRecoveredWork: advanceQueue now, or after the cleanup it starts.
           /\ st' = IF DueIn(s) THEN s ELSE Advance(s, rest)
     /\ UNCHANGED <<approved, gone, tip, fails>>
 
 Step ==
-    \/ \E p \in Parts : Pass(p) \/ ReviewBlock(p) \/ Approve(p) \/ Retry(p) \/ Abandon(p)
+    \/ \E p \in Parts : Pass(p) \/ ReviewBlock(p) \/ Approve(p) \/ Retry(p) \/ Resolve(p) \/ Abandon(p)
     \/ Verified \/ Move \/ Completed \/ NextMerge \/ CleanupStart \/ Cleaned \/ Restart
 
 Halt == ~ENABLED Step /\ UNCHANGED vars
