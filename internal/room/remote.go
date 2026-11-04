@@ -437,8 +437,13 @@ func (h *Hub) runRemote(ctx context.Context, job *RemoteJob, emit func(agent.Eve
 			drop()
 			return agent.Result{}, ctx.Err()
 		case <-claimTimer.C:
+			// Read and drop under one h.mu hold: a poll between them would take
+			// the turn this then ends as never taken (tools/tla/RemoteLease.tla).
 			h.mu.Lock()
 			claimed := sl.claimed && sl.job == job
+			if !claimed && sl.job == job {
+				sl.job = nil
+			}
 			h.mu.Unlock()
 			if !claimed {
 				select {
@@ -446,7 +451,6 @@ func (h *Hub) runRemote(ctx context.Context, job *RemoteJob, emit func(agent.Eve
 					return remoteAnswer(res)
 				default:
 				}
-				drop()
 				return agent.Result{}, fmt.Errorf("원격 worker가 %s 안에 턴을 가져가지 않음", remoteClaimTimeout)
 			}
 		}
