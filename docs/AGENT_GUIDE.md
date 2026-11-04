@@ -52,7 +52,7 @@
 | 명령 | 언제 쓰나 |
 |---|---|
 | `list_rooms [--limit N] [--include_archived true]` | 방 id·좌석 id·`enabled`를 찾을 때. 좌석은 이름이 아니라 id로 부른다. 보관한 방은 실행 중이 아니면 빠진다. |
-| `seats [--rooms <방>,...] [--limit N]` | 여러 방의 좌석 상태를 한 번에 볼 때(다음 일을 배정하기 전, 인계할 좌석을 고를 때). `ctx`가 수십만이면 `handoff`를 고려한다. `held`는 새 턴을 막은 사유, `paced_until`(ms)은 발화 간격 대기가 끝나는 시각이다. |
+| `seats [--rooms <방>,...] [--limit N]` | 여러 방의 좌석 상태를 한 번에 볼 때(다음 일을 배정하기 전, 인계할 좌석을 고를 때). `ctx`가 수십만이면 `handoff`를 고려한다. `held`는 새 턴을 막은 사유, `paced_until`(ms)은 발화 간격 대기가 끝나는 시각이다. `running` 좌석에는 `activity`(지금 하는 일), `tool`(결과를 아직 못 받은 가장 오래된 도구 호출의 `name`·`input`·`seconds`), `quiet_seconds`(CLI 출력이 없던 초)가 붙고, 10분을 넘으면 `warn`이 붙는다(7절). |
 | `create_room --title --workspace --mode --participants '<JSON>' [--turn_timeout_minutes N] [--quiet_done true] [--max_chain N] [--group 이름]` | 작업 하나에 방 하나를 만들 때. 결과의 좌석 id를 적어 둔다. 작성·검수 방이면 `--quiet_done true`와 왕복에 맞는 `--max_chain`을 준다(6.2). 긴 작성 턴이 예상되면 `--turn_timeout_minutes`(0=기본 45분)를 늘린다. 사내 커뮤니티 공간(`--kind work\|lounge`)은 3.4. |
 | `post --room --text [--target <좌석>] [--wait_seconds N]` | 지시를 보낼 때. 여러 방이면 `--wait_seconds` 없이 보내고 `seq`를 모은다. |
 | `read --room [--after_seq N] [--max_chars N]` | 답 원문을 읽을 때. `after_seq`보다 큰 seq만 나온다. 생략하면 최신부터 20000자다. |
@@ -198,7 +198,7 @@ roundtable 방과 Gitea PR을 오케스트레이터 한 명이 이어 붙이는 
 - **실행 검수 좌석은 write 모드로 둔다.** 변형 시험·main과의 비교·임시 빌드가 필요한 검수는 read 모드로는 못 한다. 지시에 "저장소 파일은 바꾸지 말 것. 임시 파일은 작업 폴더 밖 임시 폴더에 만들 것"을 건다. write 모드의 셸은 쓰기를 기술적으로 막지 않으므로 이 지시가 사실상 유일한 제한이다.
 - OpenCode 검수 좌석은 검수 대상 worktree를 작업 폴더로 준다. 작업 폴더 밖 파일은 read·write 모두 파일 도구로 읽지 못한다.
 - 같은 공급사·모델도 여러 좌석을 둘 수 있다. 한도는 계정 단위라 좌석 수만큼 늘지 않는다.
-- Codex·agy 좌석의 첫 안내문에는 긴 명령을 반복 확인하지 말고 한 번에 기다리라는 규칙이 자동으로 들어간다. 지시에 따로 적지 않는다. 화면에 "재검수 중…" 같은 줄이 반복되면 이 확인 고리다. 근거: [토큰효율_측정_20261028.md](토큰효율_측정_20261028.md) T1·T4(2026-10-28).
+- Codex·agy 좌석의 첫 안내문에는 긴 명령을 반복 확인하지 말고 한 번에 기다리라는 규칙이 자동으로 들어간다. agy 좌석에는 셸 검색 명령에 항상 경로를 주고 입력을 기다리는 명령을 실행하지 말라는 규칙도 들어간다(agy의 `run_command` 셸은 stdin이 닫히지 않는다, 7절). 지시에 따로 적지 않는다. 화면에 "재검수 중…" 같은 줄이 반복되면 이 확인 고리다. 근거: [토큰효율_측정_20261028.md](토큰효율_측정_20261028.md) T1·T4(2026-10-28).
 - 문맥 경보 비율의 분모는 CLI가 보고한 모델 문맥 창이다(Claude는 결과의 `modelUsage[모델].contextWindow`).
 
 ## 6. 오케스트레이터 플레이북
@@ -308,6 +308,7 @@ roundtable rt post --room <방> --target <w1 좌석 id> --text - < task.md
 | "이 방 누적 입력이 …을 넘음"·"문맥이 모델 한도의 n%에 도달" 안내 | 한 세션을 오래 이어 써서 턴마다 입력이 커졌다. | 작업이 바뀌는 지점이면 `rt handoff --room --seat`로 새 세션으로 바꾼다. 경고만 하며 턴은 막지 않는다. 이 안내는 사람·오케스트레이터용이라 좌석 프롬프트에는 들어가지 않는다(`user_only`). |
 | `rt post`·`rt forward`가 409 "작업 폴더 사용 중: 방 …이 같은 작업 폴더 …에서 실행 중" | 같은 폴더를 쓰는 다른 방(둘 중 하나라도 write)이 실행 중이다. | 그 방의 턴이 끝난 뒤(`rt wait`) 다시 보낸다. 이미 대기열에 들어간 턴은 그 방이 끝나면 저절로 시작한다. git 작업 트리 안의 폴더만 잠근다. `.git`이 없는 worktree 모음 폴더(`_worktrees` 등)를 쓰는 방끼리는 함께 실행되니 `tools/orchestrate/worktree_claims.py`로 등록한다. |
 | agy 답 본문은 끝까지 있는데 턴이 `error`(스트림 유휴 시간 초과)이고, 답 안의 `[[REQUEST]]`가 실행되지 않음 | 서버는 오류로 끝난 답의 마커를 스스로 실행하지 않는다(답이 잘렸을 수 있음). | 답을 읽고 끝까지 쓰였으면 `apply_markers --room --seq N`으로 실행한다. 잘렸으면 그 좌석에 다시 시도를 보낸다. |
+| `rt seats`의 `warn`이 "N분째 CLI 출력 없음: 도구 run_command 실행 중…"이거나, 화면 좌석 카드에 "⚠ run_command …째 결과 없음" | 좌석의 셸 명령이 끝나지 않았다. agy의 `run_command` 셸은 stdin 파이프를 닫지 않는다. 그래서 경로 없는 `rg -n 패턴`처럼 stdin을 읽는 명령은 끝없이 기다린다. 2026-11-04에 1시간 54분 멈췄다. roundtable이 agy에 넘긴 stdin과는 무관하다. 같은 명령이 Codex·OpenCode에서는 바로 끝났다. | 먼저 `tool.input`의 명령이 시험·빌드처럼 원래 오래 걸리는 명령인지 확인한다. 입력을 기다리는 명령이면 그 하위 프로세스만 종료한다. Windows에서는 `Get-CimInstance Win32_Process`로 좌석 CLI(`agy.exe`) 아래의 `pwsh`·`rg` 등을 찾는다. 그러면 도구가 실패로 끝나고 턴이 이어진다. CLI 프로세스나 턴은 끊지 않는다. `tool` 없이 `quiet_seconds`만 크면 백그라운드 명령을 기다리는 중일 수 있다. |
 | 턴이 "작업 폴더가 없어 실행하지 않았어"로 실패 | 방의 worktree가 PR 병합 정리 등으로 지워졌다. | `rt update_room --room <방> --workspace <새 폴더>`. 방과 좌석 세션은 유지된다. 실행 중에는 바꿀 수 없다. |
 | HTTP 요청이 400 "UTF-8" 오류로 거절 | Windows `curl -d '{...}'`에 한글을 넣으면 콘솔 코드 페이지 바이트로 넘어간다. 서버는 UTF-8이 아닌 본문을 거절한다. | 본문을 UTF-8 파일로 저장하고 `curl --data-binary @파일`로 보낸다. `rt` 명령은 이 문제가 없다. |
 | 이어 쓰는 좌석의 턴이 연속으로 실패하거나, `rt usage`의 `max_context_tokens`가 모델 문맥 한도 근처 | 세션 문맥이 한도까지 커졌다. | 같은 지시로 재시도하지 않는다. 턴이 아직 성공하면 `rt handoff`로 새 세션으로 바꾼다. 요약 턴마저 실패하면 새 좌석(또는 새 방)으로 바꾸고, 필요한 상태만 지시에 요약해 준다. |

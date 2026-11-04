@@ -20,6 +20,7 @@ type Participant struct {
 	Unseen        []int64        `json:"unseen,omitempty"` // unfinished replies below LastSeen
 	Status        string         `json:"status"`           // idle | queued | running
 	StatusText    string         `json:"status_text"`
+	Tool          *ToolActivity  `json:"tool,omitempty"` // running turn's oldest call without a result (activity.go)
 	Turns         int            `json:"turns"`
 	Usage         map[string]any `json:"usage,omitempty"` // last turn
 	Totals        Totals         `json:"totals"`          // this room, all turns
@@ -197,7 +198,8 @@ type Turn struct {
 	Cap      int64  `json:"cap"`   // inclusive message sequence boundary; discussion reads current history
 	Depth    int    `json:"depth"`
 	Round    int    `json:"round,omitempty"`
-	Status   string `json:"status"` // queued | running
+	Status   string `json:"status"`                // queued | running
+	Quiet    int64  `json:"quiet_since,omitempty"` // running: ms since its CLI produced no event (activity.go)
 	Created  int64  `json:"created"`
 	Part     string `json:"part,omitempty"`  // work part this turn runs for (D9, review)
 	Blind    bool   `json:"blind,omitempty"` // blind first discussion round: runs concurrently and reads only up to Cap

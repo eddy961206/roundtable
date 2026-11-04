@@ -21,6 +21,12 @@ func TestStandingBriefWaitRulePerProvider(t *testing.T) {
 		{"codex", agent.ModeRead, []string{"yield_time_ms"}, nil},
 		{"codex", agent.ModeChat, nil, []string{"yield_time_ms"}},
 		{"claude", agent.ModeWrite, nil, []string{"yield_time_ms", "WaitMsBeforeAsync"}},
+		// agy's run_command shell never sees stdin close (2026-11-04: `rg -n`
+		// without a path waited 1h54m), so its seats always give a search a path.
+		{"agy", agent.ModeWrite, []string{"manage_task", "stdin", `rg -n "패턴" .`}, []string{"yield_time_ms"}},
+		{"agy", agent.ModeRead, []string{"stdin"}, nil},
+		{"agy", agent.ModeChat, nil, []string{"stdin"}},
+		{"codex", agent.ModeWrite, nil, []string{"run_command"}},
 	} {
 		r := &Room{Title: "방", Mode: tc.mode, Workspace: "ws", Participants: []*Participant{{ID: "s", Provider: tc.provider, Label: "S", Enabled: true}}}
 		brief := standingBrief(r, r.Participants[0], nil, "")

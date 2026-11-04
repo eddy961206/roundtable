@@ -171,7 +171,7 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 	default:
 		b.WriteString("- 도구 실행이나 파일 수정 없이 대화로만 답하세요.\n")
 	}
-	if rule := waitRule[me.Provider]; rule != "" && r.Mode != agent.ModeChat {
+	if rule := shellRule[me.Provider]; rule != "" && r.Mode != agent.ModeChat {
 		b.WriteString(rule)
 	}
 	b.WriteString("- 대화에서 쓰인 언어로 답하세요. 채팅에 어울리게 간결하되, 판단에 필요한 근거는 생략하지 마세요.\n")
@@ -179,17 +179,25 @@ func standingBrief(r *Room, me *Participant, decisions []string, scratch string)
 	return b.String()
 }
 
-// waitRule keeps a seat from polling a running command once a second: every
-// poll is a model call that re-reads the whole context (2026-10-28 A/B,
+// shellRule is how a seat runs shell commands with its CLI's tools.
+//
+// Waiting: polling a running command once a second makes every poll a model
+// call that re-reads the whole context (2026-10-28 A/B,
 // docs/토큰효율_측정_20261028.md). Commands that finish sooner still return
 // at once, so a longer wait costs no time.
-var waitRule = map[string]string{
+var shellRule = map[string]string{
 	"codex": "- 시험·빌드처럼 오래 걸릴 수 있는 명령은 exec_command의 yield_time_ms를 30000으로 주세요(먼저 끝나면 바로 돌아옵니다). 그래도 실행 중이면 빈 write_stdin에 yield_time_ms 300000을 줘서 끝날 때까지 한 번에 기다리세요. 1초 간격으로 반복 확인하지 마세요.\n",
 	// agy moves a command past WaitMsBeforeAsync (max 10 s) to a background task and
 	// wakes the model when it ends. Without this rule a Flash seat looped schedule timers
 	// and manage_task status for a 10-minute test: 75 waits, 4.95M input vs 28k with the
 	// rule, same result and time (2026-10-28 T3, docs/토큰효율_측정_20261028.md).
-	"agy": "- 시험·빌드처럼 오래 걸리는 명령이 백그라운드 작업으로 넘어가면, manage_task로 상태를 확인하거나 schedule 타이머를 걸지 마세요. \"실행 중, 끝나면 결과를 보고\" 한 줄만 쓰고 기다리세요. 명령이 끝나면 결과 알림으로 다시 깨어납니다.\n",
+	//
+	// stdin: agy gives run_command a stdin pipe it never closes, whatever stdin
+	// agy itself got. On 2026-11-04 `rg -n "upgrade-history"` without a path read
+	// that pipe for 1h54m until someone killed rg; the same command returned at
+	// once under Codex and OpenCode (docs/AGENT_GUIDE.md 7절).
+	"agy": "- 시험·빌드처럼 오래 걸리는 명령이 백그라운드 작업으로 넘어가면, manage_task로 상태를 확인하거나 schedule 타이머를 걸지 마세요. \"실행 중, 끝나면 결과를 보고\" 한 줄만 쓰고 기다리세요. 명령이 끝나면 결과 알림으로 다시 깨어납니다.\n" +
+		"- run_command의 셸은 입력(stdin)이 닫히지 않아서, 입력을 읽는 명령은 끝나지 않습니다. rg·grep·findstr 같은 검색에는 항상 대상 경로를 주세요(예: rg -n \"패턴\" .). 파일 인자 없는 cat·more, Read-Host, 확인 프롬프트처럼 입력을 기다리는 명령은 실행하지 마세요.\n",
 }
 
 // forkMovedNote leads a forked first turn whose CLI directory differs from the base room's.
@@ -292,7 +300,7 @@ func BuildPartPrompt(plan *WorkPlan, part *Part, role, scratch, provider string)
 	fmt.Fprintf(&b, "- 변경은 branch %s 에 커밋하세요. 커밋하지 않은 변경이나 추적하지 않는 파일이 남아 있으면 제출이 거부됩니다.\n", part.Branch)
 	fmt.Fprintf(&b, "- 파트를 끝냈으면 응답 끝 신호 블록에 %s 한 줄을 쓰세요. 그러면 다른 공급사 참가자가 diff를 리뷰합니다.\n", workDoneSignal)
 	b.WriteString("- 무엇을 바꿨는지 답변에 적으세요.\n")
-	b.WriteString(waitRule[provider])
+	b.WriteString(shellRule[provider])
 	b.WriteString("- UI·화면을 바꾸는 작업이라면 직접 화면을 캡처해 [[ATTACH:캡처.png]]로 올리거나, 이미지 판독·시각 검토에 강점이 있는 좌석에 [[REQUEST:@좌석ID]]로 시각 검토를 요청하세요.\n")
 	b.WriteString(markerBrief(agent.ModeWrite, scratch))
 	return b.String()

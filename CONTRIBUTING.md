@@ -42,6 +42,8 @@ fix 하나에 재발 방지 장치 하나를 붙인다. 2026-11-02 기준 재병
 2. 그 장치가 수정 전 코드에서 실패하고 수정 뒤 통과하는 것을 확인한다. 수정 전에도 통과하는 시험은 결함을 막지 못한다.
 3. 커밋 본문에 장치의 위치를 적는다. 예: `재발 방지: internal/room/marker_fuzz_test.go FuzzQuotedMarkersStayText`.
 4. 장치를 만들 수 없으면(외부 CLI의 일회성 동작 등) 그 이유를 커밋 본문에 적는다.
+5. 원인이 공급사 CLI의 동작이면 그 CLI를 roundtable과 같은 인자·stdin으로 직접 실행해 재현하고, 명령과 관측을 커밋 본문에 적는다. 다른 공급사에서 같은 명령의 결과도 적는다. 장치는 roundtable이 바꿀 수 있는 경계(좌석 안내문, 관측)에 붙인다.
+   - 예: agy의 `run_command` 셸은 stdin이 닫히지 않아 경로 없는 `rg`가 1시간 54분 멈췄다(2026-11-04). agy에는 바꿀 옵션이 없어서 `internal/room/wait_rule_test.go`가 agy 안내문의 규칙을, `internal/rtmcp/seats_test.go`가 `rt seats`의 오래 열린 도구 호출 경고를 지킨다.
 
 예: 안내서의 `rt wait --timeout_seconds 7200`이 도구 상한과 어긋나 실패한 일(9671ae1) 뒤로 `internal/rtmcp/docs_examples_test.go`가 README·AGENT_GUIDE·SKILL·`tools/orchestrate`의 모든 `rt` 예시를 도구 스키마와 대조한다.
 

@@ -1348,6 +1348,9 @@ func (rs *roomState) refreshParticipantStates() {
 				statusText = "생각 중"
 			}
 		}
+		if status != "running" {
+			p.Tool = nil
+		}
 		if p.Status == status && p.StatusText == statusText {
 			continue
 		}
@@ -1700,6 +1703,7 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 	}
 	t.Status = "running"
 	rs.running[t.ID] = &running{turn: t, msg: msg, cancel: cancel, steer: steer, stopGen: rs.stopGen}
+	pr.p.Tool, t.Quiet = nil, time.Now().UnixMilli()
 	rs.broadcast("message", msg)
 	pr.opts.Steer = steer
 	pr.msg, pr.ctx, pr.cancel = msg, ctx, cancel
@@ -1714,6 +1718,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	var emitMu sync.Mutex
 	var tracePersistenceError error
 	compacted := false // a usage report showed the session's context shrink
+	var tools openTools
 	emit := func(e agent.Event) {
 		emitMu.Lock()
 		defer emitMu.Unlock()
@@ -1752,6 +1757,9 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			firstOutput = true
 		}
 		previousStatusText, previousSession := p.StatusText, p.SessionID
+		t.Quiet = time.Now().UnixMilli()
+		tool, toolChanged := tools.observe(e, t.Quiet)
+		p.Tool = tool
 		switch e.Kind {
 		case agent.KindSession:
 			if e.Text != "" {
@@ -1808,7 +1816,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		// participant mutations publish through their own setters. Preserve
 		// every real transition while avoiding full participant JSON encoding
 		// on each token/tool-result event merely to rediscover equal state.
-		if p.StatusText != previousStatusText || p.SessionID != previousSession || e.Kind == agent.KindUsage {
+		if p.StatusText != previousStatusText || p.SessionID != previousSession || toolChanged || e.Kind == agent.KindUsage {
 			rs.broadcast("participant", p)
 		}
 	}

@@ -10,7 +10,7 @@ import { addAttachmentFiles, clearComposerError, clearDraftAttachments, closeLig
 import { applyMention, closeMentionPop, mentionPopup, renderMentionButtons, send, setTarget, updateHint } from "./composer.js";
 import { closeDiffDrawer } from "./work.js";
 import { bindRoomList, bindRoomTitleEdit, closeRoomMenu, connectRoomsFeed, deleteRoom, loadRooms, renderRoomHead, renderRoomList, roomMenuIsOpen } from "./rooms.js";
-import { getAgentElapsedMs, loadRolePresets, renderParticipants } from "./participants.js";
+import { getAgentElapsedMs, loadRolePresets, renderParticipants, updateToolQuiet } from "./participants.js";
 import { ensureAndRenderTrace, expandTrace } from "./trace.js";
 import { bindTimeline, focusTimelineMessage, jumpToLatestMessages, onTimelineImageLoad, renderMessage, renderTimeline, scheduleRender, scrollToTimelineBottom, syncPendingScrollRestore } from "./timeline.js";
 import { connect, openRoom, schedulePanels, upsertRequest } from "./room.js";
@@ -97,6 +97,7 @@ function tickElapsed() {
       node.textContent = "⏱ " + fmtElapsed(ms);
     }
   });
+  $$("[data-tool-since]").forEach(updateToolQuiet);
 }
 
 function bindUI() {

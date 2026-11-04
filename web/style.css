@@ -1278,6 +1278,7 @@ pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 4px 8px;
   border-radius: 6px;
@@ -1288,6 +1289,11 @@ pre:hover .copy, pre .copy:focus-visible { opacity: 1; }
   color: var(--ok);
   border-color: var(--ok);
   background: var(--ok-bg);
+  font-weight: 600;
+}
+.pcard .status-line .tool-quiet {
+  flex-basis: 100%;
+  color: var(--warn);
   font-weight: 600;
 }
 .pcard .status-line.queued {

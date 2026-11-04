@@ -163,6 +163,16 @@ export async function refreshProviderCatalog(button, afterRefresh) {
   finally { button.disabled = false; }
 }
 
+// A tool call without a result for 10 minutes is usually a shell command
+// waiting on input or hung (2026-11-04: agy `rg -n` without a path, 1h54m).
+const TOOL_QUIET_WARN_MS = 10 * 60 * 1000;
+
+export function updateToolQuiet(node) {
+  const ms = Date.now() - Number(node.getAttribute("data-tool-since"));
+  node.hidden = ms < TOOL_QUIET_WARN_MS;
+  node.textContent = "⚠ " + node.getAttribute("data-tool-name") + " " + fmtElapsed(ms) + "째 결과 없음 · 명령이 입력을 기다리거나 멈췄을 수 있음";
+}
+
 export function getAgentElapsedMs(pid) {
   for (let i = state.order.length - 1; i >= 0; i--) {
     const m = state.messages.get(state.order[i]);
@@ -707,6 +717,14 @@ function updateParticipantCardInPlace(card, p, info) {
       const elapSpan = el("span", "elapsed", "⏱ " + fmtElapsed(elapMs || 0));
       elapSpan.setAttribute("data-agent-elapsed", p.id);
       stLine.appendChild(elapSpan);
+      if (p.tool) {
+        const quiet = el("span", "tool-quiet");
+        quiet.setAttribute("data-tool-since", String(p.tool.since));
+        quiet.setAttribute("data-tool-name", p.tool.name);
+        quiet.title = p.tool.name + " " + (p.tool.input || "");
+        stLine.appendChild(quiet);
+        updateToolQuiet(quiet);
+      }
     } else if (p.status === "queued") {
       stMain.textContent = "⏳ 대기열에서 차례 대기 중";
       stLine.appendChild(stMain);

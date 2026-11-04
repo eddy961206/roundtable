@@ -17,6 +17,7 @@ type apiTurn struct {
 	Group  string `json:"group"`
 	Status string `json:"status"`
 	Cap    int64  `json:"cap"`
+	Quiet  int64  `json:"quiet_since"` // running: ms since its CLI produced no event
 }
 
 // Link metadata, not response text or traces, is retained from the existing SSE
