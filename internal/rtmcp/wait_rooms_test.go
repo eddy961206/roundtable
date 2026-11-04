@@ -148,3 +148,42 @@ func TestWaitWithoutSeqIgnoresEarlierReplies(t *testing.T) {
 		t.Fatalf("an earlier reply ended the wait: %v", got)
 	}
 }
+
+// 2026-11-04: a seat answered at seq 2 and the server then added a token
+// warning at seq 3. rt wait --max_chars 50 spent the whole budget on the
+// warning, left the answer out of messages and so never saw the room finish.
+func TestWaitSeesReplyBehindSystemNoticeWithSmallMaxChars(t *testing.T) {
+	hub, s := waitHub(t, func(context.Context, agent.RunOptions) (agent.Result, error) {
+		return agent.Result{Text: "구현을 마쳤어", SessionID: "s", Usage: map[string]any{"input_tokens": 2000.0, "output_tokens": 1.0}}, nil
+	})
+	r, err := hub.CreateRoom(room.RoomSpec{Title: "방", Mode: "chat", Participants: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	warn := int64(1000)
+	if _, err := hub.UpdateRoom(r.ID, room.RoomPatch{InputWarnTokens: &warn}); err != nil {
+		t.Fatal(err)
+	}
+	sent, err := hub.PostUser(r.ID, "구현해", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for snap, _ := hub.Snapshot(r.ID); len(snap.Messages) < 3; snap, _ = hub.Snapshot(r.ID) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no token warning after the reply: %+v", snap.Messages)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	snap, _ := hub.Snapshot(r.ID)
+	if m := snap.Messages; m[1].Kind != "agent" || m[1].Status != "done" || m[2].Kind != "system" || len([]rune(m[2].Text)) <= 50 {
+		t.Fatalf("want reply then a warning longer than max_chars: %+v", m)
+	}
+	for _, summary := range []bool{false, true} {
+		got := callJSON(t, s, "rt_wait", map[string]any{"rooms": r.ID + ":" + strconv.FormatInt(sent.Seq, 10), "timeout_seconds": 1, "max_chars": 50, "summary": summary})
+		ready := got["ready"].([]any)
+		if got["timed_out"] != false || len(ready) != 1 || ready[0].(map[string]any)["next_seq"] != 3.0 || got["waiting"] != "" {
+			t.Fatalf("summary=%v: finished room not ready: %v", summary, got)
+		}
+	}
+}

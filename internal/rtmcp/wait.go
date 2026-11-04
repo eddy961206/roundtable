@@ -181,10 +181,7 @@ func (s *Server) readyRooms(ctx context.Context, targets []waitTarget, maxChars 
 			if err != nil {
 				return nil, "", nil, err
 			}
-			for _, m := range read.Messages {
-				done = done || (m.Kind == "agent" && m.Status != "streaming")
-			}
-			if done {
+			if done = read.replied; done {
 				ready = append(ready, read)
 			}
 		}

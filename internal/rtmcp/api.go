@@ -243,6 +243,9 @@ type readResult struct {
 	// unsettled is the lowest selected seq still streaming or left out whole,
 	// counted even when the message is not in the array; 0 when none.
 	unsettled int64
+	// replied is true when a selected seat reply is no longer streaming, even
+	// when max_chars left it out of the array (rt_wait's finished test).
+	replied bool
 }
 
 func (s *Server) read(ctx context.Context, room string, after, maxChars int64) (*readResult, error) {
@@ -294,6 +297,7 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 				continue
 			}
 			result.NextSeq = max(result.NextSeq, m.Seq)
+			result.replied = result.replied || (m.Kind == "agent" && m.Status != "streaming")
 			if m.Status == "streaming" || remaining == 0 {
 				result.unsettled = m.Seq // pages and messages run newest first
 			}
