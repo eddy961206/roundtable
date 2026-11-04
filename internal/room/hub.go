@@ -1492,7 +1492,7 @@ type prepared struct {
 	part           *Part      // the turn runs in this part's worktree (D9, review)
 	reviewer       bool       // fresh reviewer session that must not be kept (D10)
 	handoffFrom    int64      // HistoryFrom when the turn was built; only a done turn ends the handoff
-	pendingSession string     // session a post-handoff turn reported, committed only when it is done
+	pendingSession string     // session a post-handoff or part bootstrap turn reported, committed only when it is done
 	bootstrap      bool       // first part turn contains plan context only
 	remote         *RemoteJob // a remote seat's job; its prompt is filled in when the turn starts (remote.go)
 }
@@ -1651,6 +1651,8 @@ func (h *Hub) buildReviewTurn(rs *roomState, t *Turn, p *Participant, prov agent
 func (h *Hub) keepSession(rs *roomState, pr *prepared, id string) {
 	switch {
 	case pr.reviewer:
+	case pr.part != nil && pr.bootstrap:
+		pr.pendingSession = id
 	case pr.part != nil:
 		pr.part.SessionID = id
 	case pr.handoffFrom > 0:
@@ -1891,7 +1893,16 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	default:
 		msg.Status = "done"
 	}
-	missingDiscussionSignal := t.Reason == "discussion" && signal == ""
+	// A part bootstrap commits its session all or nothing, as a handoff does: a
+	// failed one leaves the part unstarted, so the part's kickoff turn still
+	// runs as the bootstrap instead of being dropped as already started.
+	if pr.bootstrap && msg.Status == "done" && pr.pendingSession != "" {
+		pr.part.SessionID = pr.pendingSession
+	}
+	// A turn that only bootstrapped the part runs again as itself. Its own
+	// reply answered the plan, not the discussion: the replay casts the vote.
+	replayed := pr.bootstrap && msg.Status == "done" && t.Reason != "part" && t.Reason != "review" && pr.part.SessionID != "" && pr.stopGen == rs.stopGen
+	missingDiscussionSignal := t.Reason == "discussion" && signal == "" && !replayed
 	if missingDiscussionSignal {
 		signal = "CONTINUE"
 	}
@@ -1918,12 +1929,10 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			}
 		}
 	}
-	if msg.Status == "done" && t.Reason != "review" {
-		if pr.bootstrap && t.Reason != "part" && pr.part.SessionID != "" && pr.stopGen == rs.stopGen {
-			replay := *t
-			replay.ID, replay.Status, replay.Created = newID(), "queued", nowMs()
-			rs.enqueueFront(&replay)
-		}
+	if replayed {
+		replay := *t
+		replay.ID, replay.Status, replay.Created = newID(), "queued", nowMs()
+		rs.enqueueFront(&replay)
 	}
 	// Only this invocation's steers count against Result.Steered. Earlier
 	// accepted steers may still lie above this turn's delivery boundary.
@@ -1972,7 +1981,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			msg.Status, msg.Error = "error", fmt.Sprintf("공지 전달 기록 저장 실패: %v", err)
 		}
 	}
-	if t.Reason == "discussion" && msg.Status == "done" {
+	if t.Reason == "discussion" && msg.Status == "done" && !replayed {
 		// Persist a vote only after all completion handlers have succeeded.
 		msg.Signal = signal
 	}
@@ -2023,7 +2032,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	if pr.stopGen == rs.stopGen && !p.Removed && msg.Status == "done" && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" && !autoReason(t.Reason) {
 		h.chainMentions(rs, msg, t)
 	}
-	if pr.stopGen == rs.stopGen && t.Reason == "discussion" {
+	if pr.stopGen == rs.stopGen && t.Reason == "discussion" && !replayed {
 		h.discussionStep(rs, p.ID, signal, msg.Status)
 	}
 	previousStatus, previousText := p.Status, p.StatusText

@@ -453,6 +453,10 @@ func (h *Hub) submitReserved(rs *roomState, part *Part) (*WorkPlan, error) {
 	if rs.deleted {
 		return nil, fmt.Errorf("방 없음: %s", roomID)
 	}
+	if h.closing {
+		// The server stopped while git ran: a closed hub changes no state.
+		return nil, fmt.Errorf("서버가 종료 중이야")
+	}
 	if part.State != from {
 		return nil, fmt.Errorf("%w: 제출 검사 중 파트 %s가 %s 상태로 바뀜", ErrWorkConflict, partID, part.State)
 	}
@@ -591,6 +595,10 @@ func (h *Hub) RetryPart(roomID, partID string) (*WorkPlan, error) {
 	}
 	if fixPrompt != "" {
 		rs.enqueue(&Turn{ID: newID(), Agent: part.Seat, Reason: "part", Part: part.ID, Cap: rs.room.Seq, Created: nowMs(), Status: "queued", prompt: fixPrompt})
+	} else if from == "working" && part.SessionID == "" && !slices.ContainsFunc(rs.queue, func(t *Turn) bool { return t.Part == part.ID }) {
+		// pump drops a blocked part's turns, the kickoff of a part that never
+		// started among them: the retry queues it again, as CreateWork did.
+		rs.enqueue(&Turn{ID: newID(), Agent: part.Seat, Reason: "part", Part: part.ID, Cap: rs.room.Seq, Created: nowMs(), Status: "queued"})
 	}
 	h.advanceQueue(rs)
 	saveErr := h.saveWork(rs)

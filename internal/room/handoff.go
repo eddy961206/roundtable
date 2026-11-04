@@ -109,8 +109,15 @@ func (rs *roomState) handoffBlocked(h *Hub, p *Participant, fresh bool) string {
 	case seatHeld(p):
 		return "한도 보류 중 · 보류가 풀린 뒤 인계해"
 	}
+	// pump drops a held turn, and the handoff request lives only in that turn.
 	if why := rs.budgetHold(p); why != "" {
 		return why + " · 상한을 올린 뒤 인계해"
+	}
+	if why := rs.speakHold(p); why != "" {
+		return why + " · 발화가 다시 가능해진 뒤 인계해"
+	}
+	if p.Provider == RemoteProvider && !h.remoteOnline(rs, p) {
+		return remoteAwayReason + " · worker가 다시 연결된 뒤 인계해"
 	}
 	if p.Fork != nil && !fresh {
 		if _, ok := h.rooms[p.Fork.Room]; !ok {
