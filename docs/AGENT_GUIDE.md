@@ -74,6 +74,7 @@
 **읽기·기다리기**
 - `post --wait_seconds N`이 `timed_out:true`면 `read --after_seq <resume_after_seq>`로 이어 읽는다. 보낸 seq를 그대로 쓰지 않는다. `live:true`(실행 중인 답에 끼워 넣은 입력)면 그 답의 seq가 보낸 seq보다 작아서 빠진다.
 - `read`를 `--after_seq` 없이 부르면 빠진 오래된 메시지는 `omitted_messages`·`first_seq`로만 알린다. 필요하면 `--max_chars`를 늘리거나 `--after_seq`를 준다.
+- `wait`는 `post`가 돌려준 seq로 기다린다. `live:true`여도 그 입력을 받은 턴의 답(더 작은 seq)을 끝난 답으로 센다. 작업 계획의 제출 검사·병합 중에는 방이 끝나지 않은 것으로 본다.
 - `wait`의 `after_seq`를 빼면 대기 시작 뒤의 답만 세므로 이미 도착한 답을 놓친다. `ready[]`가 비어도 `waiting` 값을 다음 `wait`에 그대로 쓴다.
 - `list_rooms`를 주기적으로 부르는 대기 스크립트는 쓰지 않는다.
 

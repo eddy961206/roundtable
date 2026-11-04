@@ -70,6 +70,7 @@ func (h *Hub) startWorktreeCleanup(rs *roomState) {
 		return
 	}
 	rs.workBusy[busyCleanup] = true
+	rs.publishList()
 	repo, roomID := rs.room.Workspace, rs.room.ID
 	h.turnWG.Add(1)
 	go func() {
@@ -112,6 +113,7 @@ func (h *Hub) startWorktreeCleanup(rs *roomState) {
 				continue
 			}
 			delete(rs.workBusy, busyCleanup)
+			rs.publishList()
 			if !rs.deleted {
 				h.advanceQueue(rs)
 				_ = h.saveWork(rs)

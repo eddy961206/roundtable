@@ -94,6 +94,7 @@ type page struct {
 		Mode         string `json:"mode"`
 		Participants []seat `json:"participants"`
 	} `json:"room"`
+	Active   bool              `json:"active"` // a turn or work step runs or waits (room list's active)
 	Messages []apiMessage      `json:"messages"`
 	Queue    []apiTurn         `json:"queue"`
 	Requests []json.RawMessage `json:"requests"`
@@ -244,9 +245,9 @@ type readResult struct {
 	// counted even when the message is not in the array; 0 when none.
 	unsettled int64
 	// replied is true when a selected seat reply is no longer streaming, even
-	// when max_chars left it out of the array. active is true when the newest
-	// page listed a running or queued turn (its queue holds both, read under
-	// one server lock). rt_wait's finished test is replied && !active.
+	// when max_chars left it out of the array. active is the newest page's
+	// active: a turn or work step ran or waited when the server built it.
+	// rt_wait's finished test is replied && !active.
 	replied bool
 	active  bool
 }
@@ -260,7 +261,7 @@ func (s *Server) read(ctx context.Context, room string, after, maxChars int64) (
 }
 
 func (s *Server) readPages(ctx context.Context, room string, after, maxChars int64, latest *page) (*readResult, error) {
-	return s.readSelected(ctx, room, after, after, maxChars, latest, nil)
+	return s.readSelected(ctx, room, after, after, maxChars, latest, nil, 0)
 }
 
 // readSelected walks the pages newest first and spends the max_chars budget
@@ -269,12 +270,19 @@ func (s *Server) readPages(ctx context.Context, room string, after, maxChars int
 // 0) paging stops once the budget is spent and the history total gives the
 // count of unread messages. Paging also goes on until every held reply_to
 // resolves to a seq.
-func (s *Server) readSelected(ctx context.Context, room string, after, lower, maxChars int64, latest *page, includeTurns map[string]bool) (*readResult, error) {
+//
+// steerFrom > 0 is rt_wait's reading. A user message from that seq on that was
+// steered into a running turn (live) is answered by that turn, whose reply is
+// the target seat's newest earlier message, often at or below after_seq: the
+// reply is selected and paging goes on until every such reply is found. With
+// after_seq 0 paging also goes on past the spent budget until a reply is seen.
+func (s *Server) readSelected(ctx context.Context, room string, after, lower, maxChars int64, latest *page, includeTurns map[string]bool, steerFrom int64) (*readResult, error) {
 	names := map[string]string{"user": "user", "system": "system"}
 	for _, p := range latest.Room.Participants {
 		names[p.ID] = p.Label
 	}
-	result := &readResult{Room: room, NextSeq: after, Messages: []readMessage{}, active: len(latest.Queue) > 0}
+	result := &readResult{Room: room, NextSeq: after, Messages: []readMessage{}, active: latest.Active}
+	steered := map[string]int64{} // target seat -> seq of its steer still looking for the turn's reply
 	seqs := map[string]int64{}
 	replyTo := map[int]string{} // index in result.Messages -> trigger message id
 	remaining := maxChars
@@ -296,7 +304,14 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 			seen[m.Seq] = true
 			fetched++
 			seqs[m.ID] = m.Seq
-			if m.Seq <= after && !includeTurns[m.TurnID] {
+			if steerFrom > 0 && m.Kind == "user" && m.Live && m.Seq >= steerFrom {
+				steered[m.Target] = m.Seq
+			}
+			answers := m.Kind == "agent" && steered[m.Author] > 0
+			if answers {
+				delete(steered, m.Author)
+			}
+			if m.Seq <= after && !includeTurns[m.TurnID] && !answers {
 				continue
 			}
 			result.NextSeq = max(result.NextSeq, m.Seq)
@@ -337,7 +352,7 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 				resolved = false
 			}
 		}
-		if resolved && (oldest <= lower || (after == 0 && remaining == 0)) {
+		if resolved && len(steered) == 0 && (oldest <= lower || (after == 0 && remaining == 0 && (steerFrom == 0 || result.replied))) {
 			if after == 0 {
 				// The pages are a contiguous tail of the history the first page counted.
 				if latest.History.Total < fetched {
@@ -357,6 +372,9 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 		if err != nil {
 			return nil, err
 		}
+	}
+	for target, seq := range steered {
+		return nil, fmt.Errorf("seq %d의 steering 입력을 받은 좌석 %s의 턴 답이 대화에 없음", seq, target)
 	}
 	for i, id := range replyTo {
 		seq, ok := seqs[id]
@@ -498,7 +516,7 @@ func (s *Server) post(ctx context.Context, a arguments) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("메시지 seq=%d 전송됨; 답변 조회 실패: %w", sent.Seq, err)
 	}
-	read, err := s.readSelected(ctx, a.Room, sent.Seq, lower, 20000, latest, related)
+	read, err := s.readSelected(ctx, a.Room, sent.Seq, lower, 20000, latest, related, 0)
 	if err != nil {
 		return nil, fmt.Errorf("메시지 seq=%d 전송됨; 답변 조회 실패(재전송하지 말 것): %w", sent.Seq, err)
 	}

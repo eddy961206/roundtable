@@ -46,13 +46,8 @@ func (h *Hub) CloseWhenIdle(ctx context.Context) (closed bool, err error) {
 
 func (h *Hub) idleLocked() bool {
 	for _, rs := range h.rooms {
-		if len(rs.running) > 0 || len(rs.queue) > 0 {
+		if rs.busy() {
 			return false
-		}
-		for _, busy := range rs.workBusy {
-			if busy {
-				return false
-			}
 		}
 	}
 	return true

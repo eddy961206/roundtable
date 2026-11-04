@@ -377,8 +377,30 @@ func (h *Hub) Rooms() []RoomSummary {
 	return out
 }
 
+// busy is true while the room runs or queues a turn or a work step: a plan,
+// submit check or cleanup that holds workBusy outside h.mu, or a part merging.
+// The room list, the snapshot and restart's idle check all use it.
+func (rs *roomState) busy() bool {
+	if len(rs.running) > 0 || len(rs.queue) > 0 {
+		return true
+	}
+	for _, b := range rs.workBusy {
+		if b {
+			return true
+		}
+	}
+	if plan := rs.room.Work; plan != nil {
+		for _, p := range plan.Parts {
+			if p.State == "merging" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (rs *roomState) summary() RoomSummary {
-	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: len(rs.running) > 0 || len(rs.queue) > 0, Archived: rs.room.Archived, Asks: rs.openAsks, Workspace: rs.room.Workspace, Group: rs.room.Group, Kind: rs.room.Kind}
+	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: rs.busy(), Archived: rs.room.Archived, Asks: rs.openAsks, Workspace: rs.room.Workspace, Group: rs.room.Group, Kind: rs.room.Kind}
 }
 
 func sortSummaries(s []RoomSummary) {
@@ -391,6 +413,7 @@ func sortSummaries(s []RoomSummary) {
 
 // Snapshot is everything the page needs to render a room.
 type Snapshot struct {
+	Active     bool                    `json:"active"` // the room list's active, read under the same lock
 	Requests   []Request               `json:"requests"`
 	Asks       []AskView               `json:"asks"` // every seat question in the room, oldest first (asks.go)
 	Decisions  []Decision              `json:"decisions"`
@@ -858,12 +881,19 @@ func signalRooms(subs map[chan []byte]struct{}) {
 	}
 }
 
-func (rs *roomState) broadcast(typ string, payload any) {
-	// Room events follow every change to this room's sidebar values.
+// publishList signals the room list when this room's sidebar values changed
+// since the last signal. Room events call it; so does every change to busy()
+// that no room event follows in the same h.mu hold, or a waiter that read the
+// list as active would sleep through the return to idle. Caller holds h.mu.
+func (rs *roomState) publishList() {
 	if summary := rs.summary(); summary != rs.listed {
 		rs.listed = summary
 		signalRooms(rs.listSubs)
 	}
+}
+
+func (rs *roomState) broadcast(typ string, payload any) {
+	rs.publishList()
 	if typ == "room" {
 		// A full room event also delivers every seat; compare future participant
 		// events against that state, including changes made by PATCH/reset.

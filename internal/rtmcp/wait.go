@@ -18,10 +18,14 @@ var waitRooms = regexp.MustCompile(`^[A-Za-z0-9_-]+(:[0-9]+)?(,[A-Za-z0-9_-]+(:[
 
 var roomList = regexp.MustCompile(`^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$`)
 
+// steerFrom is the first seq whose steered input rt_wait follows into its
+// turn: the given after_seq itself (rt_post returns the steer's own seq), or
+// the seq after the wait's start.
 type waitTarget struct {
-	room  string
-	after int64
-	given bool
+	room      string
+	after     int64
+	given     bool
+	steerFrom int64
 }
 
 func parseWaitRooms(s string) ([]waitTarget, error) {
@@ -82,8 +86,9 @@ func (s *Server) wait(ctx context.Context, rooms string, timeout time.Duration, 
 		if err != nil {
 			return nil, err
 		}
+		targets[i].steerFrom = max(t.after, 1)
 		if !t.given {
-			targets[i].after = p.Room.Seq
+			targets[i].after, targets[i].steerFrom = p.Room.Seq, p.Room.Seq+1
 		}
 	}
 	deadline := time.NewTimer(timeout)
@@ -176,7 +181,11 @@ func (s *Server) readyRooms(ctx context.Context, targets []waitTarget, maxChars 
 		asks[t.room] = all[t.room]
 		done := false
 		if !active[t.room] && checked[t.room] != count {
-			read, err := s.read(ctx, t.room, t.after, maxChars)
+			latest, err := s.snapshot(ctx, t.room, 0, 200)
+			if err != nil {
+				return nil, "", nil, err
+			}
+			read, err := s.readSelected(ctx, t.room, t.after, t.after, maxChars, latest, nil, t.steerFrom)
 			if err != nil {
 				return nil, "", nil, err
 			}

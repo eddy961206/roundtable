@@ -16,8 +16,16 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # config -> the TLC line that must appear in its output
+PASS = "Model checking completed. No error has been found."
 EXPECT = {
-    "RtWait_current.cfg": "Model checking completed. No error has been found.",
+    "RtWait_current.cfg": PASS,
+    "RtWait_current_steer.cfg": PASS,
+    # without publishList: a work step back to idle signaled nothing.
+    "RtWait_current_nopublish.cfg": "Invariant SleepsOnlyWhenUnfinished is violated.",
+    # b3a7b76: the steered turn's reply lies below after_seq.
+    "RtWait_idle_steer.cfg": "Invariant SleepsOnlyWhenUnfinished is violated.",
+    # b3a7b76: a work step (submit check, merge) did not count as active.
+    "RtWait_idle_work.cfg": "Action property ReadyOnlyWhenIdle is violated.",
     # 5d6506c: a turn started between GET /api/rooms and the message read.
     "RtWait_replied.cfg": "Action property ReadyOnlyWhenIdle is violated.",
     # before 5d6506c: a notice pushed the reply out of max_chars (2026-11-04).

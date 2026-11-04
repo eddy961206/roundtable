@@ -191,8 +191,8 @@ func TestWaitSeesReplyBehindSystemNoticeWithSmallMaxChars(t *testing.T) {
 }
 
 // GET /api/rooms and the message read are two requests. When a turn starts
-// between them the room list said idle but the snapshot's queue lists the
-// turn: that read must not end the wait, and the turn's end must be re-read
+// between them the room list said idle but the snapshot says active: that
+// read must not end the wait, and the turn's end must be re-read
 // although no message was added (tools/tla/RtWait.tla ReadyOnlyWhenIdle).
 func TestWaitIgnoresAReadThatSawATurnStart(t *testing.T) {
 	var mu sync.Mutex
@@ -218,7 +218,8 @@ func TestWaitIgnoresAReadThatSawATurnStart(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			reads++
-			io.WriteString(w, snapshotBody(`[{"id":"m1","seq":1,"kind":"user","author":"user","status":"done","text":"질문"},{"id":"m2","seq":2,"kind":"agent","author":"s1","status":"done","text":"답"}]`, queue))
+			body := snapshotBody(`[{"id":"m1","seq":1,"kind":"user","author":"user","status":"done","text":"질문"},{"id":"m2","seq":2,"kind":"agent","author":"s1","status":"done","text":"답"}]`, queue)
+			io.WriteString(w, strings.Replace(body, `{"room":`, `{"active":`+strconv.FormatBool(queue != `[]`)+`,"room":`, 1))
 		default:
 			t.Error(r.URL)
 		}
@@ -237,5 +238,91 @@ func TestWaitIgnoresAReadThatSawATurnStart(t *testing.T) {
 	got = <-done
 	if got["timed_out"] != false || len(got["ready"].([]any)) != 1 {
 		t.Fatalf("the turn's end with an unchanged message count was not re-read: %v", got)
+	}
+}
+
+// A post to a running seat is steered into its turn: rt post returns the
+// steer's seq, but the answer is that turn's reply, an older seq. rt wait on
+// the returned seq used to wait past the answer until it timed out.
+func TestWaitFollowsASteerIntoItsTurn(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	hub, s := waitHub(t, func(ctx context.Context, opts agent.RunOptions) (agent.Result, error) {
+		close(started)
+		select {
+		case <-opts.Steer:
+		case <-ctx.Done():
+			return agent.Result{}, ctx.Err()
+		}
+		<-release
+		return agent.Result{Text: "반영한 답", SessionID: "s", Steered: 1}, nil
+	})
+	r, err := hub.CreateRoom(room.RoomSpec{Title: "방", Mode: "chat", Participants: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.PostUser(r.ID, "구현해", ""); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	snap, _ := hub.Snapshot(r.ID)
+	seat := snap.Room.Participants[0].ID
+	posted := callJSON(t, s, "rt_post", map[string]any{"room": r.ID, "target": seat, "text": "이것도 반영해"})
+	if posted["live"] != true {
+		t.Fatalf("the post was not steered: %v", posted)
+	}
+	rooms := r.ID + ":" + strconv.FormatInt(int64(posted["seq"].(float64)), 10)
+	if got := callJSON(t, s, "rt_wait", map[string]any{"rooms": rooms, "timeout_seconds": 1}); got["timed_out"] != true {
+		t.Fatalf("ready while the steered turn runs: %v", got)
+	}
+	close(release)
+	got := callJSON(t, s, "rt_wait", map[string]any{"rooms": rooms, "timeout_seconds": 5})
+	ready := got["ready"].([]any)
+	if got["timed_out"] != false || len(ready) != 1 {
+		t.Fatalf("the steered turn's reply did not finish the wait: %v", got)
+	}
+	msgs := ready[0].(map[string]any)["messages"].([]any)
+	if first := msgs[0].(map[string]any); first["kind"] != "agent" || first["text"] != "반영한 답" {
+		t.Fatalf("ready does not carry the steered reply: %v", msgs)
+	}
+}
+
+// With after_seq 0 a spent max_chars budget ends rt_read's paging after the
+// newest 200 messages, so rt wait never saw a reply behind them.
+func TestWaitAfterZeroFindsReplyBehindAFullPage(t *testing.T) {
+	hub, s := waitHub(t, func(context.Context, agent.RunOptions) (agent.Result, error) {
+		return agent.Result{Text: "답", SessionID: "s"}, nil
+	})
+	r, err := hub.CreateRoom(room.RoomSpec{Title: "방", Mode: "chat", Participants: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hub.PostUser(r.ID, "먼저", ""); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for snap, _ := hub.Snapshot(r.ID); len(snap.Messages) < 2 || snap.Messages[1].Status != "done"; snap, _ = hub.Snapshot(r.ID) {
+		if time.Now().After(deadline) {
+			t.Fatal("first reply did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	off := false
+	snap, _ := hub.Snapshot(r.ID)
+	if _, err := hub.UpdateRoom(r.ID, room.RoomPatch{Participants: []room.ParticipantPatch{{ID: snap.Room.Participants[0].ID, Enabled: &off}}}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 205; i++ {
+		if _, err := hub.PostUser(r.ID, "메모 "+strconv.Itoa(i), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := callJSON(t, s, "rt_wait", map[string]any{"rooms": r.ID + ":0", "timeout_seconds": 1, "max_chars": 50})
+	if ready := got["ready"].([]any); got["timed_out"] != false || len(ready) != 1 {
+		t.Fatalf("reply behind a full page not seen: %v", got)
+	}
+	// rt_read keeps its contract: a spent budget ends paging without after_seq.
+	read := callJSON(t, s, "rt_read", map[string]any{"room": r.ID, "max_chars": 50})
+	if read["omitted_messages"] == nil {
+		t.Fatalf("rt_read changed: %v", read)
 	}
 }

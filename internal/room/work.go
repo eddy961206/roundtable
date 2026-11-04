@@ -237,6 +237,7 @@ func (h *Hub) CreateWork(roomID string, spec WorkSpec) (*WorkPlan, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(rs.workBusy, busyPlan)
+	rs.publishList()
 	if err == nil && (rs.deleted || h.closing) {
 		err = errors.Join(fmt.Errorf("작업 계획을 만드는 동안 방이 삭제되었거나 서버가 종료됨"), removeWorktrees(repo, made))
 	}
@@ -282,6 +283,7 @@ func (h *Hub) reservePlan(roomID string, spec WorkSpec) (*roomState, *WorkPlan, 
 		return nil, nil, "", err
 	}
 	rs.workBusy[busyPlan] = true
+	rs.publishList()
 	return rs, plan, rs.room.Workspace, nil
 }
 
@@ -428,6 +430,7 @@ func (h *Hub) reserveSubmit(rs *roomState, part *Part) error {
 		return fmt.Errorf("%w: 파트 %s 담당 좌석이 실행 중", ErrWorkConflict, part.ID)
 	}
 	rs.workBusy[part.ID] = true
+	rs.publishList()
 	return nil
 }
 
@@ -446,6 +449,7 @@ func (h *Hub) submitReserved(rs *roomState, part *Part) (*WorkPlan, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(rs.workBusy, partID)
+	rs.publishList()
 	if rs.deleted {
 		return nil, fmt.Errorf("방 없음: %s", roomID)
 	}
@@ -815,6 +819,7 @@ func (h *Hub) advanceQueue(rs *roomState) {
 		return
 	}
 	part.State = "merging"
+	rs.publishList()
 	h.turnWG.Add(1)
 	go h.mergePart(rs, part, part.SubmitSHA, plan.IntegrationSHA, plan.Integration, filepath.Join(h.workRoot, rs.room.ID, "integration"), plan.Verify)
 }

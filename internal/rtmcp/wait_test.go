@@ -344,7 +344,7 @@ func TestResumeAfterSeqCoversOmittedStreamingReply(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &latest); err != nil {
 		t.Fatal(err)
 	}
-	read, err := s.readSelected(context.Background(), "r1", 3, 2, 20000, &latest, map[string]bool{"a": true, "b": true})
+	read, err := s.readSelected(context.Background(), "r1", 3, 2, 20000, &latest, map[string]bool{"a": true, "b": true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
