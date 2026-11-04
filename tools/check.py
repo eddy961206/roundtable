@@ -19,6 +19,8 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tools", "tla"))
+import modelcheck as tla  # noqa: E402
 
 
 def changed_files(base):
@@ -57,6 +59,10 @@ def plan(files, everything):
         steps.append(("go test", ["go", "test", "./..."], None))
     elif guides:
         steps.append(("문서 rt 예시", ["go", "test", "./internal/rtmcp", "-run", "Documented"], None))
+    # A spec reruns when it, its configs or the code it models changed.
+    specs = [s for s in tla.specs() if everything or any(f.startswith("tools/tla/" + s) or f in tla.covers(s) for f in files)]
+    if specs:
+        steps.append(("모델 검사", [sys.executable, "tools/tla/modelcheck.py", *specs], "tla"))
     return steps
 
 
@@ -90,11 +96,17 @@ def main():
     if not steps:
         print(f"{args.base} 대비 검사할 변경이 없음")
         return 0
+    skipped = []
     for name, cmd, mode in steps:
+        if mode == "tla" and not (os.environ.get("ROUNDTABLE_JAVA") and os.environ.get("ROUNDTABLE_TLA2TOOLS")):
+            print(f"== {name}: 건너뜀 (ROUNDTABLE_JAVA·ROUNDTABLE_TLA2TOOLS 없음, tools/tla/modelcheck.py 첫머리 참고)")
+            skipped.append(name)
+            continue
         code = run(name, cmd, mode)
         if code:
             return code
-    print(f"모든 검사 통과 ({len(steps)}개)")
+    done = len(steps) - len(skipped)
+    print(f"모든 검사 통과 ({done}개)" + (f", 건너뜀: {', '.join(skipped)}" if skipped else ""))
     return 0
 
 

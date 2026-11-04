@@ -38,7 +38,7 @@ main에는 시험이 통과한 브랜치를 fast-forward로만 올린다. 병합
 fix 하나에 재발 방지 장치 하나를 붙인다. 2026-11-02 기준 재병합이 아닌 커밋 188개 중 86개(46%)가 fix였고, 마커 파싱·턴 순서처럼 같은 자리가 여러 번 다시 깨졌다.
 
 1. 고치기 전에 결함을 재현하는 장치를 먼저 만든다. 시험(`*_test.go`, fuzz), 정적 검사(`tools/modcheck.py`류), 게시 검사(`tools/orchestrate/glint.py`), 모델 검사(`tools/tla`) 중 결함에 맞는 것을 고른다.
-   - 턴·대기·신호처럼 여러 주체가 엇갈리는 상태 결함은 상태머신을 TLA+로 쓰고 TLC로 검사한다. 옛 동작이 반례를 내고 새 동작이 통과해야 한다. 예: `tools/tla/RtWait.tla`(`python tools/tla/check.py`).
+   - 턴·대기·신호처럼 여러 주체가 엇갈리는 상태 결함은 상태머신을 TLA+로 쓰고 TLC로 검사한다. 옛 동작이 반례를 내고 새 동작이 통과해야 한다. 예: `tools/tla/RtWait.tla`(`python tools/tla/modelcheck.py`).
 2. 그 장치가 수정 전 코드에서 실패하고 수정 뒤 통과하는 것을 확인한다. 수정 전에도 통과하는 시험은 결함을 막지 못한다.
 3. 커밋 본문에 장치의 위치를 적는다. 예: `재발 방지: internal/room/marker_fuzz_test.go FuzzQuotedMarkersStayText`.
 4. 장치를 만들 수 없으면(외부 CLI의 일회성 동작 등) 그 이유를 커밋 본문에 적는다.

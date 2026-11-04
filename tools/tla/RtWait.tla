@@ -1,4 +1,6 @@
 ------------------------------- MODULE RtWait -------------------------------
+\* covers: internal/rtmcp/wait.go internal/rtmcp/api.go internal/room/hub.go internal/room/history.go internal/room/lifecycle.go internal/room/work.go internal/room/work_cleanup.go
+\* reach: phase = "ready"
 (* rt wait (internal/rtmcp/wait.go) against one room's turn state machine.
 
    Room (internal/room/hub.go), every step under h.mu, one seat:
