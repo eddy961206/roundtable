@@ -14,8 +14,9 @@ import (
 	"time"
 )
 
-// codexExitGrace is how long a codex process may stay after turn.completed.
-var codexExitGrace = 60 * time.Second
+// exitGrace is how long a CLI process may stay after it reported the turn
+// complete (codex turn.completed, agy result) before roundtable ends it.
+var exitGrace = 60 * time.Second
 
 // Codex runs `codex exec --json` and watches ~/.codex/sessions for sub-agent threads.
 type Codex struct {
@@ -204,7 +205,7 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 	stderr, runErr := runLines(runCtx, cmd, codexPrompt(o), func(line string) {
 		p.Line(line, emit)
 		if p.completed && lingerTimer == nil {
-			lingerTimer = time.AfterFunc(codexExitGrace, func() {
+			lingerTimer = time.AfterFunc(exitGrace, func() {
 				lingered.Store(true)
 				cancelRun()
 			})
@@ -215,7 +216,7 @@ func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result
 	}
 	if lingered.Load() && ctx.Err() == nil {
 		runErr = nil
-		stderr += fmt.Sprintf("\n[roundtable] codex가 완료 뒤 %s 동안 끝나지 않아 프로세스를 정리함", codexExitGrace)
+		stderr += fmt.Sprintf("\n[roundtable] codex가 완료 뒤 %s 동안 끝나지 않아 프로세스를 정리함", exitGrace)
 	}
 	close(stop)
 	<-watchDone

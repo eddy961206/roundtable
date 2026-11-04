@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -164,7 +165,31 @@ func (a *Agy) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, 
 	cmd.Dir = workDir(o)
 	cmd.Env = os.Environ()
 	p := newAgyParser()
-	stderr, runErr := runLines(ctx, cmd, agyInput(o.Prompt), func(line string) { p.Line(line, emit) })
+	// agy can stay alive after its result (2026-11-04: the log showed "stream
+	// input closed after 1 turn(s)" and the completion signal, then no
+	// "Language server shutting down"; the process idled 25+ minutes with the
+	// answer already sent). After the grace the process is ended and the turn
+	// closes as complete.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	var lingerTimer *time.Timer
+	var lingered atomic.Bool
+	stderr, runErr := runLines(runCtx, cmd, agyInput(o.Prompt), func(line string) {
+		p.Line(line, emit)
+		if p.completed && lingerTimer == nil {
+			lingerTimer = time.AfterFunc(exitGrace, func() {
+				lingered.Store(true)
+				cancelRun()
+			})
+		}
+	})
+	if lingerTimer != nil {
+		lingerTimer.Stop()
+	}
+	if lingered.Load() && ctx.Err() == nil {
+		runErr = nil
+		stderr += fmt.Sprintf("\n[roundtable] agy가 결과를 보낸 뒤 %s 동안 끝나지 않아 프로세스를 정리함", exitGrace)
+	}
 	fin := p.Finish(emit)
 	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr}
 	if l, ok := a.CurrentLimits(); ok && l.At >= started.UnixMilli() {
@@ -254,7 +279,9 @@ func (p *agyParser) step(s map[string]any, emit func(Event)) {
 			x.ID, x.Name, x.Input = idx, name, compactJSON(info["parameters"])
 			emit(x)
 		}
-		if state == "DONE" {
+		// A failed call ends in ERROR, not DONE (2026-11-04: an edit_file whose
+		// target was missing stayed open on the seat for the rest of the turn).
+		if state == "DONE" || state == "ERROR" {
 			x := ev(KindToolResult)
 			x.ID, x.Name, x.Output = idx, name, contentText(info["output"])
 			if !p.toolSeen[idx] {
