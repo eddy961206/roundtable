@@ -244,8 +244,11 @@ type readResult struct {
 	// counted even when the message is not in the array; 0 when none.
 	unsettled int64
 	// replied is true when a selected seat reply is no longer streaming, even
-	// when max_chars left it out of the array (rt_wait's finished test).
+	// when max_chars left it out of the array. active is true when the newest
+	// page listed a running or queued turn (its queue holds both, read under
+	// one server lock). rt_wait's finished test is replied && !active.
 	replied bool
+	active  bool
 }
 
 func (s *Server) read(ctx context.Context, room string, after, maxChars int64) (*readResult, error) {
@@ -271,7 +274,7 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 	for _, p := range latest.Room.Participants {
 		names[p.ID] = p.Label
 	}
-	result := &readResult{Room: room, NextSeq: after, Messages: []readMessage{}}
+	result := &readResult{Room: room, NextSeq: after, Messages: []readMessage{}, active: len(latest.Queue) > 0}
 	seqs := map[string]int64{}
 	replyTo := map[int]string{} // index in result.Messages -> trigger message id
 	remaining := maxChars

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -185,5 +187,55 @@ func TestWaitSeesReplyBehindSystemNoticeWithSmallMaxChars(t *testing.T) {
 		if got["timed_out"] != false || len(ready) != 1 || ready[0].(map[string]any)["next_seq"] != 3.0 || got["waiting"] != "" {
 			t.Fatalf("summary=%v: finished room not ready: %v", summary, got)
 		}
+	}
+}
+
+// GET /api/rooms and the message read are two requests. When a turn starts
+// between them the room list said idle but the snapshot's queue lists the
+// turn: that read must not end the wait, and the turn's end must be re-read
+// although no message was added (tools/tla/RtWait.tla ReadyOnlyWhenIdle).
+func TestWaitIgnoresAReadThatSawATurnStart(t *testing.T) {
+	var mu sync.Mutex
+	queue := `[{"id":"t2","agent":"s1","status":"running"}]`
+	reads := 0
+	signal := make(chan struct{})
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/stream":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.(http.Flusher).Flush()
+			select {
+			case <-signal:
+				io.WriteString(w, "data: {\"type\":\"rooms\"}\n\n")
+				w.(http.Flusher).Flush()
+			case <-r.Context().Done():
+				return
+			}
+			<-r.Context().Done()
+		case "/api/rooms":
+			io.WriteString(w, `[{"id":"r1","active":false,"messages":2}]`)
+		case "/api/rooms/r1":
+			mu.Lock()
+			defer mu.Unlock()
+			reads++
+			io.WriteString(w, snapshotBody(`[{"id":"m1","seq":1,"kind":"user","author":"user","status":"done","text":"질문"},{"id":"m2","seq":2,"kind":"agent","author":"s1","status":"done","text":"답"}]`, queue))
+		default:
+			t.Error(r.URL)
+		}
+	}, false)
+	got := call(t, s, "rt_wait", `{"rooms":"r1:1","timeout_seconds":1}`)
+	if got["timed_out"] != true || len(got["ready"].([]any)) != 0 {
+		t.Fatalf("a read that listed a running turn ended the wait: %v", got)
+	}
+	done := make(chan map[string]any, 1)
+	go func() { done <- call(t, s, "rt_wait", `{"rooms":"r1:1","timeout_seconds":5}`) }()
+	time.Sleep(300 * time.Millisecond)
+	mu.Lock()
+	queue = `[]`
+	mu.Unlock()
+	close(signal)
+	got = <-done
+	if got["timed_out"] != false || len(got["ready"].([]any)) != 1 {
+		t.Fatalf("the turn's end with an unchanged message count was not re-read: %v", got)
 	}
 }

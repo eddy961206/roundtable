@@ -88,7 +88,7 @@ func (s *Server) wait(ctx context.Context, rooms string, timeout time.Duration, 
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	checked := map[string]int{} // message count at the last read of an idle room
+	checked := map[string]int{} // room-list message count at the last read that found the room idle
 	var fewest map[string]int   // lowest unanswered question count seen per room
 	for {
 		ready, waiting, asks, err := s.readyRooms(ctx, targets, maxChars, checked)
@@ -176,12 +176,16 @@ func (s *Server) readyRooms(ctx context.Context, targets []waitTarget, maxChars 
 		asks[t.room] = all[t.room]
 		done := false
 		if !active[t.room] && checked[t.room] != count {
-			checked[t.room] = count
 			read, err := s.read(ctx, t.room, t.after, maxChars)
 			if err != nil {
 				return nil, "", nil, err
 			}
-			if done = read.replied; done {
+			// A turn may start between the two requests. Its end signals the
+			// feed, and the room is read again even if no message was added.
+			if !read.active {
+				checked[t.room] = count
+			}
+			if done = read.replied && !read.active; done {
 				ready = append(ready, read)
 			}
 		}
