@@ -33,6 +33,7 @@ Roundtable은 서로 다른 공급사의 AI CLI가 한 방에서 대화·리뷰�
 10. 끝난 방은 `rt archive_rooms --rooms <방>,...`으로 보관한다(목록에서만 숨김). 삭제는 사람에게 확인받는다.
 11. `rt wait`가 `asked:true`로 돌아오면 좌석이 사용자에게 질문한 것이다. `rt answer --room <방> --id <질문 id> --choice N`(또는 `--text`)으로 답한다. 권한·파괴적 작업 승인은 사람에게 확인받은 뒤 답한다.
 12. `user_requested:true`는 좌석의 사용자 요청입니다. `user_requests[].requests[]`의 `id`·`seat`·`text`·`status`를 읽고 `rt resolve_user_request --room <방> --id <요청 id> --text "답"` 또는 `--acknowledge true`로 처리하세요. 확인 표시는 좌석을 부르지 않습니다. 바로 답할 수 없으면 반환된 `waiting`을 다음 `wait --rooms`에 그대로 쓰세요. `방:after_seq:user_request_seq`의 세 번째 값이 이미 받은 알림을 기억하므로 같은 요청으로 반복 반환하지 않습니다. 값을 버리면 기존 미처리 요청도 다시 알립니다. 요청은 다음 턴이나 재기동으로 닫히지 않습니다. 권한·파괴적 작업 승인은 사람에게 확인받은 뒤 답하세요.
+13. 실행 중인 Codex·Claude에 `post --target`·`answer`·`resolve_user_request --text`로 보낸 입력은 메시지별 수신 응답으로 확인한다. `delivery.state`의 `pending`·`sending`은 전송 중, `accepted`는 현재 턴 전달, `queued`는 다음 턴 대기다. `post`가 반환됐다고 주입 성공으로 말하지 않는다. 주입 미지원·종료 경합은 다음 턴으로 한 번 넘긴다. `uncertain`·`failed`는 수신 여부 조회 중·조회 실패이므로 임의로 재전송하지 않고 오류와 원문을 확인한다. 원격 worker는 다음 턴 전달을 유지한다.
 
 ## 기본 흐름
 1. `roundtable rt list_rooms --limit 5` — 방과 좌석 id 확인. 좌석 상태·문맥 크기는 `roundtable rt seats --rooms <방>,...`. 알맞은 방이 없으면 `create_room`(같은 프로젝트의 여러 작업이면 안내서의 기반 세션 포크).

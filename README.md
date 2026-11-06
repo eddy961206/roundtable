@@ -10,7 +10,7 @@ Go 단일 바이너리 + 정적 HTML. 프레임워크·빌드 도구·외부 서
 |---|---|
 | **단톡방** | 대상 칩이나 이름 멘션으로 한 명을 고른다. `@claude` `@codex` `@agy` `@opencode`는 해당 공급사의 활성 참가자 전원, `@all` 또는 멘션 없는 전송은 활성 참가자 전원을 부른다. 각자 같은 대화 범위를 받아 **동시에, 독립적으로** 답한다. 연쇄 호출 깊이는 방 설정으로 제한한다. |
 | **토론** | N라운드 동안 순서대로 발언한다. 각자 마지막 줄에 `CONTINUE / AGREE / PASS / CONCLUDE` 신호를 붙이고, 전원 동의·결론 제시·라운드 소진 중 먼저 오는 쪽에서 끝난다. |
-| **끼어들기(steering)** | 대상을 고르고 보내면 그 에이전트에게만 간다. Claude는 실행 중인 턴에 즉시 주입되고, Codex·Antigravity는 지금 턴이 끝난 직후 우선 전달된다. 각 참가자는 자기 대기열을 갖고 서로를 기다리지 않는다. |
+| **끼어들기(steering)** | 대상을 고르고 보내면 그 에이전트에게만 간다. Codex·Claude는 실행 중인 턴에 전달을 시도하고, 메시지별 수신 확인 뒤 **현재 턴 전달됨**으로 표시한다. 주입 미지원·거절·종료 경합이면 **다음 턴 대기**로 넘긴다. Antigravity·OpenCode·원격 좌석은 다음 턴으로 전달한다. |
 | **개별 중단** | 참가자 카드에 두 가지가 있다. **현재 턴만 취소**는 실행 중인 턴 하나만 멈추고 참여는 켜 둔다(이후 요청·멘션을 계속 받음, `rt_cancel_turn`). **작업 중단·참여 끄기**는 해당 참가자의 현재 실행·대기 요청을 취소하고 참여를 끈다(꺼진 좌석으로 가는 요청은 거절). 다른 참가자는 계속 실행한다. 다시 쓰려면 참여를 켜고 새 메시지를 보낸다. **모두 중지**와 대기열의 개별 턴 취소도 유지한다. |
 | **작업 기록** | 답변마다 도구 호출·결과·추론 요약을 펼쳐 본다. **서브에이전트**는 어떤 종류를 어떤 과제로 띄웠고, 그 안에서 무슨 도구를 썼고, 뭐라고 보고했는지까지 중첩으로 보인다. 진행 중에도 실시간으로 자란다. |
 | **사용량** | 좌하단에 이 방에 추가한 공급사의 기간별 남은 한도를 고정 표시한다. 참가자를 꺼도 표시를 유지한다. 상세 관측 정보와 CLI 설치 상태는 펼쳐서 확인한다. 수동 갱신과 보이는 탭의 60초 자동 갱신을 제공한다. Codex는 공식 CLI 계정 조회, Claude와 Gemini는 저장된 관측 기록 재조회다. OpenCode의 구독 한도와 API 잔액은 조회하지 않는다. |
@@ -289,11 +289,14 @@ Antigravity CLI는 [공식 statusLine 기능](https://antigravity.google/docs/cl
 | | 호출 | 세션 재개 (기반 포크) | 서브에이전트 관측 | 한도 |
 |---|---|---|---|---|
 | Claude Code | `claude -p --input-format stream-json --output-format stream-json` | `--resume <session>` (`--resume <기반> --fork-session`) | 스트림의 `parent_tool_use_id`, `task_started/task_notification` | 스트림의 `rate_limit_event` |
-| Codex | `codex exec - --json -c features.plugins=false` | `codex exec resume … <thread> -` (`codex exec fork … <기반> -`) | `~/.codex/sessions` 에서 `parent_thread_id` 가 같은 rollout 파일을 추적 | rollout 관측 + `codex app-server`의 `account/rateLimits/read` |
+| Codex | `codex app-server -c features.plugins=false` stdio, 턴마다 프로세스 한 개 | `thread/resume` (`thread/fork`), `turn/start` | `~/.codex/sessions` 에서 `parent_thread_id` 가 같은 rollout 파일을 추적 | rollout 관측 + `account/rateLimits/read`·`account/rateLimits/updated` |
 | Antigravity | `agy --output-format stream-json --input-format stream-json -p=` (프롬프트는 stdin) | `--conversation <id>` (포크 없음) | `invoke_subagent` 의 `log_uri` → `transcript.jsonl` | statusLine 훅(위) |
 | OpenCode v2 | `opencode run --standalone --format json` | `--session <id>` (`--session <기반> --fork`) | Roundtable 권한 모드에서는 하위 에이전트 실행을 허용하지 않음 | 응답의 토큰·비용만 기록, 계정 잔액 조회 없음 |
 
-- 각 에이전트는 자기 CLI 세션을 이어 가며 **자기 마지막 발언 이후 새 메시지만** 받는다. 매번 전체 대화를 보내지 않아 토큰이 덜 들고, 각자의 도구 맥락이 유지된다. 턴이 실패하면 그 메시지는 다음 턴에 다시 전달된다.
+- 각 에이전트는 자기 CLI 세션을 이어 가며 **자기 마지막 발언 이후 새 메시지만** 받는다. 매번 전체 대화를 보내지 않아 토큰이 덜 들고, 각자의 도구 맥락이 유지된다. 일반 입력의 재전달은 위의 오류·중단 규칙을 따른다. 수신이 확인된 턴 중 입력은 턴이 나중에 실패해도 재전송하지 않는다.
+- Codex의 턴 중 입력은 `turn/steer`의 정확한 `expectedTurnId`와 메시지 ID로 확인한다. Claude는 `--replay-user-messages`의 동일 입력 UUID 응답으로 확인한다. **전송 중**은 수신 완료가 아니며 **현재 턴 전달됨**도 모델이 이미 지시를 수행했다는 뜻은 아니다. Codex는 이미지 첨부도 같은 턴에 전달할 수 있다. Claude 이미지·review·handoff·원격 턴은 다음 턴으로 전달한다.
+- 주입 응답이 끊기면 프로세스를 정리한 뒤 저장된 입력 이력을 조회한다. 미수신만 다음 턴에 보내며, 이력도 읽을 수 없으면 원문과 **전달 확인 실패**를 보존한다. 서버 재시작도 이 절차로 처리한다. 예전 `Live`만 있는 기록은 **현재 턴 전달 · 이전 기록**으로 표시한다.
+- `turn/steer`가 없는 CLI는 다음 턴 전달을 사용한다. app-server 자체가 없는 CLI는 명시적 실행 오류다. `exec` 실행 경로로 전환하지 않는다. 구현 결정·검증 범위는 [Codex 턴 중 입력 검증](docs/Codex_턴중입력_검증_20261106.md)에 정리했다.
 - 재개 턴은 방 참가자·공지·규칙을 다시 보내지 않고 한 줄 알림만 보낸다. CLI가 문맥을 압축한 것이 보이면 다음 턴에 전체 안내문을 다시 보낸다. 추론 수준만 바꾸면 세션을 유지한다(그 턴은 Gemini·Codex에서 캐시를 쓰지 못한다). 실측: [docs/토큰절감_측정_20261020.md](docs/토큰절감_측정_20261020.md).
 - agy는 프롬프트를 stdin stream-json으로 받으므로 명령줄 길이 한도가 없다.
 - Codex는 사용자 플러그인을 끄고 실행한다. 플러그인 스킬 목록(수만 자)을 재개 턴마다 다시 보내는 것을 실측했고, Roundtable은 플러그인 도구를 쓰지 않는다. 사용자 메모리·전역 AGENTS.md·개인 스킬은 그대로 읽는다.
