@@ -22,7 +22,7 @@ main에는 시험이 통과한 브랜치를 fast-forward로만 올린다. 병합
    git rebase origin/main
    ```
 
-2. 시험을 돌린다: `python tools/check.py`. 기준 브랜치(기본 `origin/main`) 대비 바뀐 영역에 맞춰 `gofmt`·`go vet`·`go test ./...`, `web/js`면 `tools/modcheck.py`와 `tools/perf/*.test.mjs`, `tools/orchestrate`면 그 폴더의 unittest, 안내서·스크립트의 `rt` 예시 검사를 차례로 돌리고 처음 실패에서 멈춘다. 전부 돌리려면 `--all`.
+2. 시험을 돌린다: `python tools/check.py`. 기준 브랜치(기본 `origin/main`) 대비 바뀐 영역에 맞춰 `gofmt`·`go vet`·`go test ./...`, `web/js`면 `tools/modcheck.py`와 `tools/perf/*.test.mjs`, `tools/orchestrate`면 그 폴더의 unittest, `.githooks`면 `tools/test_hook.py`, 안내서·스크립트의 `rt` 예시 검사를 차례로 돌리고 처음 실패에서 멈춘다. 전부 돌리려면 `--all`.
    - 이 저장소에는 CI가 없다. checkout마다 한 번 `git config core.hooksPath .githooks`를 해 두면 `git push` 전에 같은 검사가 돈다.
 3. 원격 main에 올린다. fast-forward가 아니면 원격이 거절한다. 거절되면 1단계부터 다시 한다.
 

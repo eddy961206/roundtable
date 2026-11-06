@@ -2,5 +2,11 @@
 # Runs the CONTRIBUTING.md checks before a push (opt in per checkout:
 # git config core.hooksPath .githooks). Skip once with git push --no-verify
 # only when the checks already passed on this exact head.
+#
+# Strip git local env vars (GIT_DIR, etc.) so child tests don't pollute this repo.
+top="$(git rev-parse --show-toplevel)" || exit 1
+for v in $(git rev-parse --local-env-vars); do
+  unset "$v"
+done
 command -v python >/dev/null 2>&1 && py=python || py=python3
-exec "$py" "$(git rev-parse --show-toplevel)/tools/check.py"
+exec "$py" "$top/tools/check.py"

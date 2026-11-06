@@ -42,6 +42,7 @@ def plan(files, everything):
     js = everything or any(f.startswith("web/js/") for f in files)
     perf_js = everything or any(f.startswith(("web/js/", "tools/perf/")) and f.endswith((".js", ".mjs")) for f in files)
     orchestrate = everything or any(f.startswith("tools/orchestrate/") for f in files)
+    hook = everything or any(f.startswith(".githooks/") or f == "tools/test_hook.py" for f in files)
     # Guides and scripts whose `rt` examples TestDocumentedCommandsMatchTools reads.
     guides = any(f in ("README.md", "docs/AGENT_GUIDE.md", "skills/roundtable/SKILL.md") or f.startswith("tools/orchestrate/") for f in files)
     steps = []
@@ -50,6 +51,8 @@ def plan(files, everything):
         steps.append(("go vet", ["go", "vet", "./..."], None))
     if js:
         steps.append(("modcheck", [sys.executable, "tools/modcheck.py", "web/js"], None))
+    if hook:
+        steps.append(("훅 시험", [sys.executable, "tools/test_hook.py"], None))
     if perf_js and shutil.which("node"):
         tests = sorted(os.path.join("tools", "perf", f) for f in os.listdir(os.path.join(ROOT, "tools", "perf")) if f.endswith(".test.mjs"))
         steps.append(("node 화면 시험", ["node", "--test", *tests], None))
