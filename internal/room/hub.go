@@ -80,7 +80,7 @@ type running struct {
 	turn             *Turn
 	msg              *Message
 	cancel           context.CancelFunc
-	steer            chan string
+	steer            chan agent.SteerInput
 	live             []*Message // accepted steers belonging to this invocation only
 	stopGen          int
 	discardFollowups bool // participant stop must not replay old steers after re-enable
@@ -187,9 +187,11 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		rs.listed = rs.summary()
 		h.rooms[r.ID] = rs
 	}
+	h.stageInputRecovery()
 	if err := h.resumeRecoveredWork(); err != nil {
 		return nil, err
 	}
+	h.recoverInputs()
 	return h, nil
 }
 
@@ -1110,6 +1112,9 @@ func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource,
 	m := rs.nextMessage("user", "user", text)
 	m.Attachments = attachments
 	m.Target = target
+	if target != "" && rs.runningFor(target) != nil {
+		m.Delivery = &InputDelivery{State: deliveryQueued}
+	}
 	mentioned := []string{}
 	if fwd == nil {
 		mentioned = append(mentioned, ParseParticipantMentions(text, rs.room.Participants)...)
@@ -1124,11 +1129,13 @@ func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource,
 	var liveRun *running
 	// A task is never live steering: the running turn has claimed its requests
 	// already, so the seat would never get the task's request id (PR #4 review).
-	if target != "" && len(attachments) == 0 && fwd == nil && task == nil {
+	if target != "" && fwd == nil && task == nil {
 		if run := rs.runningFor(target); run != nil && run.steer != nil && len(run.steer) < cap(run.steer) {
-			// h.mu serializes all senders; the provider can only free capacity.
-			liveRun = run
-			m.Live, m.Part = true, run.turn.Part
+			if len(attachments) == 0 || canSteerImages(h.reg.Get(run.msg.Provider)) {
+				// An enqueue is only intent. Live is set by the provider receipt.
+				liveRun, m.Part = run, run.turn.Part
+				m.Delivery = &InputDelivery{State: deliveryPending, TurnID: run.turn.ID, SessionID: run.msg.SessionID}
+			}
 		}
 	}
 	if err := h.store.AppendMessage(id, m); err != nil {
@@ -1148,13 +1155,13 @@ func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource,
 		}
 	}
 	if liveRun != nil {
-		liveRun.steer <- text
 		liveRun.live = append(liveRun.live, m)
+		liveRun.steer <- h.steerInput(rs, m)
 	}
 	rs.broadcast("message", m)
 	h.saveRoom(rs)
 	if target != "" {
-		if !m.Live {
+		if liveRun == nil {
 			rs.enqueueFront(&Turn{ID: newID(), Agent: target, Reason: "mention", Group: m.ID, Cap: m.Seq, Created: nowMs(), Status: "queued"})
 			h.pump(rs)
 		}
@@ -1302,14 +1309,23 @@ func (h *Hub) stopLocked(rs *roomState, why string) error {
 	dropped := len(rs.queue)
 	rs.queue = nil
 	rs.stopGen++
+	var err error
+	for _, m := range rs.msgs {
+		if m.Delivery == nil || m.Delivery.State == deliveryDelivered || m.Delivery.State == agent.InputAccepted || m.Delivery.Halted {
+			continue
+		}
+		d := *m.Delivery
+		d.Halted = true
+		err = errors.Join(err, h.saveDelivery(rs, m, d))
+	}
 	for _, r := range rs.running {
 		r.cancel()
 	}
 	rs.disc = nil
 	rs.refreshParticipantStates()
-	var err error
 	if dropped > 0 || len(rs.running) > 0 {
-		_, err = h.addSystem(rs, fmt.Sprintf("중지: %s (대기 %d건 취소, 실행 중 %d건 중단)", why, dropped, len(rs.running)))
+		_, noteErr := h.addSystem(rs, fmt.Sprintf("중지: %s (대기 %d건 취소, 실행 중 %d건 중단)", why, dropped, len(rs.running)))
+		err = errors.Join(err, noteErr)
 	}
 	rs.broadcast("queue", rs.queueView())
 	rs.broadcast("discussion", nil)
@@ -1385,6 +1401,9 @@ func (rs *roomState) refreshParticipantStates() {
 // Broadcast members share a cap, not a copy of mutable streaming messages.
 // Caller holds h.mu throughout prompt construction and participant reservation.
 func (h *Hub) pump(rs *roomState) {
+	if rs.workBusy[inputRecoveryKey] {
+		return
+	}
 	if h.closing {
 		rs.refreshParticipantStates()
 		return
@@ -1497,6 +1516,7 @@ func (h *Hub) pump(rs *roomState) {
 
 // prepared contains a prompt rendered from live messages up to the turn's cap.
 type prepared struct {
+	history        []*Message // exactly the messages placed in this invocation's prompt
 	started        time.Time
 	notices        []*Message
 	requests       []string
@@ -1582,7 +1602,7 @@ func (h *Hub) buildTurn(rs *roomState, t *Turn) *prepared {
 	} else {
 		h.addTurnImages(rs, p, hist, &opts, t.Reason)
 	}
-	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, handoffFrom: p.HistoryFrom, remote: remote}
+	pr := &prepared{t: t, p: p, seen: seen, unseen: unseen, brief: brief, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, handoffFrom: p.HistoryFrom, remote: remote, history: hist}
 	if forked {
 		pr.opts.ForkSession = p.Fork.Session
 		if p.Fork.Dir != sessionDir(rs.room) {
@@ -1650,7 +1670,7 @@ func (h *Hub) buildPartTurn(rs *roomState, t *Turn, p *Participant, prov agent.P
 	}
 	opts := agent.RunOptions{Prompt: prompt, SessionID: part.SessionID, Model: p.Model, Effort: p.Effort, Mode: agent.ModeWrite, Workspace: part.Worktree, ScratchDir: h.scratch, Timeout: rs.room.turnTimeout(), MCP: h.mcp, CompactWindow: rs.room.CompactWindowTokens}
 	h.addTurnImages(rs, p, hist, &opts, t.Reason)
-	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, bootstrap: bootstrap}
+	return &prepared{t: t, p: p, seen: seen, unseen: unseen, stopGen: rs.stopGen, resetGen: rs.resetGen, prov: prov, opts: opts, part: part, bootstrap: bootstrap, history: hist}
 }
 
 // buildReviewTurn runs a ReviewState step: the reviewer in a fresh read-only
@@ -1719,9 +1739,9 @@ func (h *Hub) prepareTurn(rs *roomState, pr *prepared) {
 		msg.SessionDirectory = pr.opts.ScratchDir
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), rs.room.turnTimeout())
-	var steer chan string
+	var steer chan agent.SteerInput
 	if prov.CanSteer() && t.Reason != "review" && t.Reason != "handoff" {
-		steer = make(chan string, 8)
+		steer = make(chan agent.SteerInput, 8)
 	}
 	t.Status = "running"
 	rs.running[t.ID] = &running{turn: t, msg: msg, cancel: cancel, steer: steer, stopGen: rs.stopGen}
@@ -1749,6 +1769,17 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 		if rs.deleted || tracePersistenceError != nil {
 			h.mu.Unlock()
 			return
+		}
+		if e.Kind == agent.KindDelivery && e.Receipt != nil {
+			changed, err := h.recordSteer(rs, rs.running[t.ID], *e.Receipt)
+			if err != nil {
+				tracePersistenceError = h.reportPersistenceError(rs, "입력 수신 기록", err)
+				cancel()
+			}
+			if !changed || err != nil {
+				h.mu.Unlock()
+				return
+			}
 		}
 		if e.Kind == agent.KindAsk {
 			// The reply holds the question; the trace view has no row for it.
@@ -1866,6 +1897,7 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 	default:
 		res, err = prov.Run(ctx, opts, emit)
 	}
+	resolveRunReceipts(prov, &res, emit)
 	// Read before taking h.mu: git status may take a while in a large worktree.
 	uncommitted := ""
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) && opts.Mode == agent.ModeWrite {
@@ -1959,26 +1991,18 @@ func (h *Hub) runTurn(rs *roomState, pr *prepared) {
 			}
 		}
 	}
+	if t.Reason != "review" {
+		if err := h.finishPromptInputs(rs, pr, delivered); err != nil {
+			msg.Status, msg.Error = "error", fmt.Sprintf("입력 전달 상태 저장 실패: %v", err)
+		}
+	}
 	if replayed {
 		replay := *t
 		replay.ID, replay.Status, replay.Created = newID(), "queued", nowMs()
 		rs.enqueueFront(&replay)
 	}
-	// Only this invocation's steers count against Result.Steered. Earlier
-	// accepted steers may still lie above this turn's delivery boundary.
-	for i, m := range run.live {
-		if msg.Status != "done" || i >= res.Steered {
-			m.Live = false
-			if err := h.store.AppendMessage(rs.room.ID, m); err != nil {
-				msg.Status, msg.Error = "error", fmt.Sprintf("미전달 조정 메시지 저장 실패: %v", err)
-			}
-			rs.broadcast("message", m)
-			// Stop still cancels all pending work. Persist the undelivered input,
-			// but never restart a turn from an older stop generation.
-			if pr.stopGen == rs.stopGen && p.Enabled && !run.discardFollowups {
-				rs.enqueueFront(&Turn{ID: newID(), Agent: p.ID, Reason: "mention", Group: m.ID, Cap: m.Seq, Created: nowMs(), Status: "queued"})
-			}
-		}
+	if err := h.settleSteers(rs, pr, run); err != nil {
+		msg.Status, msg.Error = "error", fmt.Sprintf("미전달 조정 메시지 저장 실패: %v", err)
 	}
 	// A failed turn's markers wait for ApplyMarkers; count them so the room can say so.
 	if msg.Status == "error" && pr.part == nil && t.Reason != "discussion" && t.Reason != "review" && t.Reason != "handoff" {
@@ -2156,6 +2180,10 @@ func (rs *roomState) deltaForContext(p *Participant, first bool, cap int64, part
 			seen = m.Seq
 		}
 		if (m.Target != "" && m.Target != p.ID) || (!first && (m.Author == p.ID || (m.Live && m.Part == partID))) {
+			continue
+		}
+		if m.Delivery != nil && (m.Delivery.State == agent.InputSending || m.Delivery.State == agent.InputUncertain || m.Delivery.State == deliveryFailed) {
+			unseen = append(unseen, m.Seq) // an ambiguous write must not be resent as ordinary history
 			continue
 		}
 		if p.HistoryFrom > 0 && m.Author == p.ID && m.Seq > p.HistoryFrom {

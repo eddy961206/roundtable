@@ -241,7 +241,7 @@ func TestCodexLimitsFromRollout(t *testing.T) {
 	}
 	p := newCodexParser()
 	var events []Event
-	codexLimitsFromRollout(path, nil, p, func(e Event) { events = append(events, e) })
+	codexLimitsFromRollout(path, p, func(e Event) { events = append(events, e) })
 	if p.window != 475000 || p.context != 25802 {
 		t.Fatalf("context parse wrong: window=%d ctx=%d", p.window, p.context)
 	}
@@ -268,15 +268,18 @@ func TestCodexResumedTurnUsageIsPerTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := newCodexParser()
-	p.Line(`{"type":"turn.completed","usage":{"input_tokens":64000,"cached_input_tokens":32000,"output_tokens":640}}`, func(Event) {})
-	codexLimitsFromRollout(path, nil, p, func(Event) {})
+	p.before = map[string]any{"input_tokens": 30000.0, "cached_input_tokens": 15000.0, "output_tokens": 300.0}
+	p.usage = map[string]any{"input_tokens": 64000.0, "cached_input_tokens": 32000.0, "output_tokens": 640.0}
+	p.completed = true
+	codexLimitsFromRollout(path, p, func(Event) {})
 	fin := p.Finish(func(Event) {})
 	if fin.Usage["input_tokens"] != 34000.0 || fin.Usage["cached_input_tokens"] != 17000.0 || fin.Usage["output_tokens"] != 340.0 || fin.Usage["context_tokens"] != 21333 {
 		t.Fatalf("usage %v", fin.Usage)
 	}
 
 	unread := newCodexParser()
-	unread.Line(`{"type":"turn.completed","usage":{"input_tokens":64000}}`, func(Event) {})
+	unread.usage = map[string]any{"input_tokens": 64000.0}
+	unread.completed = true
 	if fin := unread.Finish(func(Event) {}); fin.Usage != nil {
 		t.Fatalf("thread totals without the rollout must not be reported as turn usage: %v", fin.Usage)
 	}
@@ -366,7 +369,7 @@ func TestArgsPerMode(t *testing.T) {
 	}
 	x := codexArgs(RunOptions{Mode: ModeWrite, Workspace: ws, Model: "gpt-6.1-sol", Effort: "high"}, "")
 	xs := strings.Join(x, " ")
-	for _, want := range []string{"exec --json", `model="gpt-6.1-sol"`, `model_reasoning_effort="high"`, `sandbox_mode="danger-full-access"`, "--cd " + ws + " -"} {
+	for _, want := range []string{"app-server", `model="gpt-6.1-sol"`, `model_reasoning_effort="high"`, `sandbox_mode="danger-full-access"`} {
 		if !strings.Contains(xs, want) {
 			t.Errorf("codex write args missing %q: %s", want, xs)
 		}
@@ -375,7 +378,7 @@ func TestArgsPerMode(t *testing.T) {
 		t.Error("use the explicit sandbox policy, not a permission bypass flag")
 	}
 	xr := strings.Join(codexArgs(RunOptions{Mode: ModeRead, Workspace: ws, SessionID: "tid"}, ""), " ")
-	if !strings.HasPrefix(xr, "exec resume --json") || !strings.HasSuffix(xr, " tid -") || !strings.Contains(xr, `sandbox_mode="danger-full-access"`) || strings.Contains(xr, "--cd") || strings.Contains(xr, "--color") {
+	if !strings.HasPrefix(xr, "app-server ") || !strings.Contains(xr, `sandbox_mode="danger-full-access"`) || strings.Contains(xr, "--cd") || strings.Contains(xr, "--color") {
 		t.Errorf("codex resume args wrong: %s", xr)
 	}
 	a := agyArgs(RunOptions{Mode: ModeChat, Model: "gemini-3.8-flash-high", Prompt: "hi", SessionID: "cid"})
@@ -501,8 +504,10 @@ func TestCodexForkTurnUsageIsPerTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := newCodexParser()
-	p.Line(`{"type":"turn.completed","usage":{"input_tokens":76041,"cached_input_tokens":48000,"output_tokens":204}}`, func(Event) {})
-	codexLimitsFromRollout(fork, totals, p, func(Event) {})
+	p.before = totals
+	p.usage = map[string]any{"input_tokens": 76041.0, "cached_input_tokens": 48000.0, "output_tokens": 204.0}
+	p.completed = true
+	codexLimitsFromRollout(fork, p, func(Event) {})
 	fin := p.Finish(func(Event) {})
 	if fin.Usage["input_tokens"] != 26268.0 || fin.Usage["cached_input_tokens"] != 12288.0 || fin.Usage["output_tokens"] != 130.0 {
 		t.Fatalf("fork usage %v", fin.Usage)
@@ -510,9 +515,9 @@ func TestCodexForkTurnUsageIsPerTurn(t *testing.T) {
 }
 
 func TestForkArguments(t *testing.T) {
-	codex := strings.Join(codexArgs(RunOptions{ForkSession: "base-id", Mode: ModeRead, Workspace: "ws"}, ""), " ")
-	if !strings.HasPrefix(codex, "exec fork --json") || !strings.HasSuffix(codex, " base-id -") || strings.Contains(codex, "--cd") || strings.Contains(codex, "--color") {
-		t.Fatalf("codex fork args: %s", codex)
+	method, params := codexThreadParams(RunOptions{ForkSession: "base-id", Mode: ModeRead, Workspace: "ws"}, "")
+	if method != "thread/fork" || params["threadId"] != "base-id" || params["cwd"] != "ws" {
+		t.Fatalf("codex fork: %s %v", method, params)
 	}
 	claude := strings.Join(claudeArgs(RunOptions{ForkSession: "base-id", Mode: ModeRead, Workspace: "ws"}), " ")
 	if !strings.Contains(claude, "--resume base-id --fork-session") {

@@ -38,12 +38,12 @@ func TestWaitAgainstExistingHTTPServer(t *testing.T) {
 			b := &scriptedProvider{Provider: agent.NewClaude("__missing_test_cli__"), id: "codex"}
 			a.run = func(ctx context.Context, opts agent.RunOptions) (agent.Result, error) {
 				close(startedA)
-				steered := 0
+				var receipts []agent.SteerReceipt
 				if live {
 					select {
-					case <-opts.Steer:
+					case input := <-opts.Steer:
 						close(injected)
-						steered = 1
+						receipts = []agent.SteerReceipt{{ID: input.ID, State: agent.InputAccepted}}
 					case <-ctx.Done():
 						return agent.Result{}, ctx.Err()
 					}
@@ -53,7 +53,7 @@ func TestWaitAgainstExistingHTTPServer(t *testing.T) {
 						return agent.Result{}, ctx.Err()
 					}
 				}
-				return agent.Result{Text: "첫 답 @codex", Steered: steered}, nil
+				return agent.Result{Text: "첫 답 @codex", Receipts: receipts}, nil
 			}
 			b.run = func(ctx context.Context, _ agent.RunOptions) (agent.Result, error) {
 				close(startedB)

@@ -21,12 +21,13 @@ func TestIncompleteStreamIsNotComplete(t *testing.T) {
 		t.Fatal("missing result event must be an error even with text")
 	}
 	c := newCodexParser()
-	c.Line(`{"type":"thread.started","thread_id":"t"}`, func(Event) {})
-	c.Line(`{"type":"item.completed","item":{"type":"agent_message","text":"중간"}}`, func(Event) {})
+	c.Line(`{"method":"thread/started","params":{"thread":{"id":"t"}}}`, func(Event) {})
+	c.Line(`{"method":"turn/started","params":{"threadId":"t","turn":{"id":"turn"}}}`, func(Event) {})
+	c.Line(`{"method":"item/completed","params":{"threadId":"t","turnId":"turn","item":{"type":"agentMessage","id":"a","text":"중간"}}}`, func(Event) {})
 	if fin := c.Finish(func(Event) {}); fin.Complete {
 		t.Fatal("codex without turn.completed must not be complete")
 	}
-	c.Line(`{"type":"turn.completed","usage":{}}`, func(Event) {})
+	c.Line(`{"method":"turn/completed","params":{"threadId":"t","turn":{"id":"turn","status":"completed"}}}`, func(Event) {})
 	if fin := c.Finish(func(Event) {}); !fin.Complete || finishError("codex", fin, nil, "") != nil {
 		t.Fatal("codex with turn.completed must be complete")
 	}

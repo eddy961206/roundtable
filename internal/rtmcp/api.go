@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"time"
 	"unicode/utf8"
+
+	"roundtable/internal/room"
 )
 
 func (s *Server) api(ctx context.Context, method, path string, body, dest any) error {
@@ -68,22 +70,23 @@ type seat struct {
 }
 
 type apiMessage struct {
-	ID          string           `json:"id"`
-	Seq         int64            `json:"seq"`
-	Author      string           `json:"author"`
-	Kind        string           `json:"kind"`
-	Status      string           `json:"status"`
-	Text        string           `json:"text"`
-	Role        string           `json:"role"`
-	Error       string           `json:"error"`
-	ErrorKind   string           `json:"error_kind"`
-	Live        bool             `json:"live"`
-	TurnID      string           `json:"turn_id"`
-	Target      string           `json:"target"`
-	ReplyTo     string           `json:"reply_to"`
-	Attachments []readAttachment `json:"attachments"`
-	Requests    []string         `json:"requests"`
-	Decisions   []string         `json:"decisions"`
+	ID          string              `json:"id"`
+	Seq         int64               `json:"seq"`
+	Author      string              `json:"author"`
+	Kind        string              `json:"kind"`
+	Status      string              `json:"status"`
+	Text        string              `json:"text"`
+	Role        string              `json:"role"`
+	Error       string              `json:"error"`
+	ErrorKind   string              `json:"error_kind"`
+	Live        bool                `json:"live"`
+	Delivery    *room.InputDelivery `json:"delivery,omitempty"`
+	TurnID      string              `json:"turn_id"`
+	Target      string              `json:"target"`
+	ReplyTo     string              `json:"reply_to"`
+	Attachments []readAttachment    `json:"attachments"`
+	Requests    []string            `json:"requests"`
+	Decisions   []string            `json:"decisions"`
 }
 
 type page struct {
@@ -189,23 +192,24 @@ type readAttachment struct {
 // readMessage leaves out empty optional fields. reply_to is the seq of the
 // message the reply answers; the HTTP message holds that message's id.
 type readMessage struct {
-	Seq         int64            `json:"seq"`
-	Author      string           `json:"author"`
-	Name        string           `json:"name"`
-	Kind        string           `json:"kind,omitempty"`
-	Role        string           `json:"role"`
-	Status      string           `json:"status"`
-	Text        string           `json:"text"`
-	Target      string           `json:"target,omitempty"`
-	ReplyTo     int64            `json:"reply_to,omitempty"`
-	Attachments []readAttachment `json:"attachments,omitempty"`
-	Requests    []string         `json:"requests,omitempty"`
-	Decisions   []string         `json:"decisions,omitempty"`
-	Error       string           `json:"error,omitempty"`
-	ErrorKind   string           `json:"error_kind,omitempty"` // turn_timeout | review_format
-	Truncated   bool             `json:"truncated,omitempty"`
-	Summarized  bool             `json:"summarized,omitempty"` // rt_wait summary: text holds only verdict and marker lines
-	Chars       int              `json:"chars,omitempty"`      // the summarized answer's original length in characters
+	Delivery    *room.InputDelivery `json:"delivery,omitempty"`
+	Seq         int64               `json:"seq"`
+	Author      string              `json:"author"`
+	Name        string              `json:"name"`
+	Kind        string              `json:"kind,omitempty"`
+	Role        string              `json:"role"`
+	Status      string              `json:"status"`
+	Text        string              `json:"text"`
+	Target      string              `json:"target,omitempty"`
+	ReplyTo     int64               `json:"reply_to,omitempty"`
+	Attachments []readAttachment    `json:"attachments,omitempty"`
+	Requests    []string            `json:"requests,omitempty"`
+	Decisions   []string            `json:"decisions,omitempty"`
+	Error       string              `json:"error,omitempty"`
+	ErrorKind   string              `json:"error_kind,omitempty"` // turn_timeout | review_format
+	Truncated   bool                `json:"truncated,omitempty"`
+	Summarized  bool                `json:"summarized,omitempty"` // rt_wait summary: text holds only verdict and marker lines
+	Chars       int                 `json:"chars,omitempty"`      // the summarized answer's original length in characters
 }
 
 type askQuestion struct {
@@ -299,7 +303,9 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 		names[p.ID] = p.Label
 	}
 	result := &readResult{Room: room, NextSeq: after, Messages: []readMessage{}, active: latest.Active}
-	steered := map[string]int64{} // target seat -> seq of its steer still looking for the turn's reply
+	steered := map[string]int64{}     // target seat -> seq of its steer still looking for the turn's reply
+	steeredTurns := map[string]bool{} // confirmed receipt names an exact room turn
+	seenTurns := map[string]bool{}
 	seqs := map[string]int64{}
 	replyTo := map[int]string{} // index in result.Messages -> trigger message id
 	remaining := maxChars
@@ -321,14 +327,30 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 			seen[m.Seq] = true
 			fetched++
 			seqs[m.ID] = m.Seq
-			if steerFrom > 0 && m.Kind == "user" && m.Live && m.Seq >= steerFrom {
-				steered[m.Target] = m.Seq
+			if m.Kind == "agent" {
+				seenTurns[m.TurnID] = true
 			}
-			answers := m.Kind == "agent" && steered[m.Author] > 0
+			if steerFrom > 0 && m.Kind == "user" && m.Seq >= steerFrom {
+				if d := m.Delivery; d != nil && d.TurnID != "" {
+					if !seenTurns[d.TurnID] && (d.State == "accepted" || d.State == "delivered" || d.State == "failed" || d.State == "error" || d.State == "stopped" || d.Halted) {
+						steeredTurns[d.TurnID] = true
+					}
+				} else if m.Live {
+					steered[m.Target] = m.Seq
+				} // historical Live-only record
+			}
+			answers := m.Kind == "agent" && (steered[m.Author] > 0 || steeredTurns[m.TurnID])
 			if answers {
 				delete(steered, m.Author)
+				delete(steeredTurns, m.TurnID)
 			}
-			if m.Seq <= after && !includeTurns[m.TurnID] && !answers {
+			// A wait cursor names the input itself. Returning its old turn's
+			// answer alone would hide an unconfirmed or stopped delivery.
+			terminalInput := false
+			if d := m.Delivery; steerFrom > 0 && m.Seq >= steerFrom && m.Kind == "user" && d != nil {
+				terminalInput = d.State == "failed" || d.State == "error" || d.State == "stopped" || (d.Halted && d.State != "accepted" && d.State != "delivered")
+			}
+			if m.Seq <= after && !includeTurns[m.TurnID] && !answers && !terminalInput {
 				continue
 			}
 			result.NextSeq = max(result.NextSeq, m.Seq)
@@ -336,11 +358,11 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 			if m.Status == "streaming" || remaining == 0 {
 				result.unsettled = m.Seq // pages and messages run newest first
 			}
-			if remaining == 0 {
+			if remaining == 0 && !terminalInput {
 				result.OmittedMessages++
 				continue
 			}
-			rm := readMessage{Seq: m.Seq, Author: m.Author, Name: names[m.Author], Kind: m.Kind, Role: m.Role, Status: m.Status, Text: m.Text, Target: m.Target, Requests: m.Requests, Decisions: m.Decisions, Error: m.Error, ErrorKind: m.ErrorKind}
+			rm := readMessage{Seq: m.Seq, Author: m.Author, Name: names[m.Author], Kind: m.Kind, Role: m.Role, Status: m.Status, Text: m.Text, Target: m.Target, Requests: m.Requests, Decisions: m.Decisions, Error: m.Error, ErrorKind: m.ErrorKind, Delivery: m.Delivery}
 			for _, a := range m.Attachments {
 				rm.Attachments = append(rm.Attachments, readAttachment{ID: a.ID, Name: a.Name})
 			}
@@ -369,7 +391,7 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 				resolved = false
 			}
 		}
-		if resolved && len(steered) == 0 && (oldest <= lower || (after == 0 && remaining == 0 && (steerFrom == 0 || result.replied))) {
+		if resolved && len(steered) == 0 && len(steeredTurns) == 0 && (oldest <= lower || (after == 0 && remaining == 0 && (steerFrom == 0 || result.replied))) {
 			if after == 0 {
 				// The pages are a contiguous tail of the history the first page counted.
 				if latest.History.Total < fetched {
@@ -392,6 +414,9 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 	}
 	for target, seq := range steered {
 		return nil, fmt.Errorf("seq %d의 steering 입력을 받은 좌석 %s의 턴 답이 대화에 없음", seq, target)
+	}
+	for turn := range steeredTurns {
+		return nil, fmt.Errorf("입력 수신 기록의 대상 턴 %s가 대화에 없음", turn)
 	}
 	for i, id := range replyTo {
 		seq, ok := seqs[id]
@@ -422,8 +447,9 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 // covers every reply that was streaming or left out, including a steering
 // reply older than the sent message.
 type postResult struct {
-	Seq  int64 `json:"seq"`
-	Live bool  `json:"live,omitempty"`
+	Delivery *room.InputDelivery `json:"delivery,omitempty"`
+	Seq      int64               `json:"seq"`
+	Live     bool                `json:"live,omitempty"`
 	*readResult
 	TimedOut       *bool  `json:"timed_out,omitempty"`
 	ResumeAfterSeq *int64 `json:"resume_after_seq,omitempty"`
@@ -461,7 +487,7 @@ func (s *Server) post(ctx context.Context, a arguments) (any, error) {
 	if sent.ID == "" || sent.Seq < 1 {
 		return nil, fmt.Errorf("전송 응답의 id 또는 seq가 없음; 재전송 전에 방을 조회해")
 	}
-	result := &postResult{Seq: sent.Seq, Live: sent.Live}
+	result := &postResult{Seq: sent.Seq, Live: sent.Live, Delivery: sent.Delivery}
 	if a.WaitSeconds == nil {
 		return result, nil
 	}
@@ -543,6 +569,9 @@ func (s *Server) post(ctx context.Context, a arguments) (any, error) {
 		return nil, fmt.Errorf("메시지 seq=%d 전송됨; 답변 조회 실패(재전송하지 말 것): %w", sent.Seq, err)
 	}
 	result.readResult, result.TimedOut = read, &timedOut
+	if current, ok := watch.input(sent.ID); ok {
+		result.Live, result.Delivery = current.Live, current.Delivery
+	}
 	if timedOut {
 		resume := resumeAfterSeq(sent.Seq, read)
 		result.ResumeAfterSeq = &resume

@@ -92,7 +92,7 @@ func TestUndeliveredSteerIsRedelivered(t *testing.T) {
 	hub.PostUser(r.ID, "시작", "")
 	time.Sleep(50 * time.Millisecond)
 	m, _ := hub.PostUser(r.ID, "조정", "claude")
-	if !m.Live {
+	if m.Live || m.Delivery == nil || m.Delivery.State != deliveryPending {
 		t.Fatal("steer should be accepted live while running")
 	}
 	waitIdle(t, hub, r.ID)

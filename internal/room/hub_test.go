@@ -250,7 +250,7 @@ func (f *fakeProvider) Run(ctx context.Context, o agent.RunOptions, emit func(ag
 	f.prompts = append(f.prompts, o.Prompt)
 	n := len(f.prompts)
 	f.mu.Unlock()
-	steered := 0
+	var receipts []agent.SteerReceipt
 	emit(agent.Event{Kind: agent.KindSession, Text: f.id + "-session"})
 	emit(agent.Event{Kind: agent.KindLimits, Meta: map[string]any{"limits": agent.Limits{Provider: f.id, At: 1, Windows: []agent.LimitWindow{{Label: "5시간", UsedPercent: 42}}}}})
 	if f.delay > 0 {
@@ -262,9 +262,11 @@ func (f *fakeProvider) Run(ctx context.Context, o agent.RunOptions, emit func(ag
 				return agent.Result{}, ctx.Err()
 			case s := <-steerCh(o.Steer, f.drain):
 				f.mu.Lock()
-				f.steers = append(f.steers, s)
+				f.steers = append(f.steers, s.Text)
 				f.mu.Unlock()
-				steered++
+				receipt := agent.SteerReceipt{ID: s.ID, State: agent.InputAccepted, Source: "test"}
+				receipts = append(receipts, receipt)
+				emit(agent.Event{Kind: agent.KindDelivery, ID: s.ID, Receipt: &receipt})
 				continue
 			case <-timer.C:
 			}
@@ -280,10 +282,10 @@ func (f *fakeProvider) Run(ctx context.Context, o agent.RunOptions, emit func(ag
 	}
 	emit(agent.Event{Kind: agent.KindTextDelta, Text: text})
 	emit(agent.Event{Kind: agent.KindUsage, Meta: map[string]any{"input_tokens": 100.0, "output_tokens": 10.0, "context_tokens": 300.0}})
-	return agent.Result{Text: text, SessionID: f.id + "-session", Usage: map[string]any{"input_tokens": 100.0, "output_tokens": 10.0}, Steered: steered}, nil
+	return agent.Result{Text: text, SessionID: f.id + "-session", Usage: map[string]any{"input_tokens": 100.0, "output_tokens": 10.0}, Receipts: receipts}, nil
 }
 
-func steerCh(ch <-chan string, drain bool) <-chan string {
+func steerCh(ch <-chan agent.SteerInput, drain bool) <-chan agent.SteerInput {
 	if drain {
 		return ch
 	}
@@ -492,7 +494,7 @@ func TestSteerLiveAndQueued(t *testing.T) {
 		t.Fatal(err)
 	}
 	m2, _ := hub.PostUser(r.ID, "너도 바꿔", "codex")
-	if !m1.Live || m1.Target != "claude" {
+	if m1.Live || m1.Delivery == nil || m1.Delivery.State != deliveryPending || m1.Target != "claude" {
 		t.Fatalf("claude steer should be live: %+v", m1)
 	}
 	if m2.Live {

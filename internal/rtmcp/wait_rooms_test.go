@@ -248,13 +248,15 @@ func TestWaitFollowsASteerIntoItsTurn(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	hub, s := waitHub(t, func(ctx context.Context, opts agent.RunOptions) (agent.Result, error) {
 		close(started)
+		var receipt agent.SteerReceipt
 		select {
-		case <-opts.Steer:
+		case input := <-opts.Steer:
+			receipt = agent.SteerReceipt{ID: input.ID, State: agent.InputAccepted}
 		case <-ctx.Done():
 			return agent.Result{}, ctx.Err()
 		}
 		<-release
-		return agent.Result{Text: "반영한 답", SessionID: "s", Steered: 1}, nil
+		return agent.Result{Text: "반영한 답", SessionID: "s", Receipts: []agent.SteerReceipt{receipt}}, nil
 	})
 	r, err := hub.CreateRoom(room.RoomSpec{Title: "방", Mode: "chat", Participants: []string{"claude"}})
 	if err != nil {
@@ -267,7 +269,7 @@ func TestWaitFollowsASteerIntoItsTurn(t *testing.T) {
 	snap, _ := hub.Snapshot(r.ID)
 	seat := snap.Room.Participants[0].ID
 	posted := callJSON(t, s, "rt_post", map[string]any{"room": r.ID, "target": seat, "text": "이것도 반영해"})
-	if posted["live"] != true {
+	if posted["live"] == true || posted["delivery"].(map[string]any)["state"] != "pending" {
 		t.Fatalf("the post was not steered: %v", posted)
 	}
 	rooms := r.ID + ":" + strconv.FormatInt(int64(posted["seq"].(float64)), 10)

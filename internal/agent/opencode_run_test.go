@@ -22,6 +22,10 @@ type fakeOpenCode struct {
 }
 
 func TestMain(m *testing.M) {
+	if spec := os.Getenv(fakeCodexEnv); spec != "" {
+		runFakeCodexRPC(spec)
+		return
+	}
 	if spec := os.Getenv(fakeOpenCodeEnv); spec != "" {
 		var f fakeOpenCode
 		if err := json.Unmarshal([]byte(spec), &f); err != nil {

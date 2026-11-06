@@ -27,8 +27,8 @@ type RunOptions struct {
 	Workspace   string // absolute path; required for read/write
 	ScratchDir  string // absolute server scratch: chat cwd and Codex write-mode cache
 	Timeout     time.Duration
-	Steer       <-chan string // live user messages while the turn runs (providers that CanSteer)
-	MCP         *MCPServer    // extra read-only tool server for this run (nil = none)
+	Steer       <-chan SteerInput // persisted user inputs; each has its own receipt
+	MCP         *MCPServer        // extra read-only tool server for this run (nil = none)
 	// CompactWindow is the context size at which the CLI compacts its session
 	// (Claude only); 0 keeps the CLI's own default.
 	CompactWindow int
@@ -53,7 +53,7 @@ type Result struct {
 	SessionID string
 	Usage     map[string]any
 	Stderr    string
-	Steered   int // steer messages actually written to the running CLI
+	Receipts  []SteerReceipt // final outcome for each attempted input, keyed by its ID
 }
 
 // Provider is one vendor CLI.

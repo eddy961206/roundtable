@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,7 +65,7 @@ func claudeEnv(o RunOptions) []string {
 }
 
 func claudeArgs(o RunOptions) []string {
-	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--strict-mcp-config", "--settings", claudeSandboxSettings}
+	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--replay-user-messages", "--strict-mcp-config", "--settings", claudeSandboxSettings}
 	for _, dir := range imageDirs(o.Images) {
 		args = append(args, "--add-dir", dir)
 	}
@@ -139,7 +142,9 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 	closeStdin := func() { once.Do(func() { _ = stdin.Close() }) }
 	done := make(chan struct{})
 	steerDone := make(chan struct{})
-	var steered atomic.Int32
+	var receiptMu sync.Mutex
+	receipts := map[string]SteerReceipt{}
+	var receiptOrder []string
 	var finished atomic.Bool
 	var inputErr error // read after steerDone closes
 	go func() {
@@ -160,18 +165,50 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 				if finished.Load() {
 					return // the turn already ended; the room redelivers it next turn
 				}
-				if _, err := stdin.Write(claudeUserLine(msg)); err != nil {
+				receipt := SteerReceipt{ID: msg.ID, State: InputSending, SessionID: o.SessionID, ClientID: claudeInputID(msg.ID), Source: "claude_user_echo"}
+				if len(msg.Images) > 0 {
+					receipt.State, receipt.Detail = InputRejected, "Claude 이미지 입력은 다음 턴으로 전달"
+				}
+				receiptMu.Lock()
+				receipts[receipt.ClientID] = receipt
+				receiptOrder = append(receiptOrder, receipt.ClientID)
+				receiptMu.Unlock()
+				emitReceipt(emit, receipt)
+				if receipt.State == InputRejected {
+					continue
+				}
+				if ctx.Err() != nil {
 					return
 				}
-				steered.Add(1)
-				x := ev(KindStatus)
-				x.Text = "조정 메시지 주입"
-				emit(x)
+				line, _ := json.Marshal(map[string]any{"type": "user", "uuid": receipt.ClientID, "message": map[string]any{"role": "user", "content": []map[string]string{{"type": "text", "text": msg.Text}}}})
+				if _, err := stdin.Write(append(line, '\n')); err != nil {
+					receipt.State, receipt.Detail = InputUncertain, err.Error()
+					receiptMu.Lock()
+					receipts[receipt.ClientID] = receipt
+					receiptMu.Unlock()
+					emitReceipt(emit, receipt)
+					return
+				}
 			}
 		}
 	}()
 	onLine := func(line string) {
 		p.Line(line, emit)
+		if m := parseLine(line); str(m, "type") == "user" {
+			key := str(m, "uuid")
+			receiptMu.Lock()
+			receipt, exists := receipts[key]
+			if exists && receipt.State != InputAccepted {
+				receipt.State, receipt.SessionID = InputAccepted, firstNonEmpty(str(m, "session_id"), p.session)
+				receipts[key] = receipt
+			} else {
+				exists = false
+			}
+			receiptMu.Unlock()
+			if exists {
+				emitReceipt(emit, receipt)
+			}
+		}
 		if p.finished {
 			finished.Store(true)
 			closeStdin()
@@ -182,11 +219,57 @@ func (c *Claude) Run(ctx context.Context, o RunOptions, emit func(Event)) (Resul
 	closeStdin()
 	<-steerDone
 	fin := p.Finish(emit)
-	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr, Steered: int(steered.Load())}
+	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr}
+	for _, key := range receiptOrder {
+		receipt := receipts[key]
+		if receipt.State == InputSending {
+			receipt.State, receipt.Detail = InputUncertain, "Claude 입력 수신 응답 전에 실행이 끝남"
+		}
+		if receipt.SessionID == "" {
+			receipt.SessionID = fin.SessionID
+		}
+		res.Receipts = append(res.Receipts, receipt)
+	}
 	if inputErr != nil {
 		return res, inputErr
 	}
 	return res, finishError("claude", fin, runErr, stderr)
+}
+
+func (c *Claude) ResolveSteer(ctx context.Context, receipt SteerReceipt) (SteerReceipt, error) {
+	if receipt.SessionID == "" || receipt.ClientID == "" || strings.ContainsAny(receipt.SessionID, `/\\*?[]`) {
+		return receipt, fmt.Errorf("Claude 전달 확인에 필요한 세션·입력 id가 없음")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return receipt, err
+	}
+	paths, err := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", receipt.SessionID+".jsonl"))
+	if err != nil || len(paths) != 1 {
+		return receipt, fmt.Errorf("Claude 세션 %s의 기록 파일을 확정하지 못함", receipt.SessionID)
+	}
+	f, err := os.Open(paths[0])
+	if err != nil {
+		return receipt, err
+	}
+	defer f.Close()
+	scan := bufio.NewScanner(f)
+	scan.Buffer(make([]byte, 64*1024), maxLineBytes)
+	for scan.Scan() {
+		if ctx.Err() != nil {
+			return receipt, ctx.Err()
+		}
+		m := parseLine(scan.Text())
+		if str(m, "type") == "user" && str(m, "uuid") == receipt.ClientID {
+			receipt.State, receipt.Source, receipt.Detail = InputAccepted, "claude_history", "저장된 대화에서 수신을 확인함"
+			return receipt, nil
+		}
+	}
+	if err := scan.Err(); err != nil {
+		return receipt, err
+	}
+	receipt.State, receipt.Detail = InputRejected, "저장된 대화에 입력이 없어 다음 턴으로 전달"
+	return receipt, nil
 }
 
 // finishError turns the parser's view plus the exit status into the turn error.

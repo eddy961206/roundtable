@@ -35,7 +35,7 @@ func TestCodexCacheFreshAndResumeArguments(t *testing.T) {
 				if strings.Contains(strings.Join(args, " "), "windows.sandbox=") != (sandbox != "") {
 					t.Fatal(args)
 				}
-				if session != "" && (args[1] != "resume" || args[len(args)-2] != session) {
+				if args[0] != "app-server" || slices.Contains(args, "exec") || slices.Contains(args, "--cd") {
 					t.Fatal(args)
 				}
 			}

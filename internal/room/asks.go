@@ -10,7 +10,8 @@ import (
 // Ask is one question a seat asked the person during a reply (agent.KindAsk,
 // Codex request_user_input_async). The CLI does not wait for the answer: the
 // seat keeps working, and an answer reaches it as a user message addressed to
-// it, in the next turn when it is still running.
+// it. A running steer-capable seat can receive it in that turn; otherwise it
+// is queued for the next turn. The message's receipt records the actual route.
 type Ask struct {
 	ID        string              `json:"id"` // the CLI's call id
 	TS        int64               `json:"ts"`

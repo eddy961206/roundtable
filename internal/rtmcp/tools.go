@@ -68,7 +68,7 @@ func (s *Server) tools() []tool {
 			"kind": {Type: "string", Enum: []string{"work", "lounge"}}, "speak_interval_seconds": integer(0, &maxInterval), "daily_speak_limit": integer(0, &maxDaily),
 			"participants": {Type: "array", Items: &participant, MinItems: 1},
 		}, "title", "workspace", "mode", "participants")},
-		{Name: "rt_post", Description: "메시지 전송. 결과의 seq는 보낸 메시지 번호. target은 좌석 id(rt_list_rooms의 participants[].id)이며 생략하면 방 규칙대로 전달. wait_seconds(0~600) 생략·0이면 기다리지 않음. 지정하면 이 메시지로 시작된 턴과 연쇄 호출 턴이 끝날 때까지 대기하고 답변도 반환. 실행 중인 대상에 끼워 넣은 입력(steering)이면 그 답의 seq가 보낸 seq보다 낮을 수 있음. 시간 초과(timed_out)는 실행 취소가 아니며, 그때 결과의 resume_after_seq를 rt_read의 after_seq로 써서 이어 읽음", InputSchema: object(map[string]schema{
+		{Name: "rt_post", Description: "메시지 전송. 결과의 seq는 보낸 메시지 번호. target은 좌석 id(rt_list_rooms의 participants[].id)이며 생략하면 방 규칙대로 전달. wait_seconds(0~600) 생략·0이면 기다리지 않음. 지정하면 이 메시지로 시작된 턴과 연쇄 호출 턴이 끝날 때까지 대기하고 답변도 반환. Codex·Claude 실행 중 대상은 현재 턴 전달을 시도함. delivery.state의 pending·sending은 전송 중, accepted는 수신 확인(live:true), queued는 다음 턴 대기. 주입 미지원·거절·종료 경합이면 다음 턴으로 한 번 넘김. uncertain·failed는 수신 조회 중·조회 실패이므로 임의 재전송하지 말 것. 주입된 답의 seq는 보낸 seq보다 낮을 수 있음. 시간 초과(timed_out)는 실행 취소가 아니며, 그때 결과의 resume_after_seq를 rt_read의 after_seq로 써서 이어 읽음", InputSchema: object(map[string]schema{
 			"room": id, "text": text, "target": id, "wait_seconds": integer(0, &limit),
 		}, "room", "text")},
 		{Name: "rt_read", Description: "메시지를 오래된 순으로 조회. after_seq가 있으면 그보다 큰 seq만, 생략하면 최신 메시지까지. max_chars(기본 20000, 본문 합계의 Unicode 문자 수)는 최신 메시지부터 채움: 경계 메시지는 앞을 줄여 truncated, 담지 못한 오래된 메시지는 빼고 omitted_messages(개수)·first_seq(담긴 첫 seq)로 알림. reply_to는 그 답이 응답한 메시지의 seq. asks는 조회한 답이 사용자에게 한 질문과, 오래됐어도 아직 답하지 않은(waiting·open) 질문(rt_answer 참고). user_requests에는 미처리 사용자 요청과 조회 범위에서 생성·처리된 요청이 들어갑니다(rt_resolve_user_request 참고)", InputSchema: object(map[string]schema{
@@ -84,11 +84,11 @@ func (s *Server) tools() []tool {
 		{Name: "rt_discuss", Description: "토론 시작. blind_first 생략 시 방의 기본 설정 사용. 좌석들이 이미 같은 질문에 답했다면 블라인드 1라운드는 독립 답을 다시 받느라 호출을 좌석 수(N)만큼 더 쓰므로 blind_first:false를 고려", InputSchema: object(map[string]schema{
 			"room": id, "rounds": integer(1, nil), "blind_first": {Type: "boolean"},
 		}, "room", "rounds")},
-		{Name: "rt_answer", Description: "좌석이 턴 중 사용자에게 한 질문(Codex request_user_input_async)에 답함. 질문은 rt_read·rt_wait·rt_seats의 asks에 id·seat·status·questions[{title, options}]로 나옴. status가 waiting(턴 실행 중, 좌석은 기다리지 않고 진행)·open(턴 끝, 답 없음)일 때만 답함. choice(1부터, 질문 하나에 선택지가 있을 때)와 text 중 하나만 지정. 답은 그 좌석 대상 메시지로 다음 턴에 전달되며 결과의 seq를 rt_wait의 after_seq로 씀", InputSchema: object(map[string]schema{
+		{Name: "rt_answer", Description: "좌석이 턴 중 사용자에게 한 질문(Codex request_user_input_async)에 답함. 질문은 rt_read·rt_wait·rt_seats의 asks에 id·seat·status·questions[{title, options}]로 나옴. status가 waiting(턴 실행 중, 좌석은 기다리지 않고 진행)·open(턴 끝, 답 없음)일 때만 답함. choice(1부터, 질문 하나에 선택지가 있을 때)와 text 중 하나만 지정. 답은 그 좌석 대상 메시지로 전달. 실행 중인 Codex는 현재 턴 주입을 시도하고 수신 상태는 delivery로 확인. 턴 종료·주입 미지원이면 다음 턴으로 넘김. 결과의 seq를 rt_wait의 after_seq로 씀", InputSchema: object(map[string]schema{
 			"room": id, "id": id, "choice": integer(1, nil), "text": text,
 		}, "room", "id")},
 		{Name: "rt_requests", Description: "참가자 간 요청 목록과 상태 조회", InputSchema: object(map[string]schema{"room": id}, "room")},
-		{Name: "rt_resolve_user_request", Description: "좌석의 [[REQUEST:@User]] 사용자 요청을 처리합니다. rt_read·rt_wait·rt_seats의 user_requests에서 id·seat·text·status를 확인합니다. pending인 요청에 text로 답하거나 acknowledge:true로 확인 표시합니다(둘 중 하나). 답은 원래 좌석 ID에 대상 지정 메시지로 전달합니다. 실행 중이면 기존 steering 지원에 따라 전달하거나 다음 턴을 예약하고, 끝난 좌석이면 새 턴을 시작합니다. 확인 표시는 좌석을 부르지 않습니다. 결과는 seq·live·user_request이며 status는 answered 또는 acknowledged입니다. 요청은 좌석의 다음 턴이나 재기동으로 닫히지 않습니다. 권한 승인은 사람에게 확인한 뒤 답하세요", InputSchema: object(map[string]schema{
+		{Name: "rt_resolve_user_request", Description: "좌석의 [[REQUEST:@User]] 사용자 요청을 처리합니다. rt_read·rt_wait·rt_seats의 user_requests에서 id·seat·text·status를 확인합니다. pending인 요청에 text로 답하거나 acknowledge:true로 확인 표시합니다(둘 중 하나). 답은 원래 좌석 ID에 대상 지정 메시지로 전달합니다. 실행 중이면 기존 steering 지원에 따라 전달하거나 다음 턴을 예약하고, 끝난 좌석이면 새 턴을 시작합니다. 확인 표시는 좌석을 부르지 않습니다. 결과는 seq·live·delivery·user_request입니다. answered는 답 저장 완료이며 공급사의 수신 완료가 아닙니다. pending·sending은 전송 중, accepted는 수신 확인(live:true), queued는 다음 턴 대기입니다. 반환 직후 live:false만으로 미전달이라고 판단하지 마세요. acknowledge:true는 acknowledged로 저장합니다. 요청은 좌석의 다음 턴이나 재기동으로 닫히지 않습니다. 권한 승인은 사람에게 확인한 뒤 답하세요", InputSchema: object(map[string]schema{
 			"room": id, "id": id, "text": text, "acknowledge": {Type: "boolean"},
 		}, "room", "id")},
 		{Name: "rt_cancel_request", Description: "참가자 간 요청 취소", InputSchema: object(map[string]schema{"room": id, "request": id}, "room", "request")},
@@ -400,16 +400,17 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) (an
 		return out, nil
 	case "rt_resolve_user_request":
 		var resolved struct {
-			Message struct {
-				Seq  int64 `json:"seq"`
-				Live bool  `json:"live"`
-			} `json:"message"`
+			Message     apiMessage  `json:"message"`
 			UserRequest userRequest `json:"user_request"`
 		}
 		if err := s.api(ctx, "POST", base+"/user-requests/"+a.ID+"/resolve", map[string]any{"text": a.Text, "acknowledge": a.Acknowledge}, &resolved); err != nil {
 			return nil, err
 		}
-		return map[string]any{"seq": resolved.Message.Seq, "live": resolved.Message.Live, "user_request": resolved.UserRequest}, nil
+		result := map[string]any{"seq": resolved.Message.Seq, "live": resolved.Message.Live, "user_request": resolved.UserRequest}
+		if resolved.Message.Delivery != nil {
+			result["delivery"] = resolved.Message.Delivery
+		}
+		return result, nil
 	case "rt_assign":
 		var assigned struct {
 			Message struct {

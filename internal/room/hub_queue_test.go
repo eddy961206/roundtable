@@ -28,10 +28,10 @@ type controlledCall struct {
 }
 
 type controlledResult struct {
-	text    string
-	err     error
-	steered int
-	usage   map[string]any // parsers emit this map as the usage event and return it
+	text     string
+	err      error
+	receipts []agent.SteerReceipt
+	usage    map[string]any // parsers emit this map as the usage event and return it
 }
 
 func (p *controlledProvider) Run(ctx context.Context, opts agent.RunOptions, emit func(agent.Event)) (agent.Result, error) {
@@ -41,7 +41,7 @@ func (p *controlledProvider) Run(ctx context.Context, opts agent.RunOptions, emi
 	case <-ctx.Done():
 		return agent.Result{}, ctx.Err()
 	case result := <-call.result:
-		return agent.Result{Text: result.text, SessionID: p.id + "-session", Steered: result.steered, Usage: result.usage}, result.err
+		return agent.Result{Text: result.text, SessionID: p.id + "-session", Receipts: result.receipts, Usage: result.usage}, result.err
 	}
 }
 
@@ -110,6 +110,10 @@ func postQueueMessage(t *testing.T, hub *Hub, id, text, target string) *Message 
 
 func finishCall(call *controlledCall, text string) {
 	call.result <- controlledResult{text: text}
+}
+
+func receivedInput(id string) []agent.SteerReceipt {
+	return []agent.SteerReceipt{{ID: id, State: agent.InputAccepted, Source: "test"}}
 }
 
 func TestReplyToPersistsAcrossParallelAndChainedTurns(t *testing.T) {
@@ -327,12 +331,12 @@ func TestLiveInputAcceptanceAndPersistenceFailures(t *testing.T) {
 			}
 			m, err := h.PostUser(r.ID, "live correction", "codex")
 			if failedFile == "room.json.tmp" {
-				if err != nil || m == nil || !m.Live {
+				if err != nil || m == nil || m.Live || m.Delivery == nil || m.Delivery.State != deliveryPending {
 					t.Fatalf("accepted live input returned failure: %+v %v", m, err)
 				}
 				select {
 				case text := <-call.opts.Steer:
-					if text != "live correction" {
+					if text.Text != "live correction" {
 						t.Fatal(text)
 					}
 				default:
@@ -345,7 +349,7 @@ func TestLiveInputAcceptanceAndPersistenceFailures(t *testing.T) {
 				found := false
 				for _, stored := range saved[r.ID] {
 					if stored.ID == m.ID {
-						found = stored.Live
+						found = !stored.Live && stored.Delivery != nil && stored.Delivery.State == deliveryPending
 					}
 				}
 				if !found {
@@ -369,7 +373,11 @@ func TestLiveInputAcceptanceAndPersistenceFailures(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
-			call.result <- controlledResult{text: "finished", steered: 1}
+			var receipts []agent.SteerReceipt
+			if m != nil {
+				receipts = receivedInput(m.ID)
+			}
+			call.result <- controlledResult{text: "finished", receipts: receipts}
 			waitIdle(t, h, r.ID)
 			if len(ps[0].callsCh) != 0 {
 				t.Fatal("accepted input was replayed as another turn")
@@ -550,7 +558,7 @@ func TestQueuedTurnReceivesUndeliveredLiveSteer(t *testing.T) {
 	postQueueMessage(t, hub, r.ID, "first", "claude")
 	first := nextCall(t, ps[0])
 	live := postQueueMessage(t, hub, r.ID, "undelivered live correction", "claude")
-	if !live.Live {
+	if live.Live || live.Delivery == nil || live.Delivery.State != deliveryPending {
 		t.Fatal("correction was not accepted as live")
 	}
 	postQueueMessage(t, hub, r.ID, "@claude follow up", "")
@@ -647,10 +655,10 @@ func TestLiveSteerCountBelongsToCurrentTurn(t *testing.T) {
 	first := nextCall(t, ps[0])
 	firstLive := postQueueMessage(t, hub, r.ID, "first live", "claude")
 	postQueueMessage(t, hub, r.ID, "@claude next", "")
-	first.result <- controlledResult{text: "first reply", steered: 1}
+	first.result <- controlledResult{text: "first reply", receipts: receivedInput(firstLive.ID)}
 	second := nextCall(t, ps[0])
 	secondLive := postQueueMessage(t, hub, r.ID, "second live", "claude")
-	second.result <- controlledResult{text: "second reply", steered: 1}
+	second.result <- controlledResult{text: "second reply", receipts: receivedInput(secondLive.ID)}
 	s := queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 0 })
 	for _, m := range s.Messages {
 		if (m.ID == firstLive.ID || m.ID == secondLive.ID) && !m.Live {

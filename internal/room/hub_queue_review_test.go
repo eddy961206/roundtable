@@ -54,7 +54,7 @@ func TestQueueReviewLateUndeliveredLiveIsDelivered(t *testing.T) {
 			first := nextCall(t, ps[0])
 			postQueueMessage(t, hub, r.ID, "@claude next question", "")
 			m := postQueueMessage(t, hub, r.ID, "late correction", "claude")
-			if !m.Live {
+			if m.Live || m.Delivery == nil || m.Delivery.State != deliveryPending {
 				t.Fatal("correction must be accepted live")
 			}
 			switch ending {
@@ -108,7 +108,7 @@ func TestQueueReviewUndeliveredLiveCreatesItsOwnTurn(t *testing.T) {
 			postQueueMessage(t, hub, r.ID, "first", "claude")
 			first := nextCall(t, ps[0])
 			m := postQueueMessage(t, hub, r.ID, "correction without another question", "claude")
-			if !m.Live {
+			if m.Live || m.Delivery == nil || m.Delivery.State != deliveryPending {
 				t.Fatal("correction must be accepted live")
 			}
 			switch ending {
@@ -367,18 +367,18 @@ func TestQueueReviewLiveSteerStillAllowedDuringDiscussion(t *testing.T) {
 	}
 	claude := nextCall(t, ps[0])
 	live := postQueueMessage(t, hub, r.ID, "discussion correction", "claude")
-	if !live.Live {
+	if live.Live || live.Delivery == nil || live.Delivery.State != deliveryPending {
 		t.Fatal("discussion rejected live steering")
 	}
 	select {
 	case text := <-claude.opts.Steer:
-		if text != "discussion correction" {
-			t.Fatalf("unexpected live text: %s", text)
+		if text.Text != "discussion correction" {
+			t.Fatalf("unexpected live text: %+v", text)
 		}
 	default:
 		t.Fatal("live text was not written to running discussion's channel")
 	}
-	claude.result <- controlledResult{text: "corrected\n[[DISCUSSION:AGREE]]", steered: 1}
+	claude.result <- controlledResult{text: "corrected\n[[DISCUSSION:AGREE]]", receipts: receivedInput(live.ID)}
 	finishCall(nextCall(t, ps[1]), "agree\n[[DISCUSSION:AGREE]]")
 	queueSnapshot(t, hub, r.ID, func(s *Snapshot) bool { return len(s.Queue) == 0 && s.Discussion == nil })
 	select {

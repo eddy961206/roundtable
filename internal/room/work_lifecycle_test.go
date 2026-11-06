@@ -189,13 +189,13 @@ func TestWorkPartHistoryDoesNotUseChatCursor(t *testing.T) {
 		t.Fatalf("wrong part delivery boundary: %s", call.opts.Prompt)
 	}
 	live := postQueueMessage(t, f.hub, f.room.ID, "LIVE_PART_REQUEST", "claude")
-	if !live.Live {
+	if live.Live || live.Delivery == nil || live.Delivery.State != deliveryPending {
 		t.Fatal("part steer was not accepted")
 	}
-	if text := <-call.opts.Steer; text != "LIVE_PART_REQUEST" {
-		t.Fatalf("unexpected steer: %s", text)
+	if text := <-call.opts.Steer; text.Text != "LIVE_PART_REQUEST" {
+		t.Fatalf("unexpected steer: %+v", text)
 	}
-	call.result <- controlledResult{text: "part answer", steered: 1}
+	call.result <- controlledResult{text: "part answer", receipts: receivedInput(live.ID)}
 	queueSnapshot(t, f.hub, f.room.ID, func(s *Snapshot) bool { return len(s.Queue) == 0 && s.Room.participant("claude").Status == "idle" })
 	if _, err := f.hub.AbandonPart(f.room.ID, "p1"); err != nil {
 		t.Fatal(err)

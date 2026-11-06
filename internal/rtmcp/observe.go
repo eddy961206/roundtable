@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"roundtable/internal/room"
 )
 
 type apiTurn struct {
@@ -23,11 +25,12 @@ type apiTurn struct {
 // Link metadata, not response text or traces, is retained from the existing SSE
 // feed. Polling alone loses completed turns and cannot identify live steering.
 type messageLink struct {
-	ID     string `json:"id"`
-	Seq    int64  `json:"seq"`
-	TurnID string `json:"turn_id"`
-	Target string `json:"target"`
-	Live   bool   `json:"live"`
+	Delivery *room.InputDelivery `json:"delivery,omitempty"`
+	ID       string              `json:"id"`
+	Seq      int64               `json:"seq"`
+	TurnID   string              `json:"turn_id"`
+	Target   string              `json:"target"`
+	Live     bool                `json:"live"`
 }
 
 type observer struct {
@@ -128,7 +131,9 @@ func (o *observer) apply(b []byte) error {
 		if m.ID == "" || m.Seq < 1 {
 			return fmt.Errorf("SSE 메시지 id 또는 seq가 없음")
 		}
-		if m.Live {
+		if m.Delivery != nil && m.Delivery.TurnID != "" {
+			o.live[m.ID] = m.Delivery.TurnID
+		} else if m.Live {
 			for _, turn := range o.queue {
 				if turn.Agent == m.Target && turn.Status == "running" {
 					o.live[m.ID] = turn.ID
@@ -162,7 +167,7 @@ func (o *observer) seed(p *page) {
 	}
 	for _, m := range p.Messages {
 		if _, exists := o.messages[m.ID]; !exists {
-			o.messages[m.ID] = messageLink{ID: m.ID, Seq: m.Seq, TurnID: m.TurnID}
+			o.messages[m.ID] = messageLink{ID: m.ID, Seq: m.Seq, TurnID: m.TurnID, Live: m.Live, Target: m.Target, Delivery: m.Delivery}
 		}
 	}
 	// A full queue event already covers seats that predate the subscription.
@@ -244,8 +249,19 @@ func (o *observer) related(p *page, sent apiMessage) (map[string]bool, int64, bo
 	groups := map[string]bool{sent.ID: true}
 	turns := map[string]bool{}
 	lower := sent.Seq
-	if sent.Live {
+	current := messageLink{ID: sent.ID, Live: sent.Live, Delivery: sent.Delivery}
+	if latest, ok := o.messages[sent.ID]; ok {
+		current = latest
+	}
+	link := current.Live
+	if d := current.Delivery; d != nil {
+		link = d.TurnID != "" && (d.State != "queued" || d.Halted)
+	}
+	if link {
 		id := o.live[sent.ID]
+		if current.Delivery != nil {
+			id = current.Delivery.TurnID
+		}
 		turn, ok := o.turns[id]
 		if !ok || id == "" {
 			return nil, 0, false, fmt.Errorf("SSE에서 steering 대상 턴을 식별하지 못함")
@@ -271,5 +287,15 @@ func (o *observer) related(p *page, sent apiMessage) (map[string]bool, int64, bo
 			return turns, lower, true, nil
 		}
 	}
+	if d := current.Delivery; d != nil && !d.Halted && (d.State == "pending" || d.State == "sending" || d.State == "uncertain" || d.State == "queued") {
+		return turns, lower, true, nil // an SSE receipt can precede the queue snapshot
+	}
 	return turns, lower, false, nil
+}
+
+func (o *observer) input(id string) (messageLink, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	m, ok := o.messages[id]
+	return m, ok
 }

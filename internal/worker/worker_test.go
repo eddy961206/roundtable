@@ -33,7 +33,7 @@ func (*localCLI) ModelEfforts() map[string][]string { return nil }
 func (*localCLI) Efforts() []string                 { return nil }
 func (*localCLI) DefaultModel() (string, string)    { return "m", "" }
 func (*localCLI) Available() bool                   { return true }
-func (*localCLI) CanSteer() bool                    { return false }
+func (*localCLI) CanSteer() bool                    { return true } // local Codex can steer; the remote transport still cannot
 func (*localCLI) CanFork() bool                     { return false }
 func (*localCLI) ContextWindow(string) int          { return 0 }
 func (c *localCLI) Run(_ context.Context, o agent.RunOptions, _ func(agent.Event)) (agent.Result, error) {
@@ -95,6 +95,9 @@ func TestWorkerRunsOneTurn(t *testing.T) {
 	cli.mu.Lock()
 	ran := cli.opts[0]
 	cli.mu.Unlock()
+	if ran.Steer != nil {
+		t.Fatal("remote execution unexpectedly received a live input channel")
+	}
 	if ran.Mode != agent.ModeRead || ran.Workspace != cfg.Workspace || !strings.Contains(ran.Prompt, "원격 좌석, 확인해 줘") || !strings.Contains(ran.Prompt, "read 모드로 실행") {
 		t.Fatalf("a write room must run at the worker's read cap in its own folder: %+v", ran)
 	}

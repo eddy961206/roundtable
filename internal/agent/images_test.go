@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 )
 
@@ -20,21 +19,9 @@ func TestImageProviderArgumentsAndClaudeJSON(t *testing.T) {
 	for _, session := range []string{"", "existing-session"} {
 		for _, mode := range []string{ModeChat, ModeRead, ModeWrite} {
 			o := RunOptions{Prompt: "image prompt", SessionID: session, Mode: mode, Workspace: dir, ScratchDir: dir, Images: []Image{{Path: path, Mime: "image/png"}, {Path: path, Mime: "image/png"}}}
-			args := codexArgs(o, "")
-			count := 0
-			for i, arg := range args {
-				if arg == "--image" {
-					count++
-					if args[i+1] != path {
-						t.Fatal(args)
-					}
-				}
-			}
-			if count != 2 {
-				t.Fatal(args)
-			}
-			if session != "" && (args[1] != "resume" || args[len(args)-2] != session || slices.Index(args, "--image") > slices.Index(args, session)) {
-				t.Fatal(args)
+			input := codexInputs(o.Prompt, o.Images)
+			if len(input) != 3 || input[0]["text"] != o.Prompt || input[1]["type"] != "localImage" || input[1]["path"] != path || input[2]["path"] != path {
+				t.Fatal(input)
 			}
 			for _, args := range [][]string{agyArgs(o), claudeArgs(o)} {
 				found := false

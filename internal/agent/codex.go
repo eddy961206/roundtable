@@ -2,23 +2,19 @@ package agent
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 )
 
 // exitGrace is how long a CLI process may stay after it reported the turn
-// complete (codex turn.completed, agy result) before roundtable ends it.
+// complete (Codex turn/completed, agy result) before roundtable ends it.
 var exitGrace = 60 * time.Second
 
-// Codex runs `codex exec --json` and watches ~/.codex/sessions for sub-agent threads.
+// Codex runs one app-server process per room turn and watches child rollouts.
 type Codex struct {
 	cmd            string
 	sessionsDir    string
@@ -38,15 +34,16 @@ func NewCodex(cmd string) *Codex {
 // the 2026-10-20 user decision: no OS sandbox, including interactive resumes.
 func (c *Codex) SetWindowsSandbox(mode string) { c.windowsSandbox = mode }
 
-func (c *Codex) ID() string      { return "codex" }
-func (c *Codex) Label() string   { return "Codex" }
-func (c *Codex) Command() string { return c.cmd }
-func (c *Codex) Available() bool { return available(c.cmd) }
-func (c *Codex) CanSteer() bool  { return false }
-func (c *Codex) CanFork() bool   { return true }
+func (c *Codex) ID() string           { return "codex" }
+func (c *Codex) Label() string        { return "Codex" }
+func (c *Codex) Command() string      { return c.cmd }
+func (c *Codex) Available() bool      { return available(c.cmd) }
+func (c *Codex) CanSteer() bool       { return true }
+func (c *Codex) CanFork() bool        { return true }
+func (c *Codex) CanSteerImages() bool { return true }
 
 // model/list also advertises ultra orchestration, but forwarding it through
-// exec's model_reasoning_effort has not been verified. Expose the verified range.
+// turn/start effort has not been verified. Expose the verified range.
 func (c *Codex) Efforts() []string                 { return []string{"low", "medium", "high", "xhigh", "max"} }
 func (c *Codex) ModelEfforts() map[string][]string { return nil }
 func (c *Codex) DefaultModel() (string, string)    { return "gpt-6.1-sol", "high" }
@@ -66,26 +63,11 @@ func (c *Codex) Models() []ModelOption {
 }
 
 func codexArgs(o RunOptions, windowsSandbox string) []string {
-	// `codex exec resume` and `codex exec fork` accept fewer flags than `codex exec`
-	// (no --color, no --cd), and want options before the positional session id.
-	resume, fork := o.SessionID != "", o.ForkSession != ""
-	args := []string{"exec"}
-	switch {
-	case resume:
-		args = append(args, "resume")
-	case fork:
-		args = append(args, "fork")
-	}
+	args := []string{"app-server"}
 	// Plugins add their skills to the instructions, and Codex re-sends that whole
 	// list (about 10K tokens) whenever its shortened form changes, which happened on
 	// most resumed turns (measured 2026-10-20). Roundtable runs use no plugin tools.
-	args = append(args, "--json", "--skip-git-repo-check", "-c", "suppress_unstable_features_warning=true", "-c", "features.plugins=false")
-	for _, im := range o.Images {
-		args = append(args, "--image", im.Path)
-	}
-	if !resume && !fork {
-		args = append(args, "--color", "never")
-	}
+	args = append(args, "-c", "suppress_unstable_features_warning=true", "-c", "features.plugins=false")
 	if o.Model != "" {
 		args = append(args, "-c", fmt.Sprintf("model=%q", o.Model))
 	}
@@ -109,20 +91,13 @@ func codexArgs(o RunOptions, windowsSandbox string) []string {
 	args = append(args, codexPermissionArgs(o.Mode, windowsSandbox)...)
 	if o.Mode == ModeWrite {
 		cache := tomlString(filepath.Join(o.ScratchDir, "codex", "go-build"))
-		// Config overrides also work with exec resume (which has no --add-dir).
 		// Explicit shell env injection survives Codex's inherited-env filters.
 		args = append(args, "-c", "shell_environment_policy.set.GOCACHE="+cache)
 		if windowsSandbox != "" {
 			args = append(args, "-c", "sandbox_workspace_write.writable_roots=["+cache+"]")
 		}
 	}
-	switch {
-	case resume:
-		return append(args, o.SessionID, "-")
-	case fork:
-		return append(args, o.ForkSession, "-")
-	}
-	return append(args, "--cd", workDir(o), "-")
+	return args
 }
 
 // Keep headless and interactive permission policies identical. Codex has no
@@ -148,90 +123,6 @@ func codexPrompt(o RunOptions) string {
 		"도구가 없거나 조회에 실패하면 사유를 보고하고 같은 실패를 반복하지 마세요.\n\n" + o.Prompt
 }
 
-func (c *Codex) Run(ctx context.Context, o RunOptions, emit func(Event)) (Result, error) {
-	if err := validateImages(o.Images); err != nil {
-		return Result{}, err
-	}
-	path, err := resolveCommand(c.cmd)
-	if err != nil {
-		return Result{}, fmt.Errorf("codex CLI를 찾지 못함: %w", err)
-	}
-	cmd := exec.Command(path, codexArgs(o, c.windowsSandbox)...)
-	cmd.Dir = workDir(o)
-	cmd.Env = os.Environ()
-	if o.Mode == ModeWrite {
-		if !filepath.IsAbs(o.ScratchDir) {
-			return Result{}, fmt.Errorf("Codex 쓰기 모드에는 절대 경로 ScratchDir가 필요함")
-		}
-		cache := filepath.Join(o.ScratchDir, "codex", "go-build")
-		if err := os.MkdirAll(cache, 0o700); err != nil {
-			return Result{}, fmt.Errorf("Codex Go 빌드 캐시 생성: %w", err)
-		}
-		cmd.Env = append(cmd.Env, "GOCACHE="+cache)
-	}
-	// turn.completed totals of a fork include the original thread's usage, but
-	// the fork's rollout does not repeat its token counts.
-	var forkTotals map[string]any
-	if o.ForkSession != "" {
-		if forkTotals, err = c.threadTotals(o.ForkSession); err != nil {
-			return Result{}, err
-		}
-	}
-	p := newCodexParser()
-	watcher := newRolloutWatcher(c.sessionsDir, time.Now().Add(-5*time.Second))
-	stop := make(chan struct{})
-	watchDone := make(chan struct{})
-	go func() {
-		defer close(watchDone)
-		t := time.NewTicker(1500 * time.Millisecond)
-		defer t.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-t.C:
-				if id := p.threadID(); id != "" {
-					watcher.scan(id, emit)
-				}
-			}
-		}
-	}()
-	// codex exec가 turn.completed 뒤에도 끝나지 않는 일이 있다(2026-10-28: 턴 안에서 띄운 Gradle 데몬이
-	// 출력 핸들을 물려받아 1시간 45분 동안 턴이 닫히지 않음). 완료를 본 뒤 유예가 지나면 정리하고 완료로 닫는다.
-	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
-	var lingerTimer *time.Timer
-	var lingered atomic.Bool
-	stderr, runErr := runLines(runCtx, cmd, codexPrompt(o), func(line string) {
-		p.Line(line, emit)
-		if p.completed && lingerTimer == nil {
-			lingerTimer = time.AfterFunc(exitGrace, func() {
-				lingered.Store(true)
-				cancelRun()
-			})
-		}
-	})
-	if lingerTimer != nil {
-		lingerTimer.Stop()
-	}
-	if lingered.Load() && ctx.Err() == nil {
-		runErr = nil
-		stderr += fmt.Sprintf("\n[roundtable] codex가 완료 뒤 %s 동안 끝나지 않아 프로세스를 정리함", exitGrace)
-	}
-	close(stop)
-	<-watchDone
-	if id := p.threadID(); id != "" {
-		watcher.scan(id, emit)
-		watcher.finish(emit)
-		if path := watcher.pathOf(id); path != "" {
-			codexLimitsFromRollout(path, forkTotals, p, emit)
-		}
-	}
-	fin := p.Finish(emit)
-	res := Result{Text: fin.Text, SessionID: fin.SessionID, Usage: fin.Usage, Stderr: stderr}
-	return res, finishError("codex", fin, runErr, filterCodexStderr(stderr))
-}
-
 func filterCodexStderr(s string) string {
 	var keep []string
 	for _, l := range strings.Split(s, "\n") {
@@ -241,181 +132,6 @@ func filterCodexStderr(s string) string {
 		keep = append(keep, l)
 	}
 	return strings.Join(keep, "\n")
-}
-
-type codexParser struct {
-	threadMu  sync.RWMutex
-	thread    string
-	parts     []string
-	errText   string
-	usage     map[string]any
-	names     map[string]string
-	context   int
-	window    int
-	completed bool
-	// before is the thread's total_token_usage when this turn started, read from
-	// the rollout; nil until the rollout was read.
-	before map[string]any
-}
-
-func newCodexParser() *codexParser { return &codexParser{names: map[string]string{}} }
-
-func (p *codexParser) threadID() string {
-	p.threadMu.RLock()
-	defer p.threadMu.RUnlock()
-	return p.thread
-}
-
-func (p *codexParser) Line(line string, emit func(Event)) {
-	m := parseLine(line)
-	if m == nil {
-		return
-	}
-	typ := str(m, "type")
-	switch typ {
-	case "thread.started":
-		p.threadMu.Lock()
-		p.thread = str(m, "thread_id")
-		p.threadMu.Unlock()
-		x := ev(KindSession)
-		x.Text = p.thread
-		emit(x)
-	case "turn.completed":
-		p.completed = true
-		p.usage = obj(m, "usage")
-	case "turn.failed":
-		p.errText = firstNonEmpty(str(obj(m, "error"), "message"), "turn failed")
-	case "error":
-		p.errText = firstNonEmpty(str(m, "message"), str(obj(m, "error"), "message"), "error")
-	case "item.started", "item.completed":
-		p.item(typ == "item.completed", obj(m, "item"), emit)
-	}
-}
-
-func (p *codexParser) item(done bool, it map[string]any, emit func(Event)) {
-	id := str(it, "id")
-	switch str(it, "type") {
-	case "agent_message":
-		if !done {
-			return
-		}
-		t := str(it, "text")
-		if strings.TrimSpace(t) == "" {
-			return
-		}
-		p.parts = append(p.parts, t)
-		x := ev(KindText)
-		x.Text = t
-		emit(x)
-	case "reasoning":
-		if done {
-			if t := str(it, "text"); t != "" {
-				x := ev(KindThinking)
-				x.Text = clip(t, 4000)
-				emit(x)
-			}
-		}
-	case "command_execution":
-		if !done {
-			x := ev(KindToolCall)
-			x.ID, x.Name, x.Input = id, "shell", str(it, "command")
-			p.names[id] = "shell"
-			emit(x)
-			return
-		}
-		x := ev(KindToolResult)
-		x.ID, x.Name, x.Output = id, "shell", clip(str(it, "aggregated_output"), maxCapture)
-		x.Meta = map[string]any{"exit_code": it["exit_code"], "status": str(it, "status")}
-		if _, known := p.names[id]; !known {
-			x.Input = str(it, "command")
-		}
-		emit(x)
-	case "file_change":
-		if done {
-			x := ev(KindToolResult)
-			x.ID, x.Name, x.Output = id, "file_change", compactJSON(it["changes"])
-			x.Meta = map[string]any{"status": str(it, "status")}
-			emit(x)
-		}
-	case "mcp_tool_call":
-		name := str(it, "server") + "/" + str(it, "tool")
-		if !done {
-			x := ev(KindToolCall)
-			x.ID, x.Name, x.Input = id, name, compactJSON(it["arguments"])
-			emit(x)
-			return
-		}
-		x := ev(KindToolResult)
-		x.ID, x.Name, x.Output = id, name, contentText(obj(it, "result")["content"])
-		if e := it["error"]; e != nil {
-			x.Meta = map[string]any{"error": compactJSON(e)}
-		}
-		emit(x)
-	case "web_search":
-		if done {
-			x := ev(KindToolResult)
-			x.ID, x.Name, x.Input = id, "web_search", str(it, "query")
-			emit(x)
-		}
-	case "collab_tool_call":
-		x := ev(KindStatus)
-		tool := str(it, "tool")
-		recv := arr(it, "receiver_thread_ids")
-		state := "시작"
-		if done {
-			state = "완료"
-		}
-		x.Text = fmt.Sprintf("서브에이전트 협업 %s %s", tool, state)
-		x.Meta = map[string]any{"tool": tool, "receivers": recv, "prompt": str(it, "prompt")}
-		emit(x)
-	case "error":
-		msg := str(it, "message")
-		if strings.Contains(msg, "Under-development features") || strings.Contains(msg, "skill descriptions were shortened") {
-			return
-		}
-		if strings.Contains(msg, "Code Mode is unavailable") {
-			x := ev(KindStatus)
-			x.Text = "Codex code-mode host 없음 (셸 도구로 진행)"
-			emit(x)
-			return
-		}
-		x := ev(KindError)
-		x.Text = msg
-		emit(x)
-	case "todo_list":
-		x := ev(KindStatus)
-		x.Text = "할 일 목록 갱신"
-		x.Meta = map[string]any{"items": it["items"]}
-		emit(x)
-	}
-}
-
-func (p *codexParser) Finish(emit func(Event)) Final {
-	// turn.completed reports the whole thread's totals, so a resumed turn's own
-	// usage is the difference from the totals before it. Without the rollout
-	// that difference is unknown and the totals would be misread as this turn.
-	if p.before == nil {
-		p.usage = nil
-	}
-	if p.usage != nil {
-		for k, v := range p.usage {
-			n, ok := v.(float64)
-			prev, _ := p.before[k].(float64)
-			if ok {
-				p.usage[k] = n - prev
-			}
-		}
-		if p.context > 0 {
-			p.usage["context_tokens"] = p.context
-		}
-		if p.window > 0 {
-			p.usage["context_window"] = p.window
-		}
-		x := ev(KindUsage)
-		x.Meta = p.usage
-		emit(x)
-	}
-	return Final{Text: strings.TrimSpace(strings.Join(p.parts, "\n\n")), SessionID: p.thread, Err: p.errText, Usage: p.usage, Complete: p.completed}
 }
 
 // threadTotals reads a saved thread's total_token_usage from its rollout file.
@@ -445,12 +161,9 @@ func (c *Codex) threadTotals(id string) (map[string]any, error) {
 	return total, nil
 }
 
-// codexLimitsFromRollout reads the turn's own rollout file. The newest
-// token_count carries the account rate limits and the context window; the last
-// one before the newest turn_context holds the thread totals before this turn.
-// base is the totals the thread started from (a fork's original thread; nil
-// for a new or resumed thread, whose rollout holds its own history).
-func codexLimitsFromRollout(path string, base map[string]any, p *codexParser, emit func(Event)) {
+// codexLimitsFromRollout reads account limits and context only. The turn's
+// usage baseline is captured before turn/start and must never move here.
+func codexLimitsFromRollout(path string, p *codexParser, emit func(Event)) {
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -458,27 +171,16 @@ func codexLimitsFromRollout(path string, base map[string]any, p *codexParser, em
 	defer f.Close()
 	var last map[string]any
 	var observedAt int64
-	before, total := map[string]any{}, map[string]any{}
-	if base != nil {
-		before, total = base, base
-	}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), maxLineBytes)
 	for sc.Scan() {
 		line := sc.Text()
-		if strings.HasPrefix(line, `{"timestamp"`) && strings.Contains(line, `"type":"turn_context"`) {
-			before = total
-			continue
-		}
 		if !strings.Contains(line, `"token_count"`) {
 			continue
 		}
 		m := parseLine(line)
 		if m == nil || str(m, "type") != "event_msg" {
 			continue
-		}
-		if t := obj(obj(obj(m, "payload"), "info"), "total_token_usage"); t != nil {
-			total = t
 		}
 		if pl := obj(m, "payload"); str(pl, "type") == "token_count" {
 			last = pl
@@ -488,7 +190,6 @@ func codexLimitsFromRollout(path string, base map[string]any, p *codexParser, em
 			}
 		}
 	}
-	p.before = before
 	if last == nil {
 		return
 	}

@@ -76,18 +76,18 @@ func TestUserRequestAnswerDelivery(t *testing.T) {
 				t.Fatal(msg, resolved, err)
 			}
 			if state == "running-steer" {
-				if !msg.Live {
-					t.Fatal("steer-capable running seat was not steered")
+				if msg.Live || msg.Delivery == nil || msg.Delivery.State != deliveryPending {
+					t.Fatal("queued input was reported as accepted")
 				}
 				select {
-				case text := <-running.opts.Steer:
-					if !strings.Contains(text, "대한 답: 123") {
-						t.Fatal(text)
+				case input := <-running.opts.Steer:
+					if input.ID != msg.ID || !strings.Contains(input.Text, "대한 답: 123") {
+						t.Fatal(input)
 					}
 				default:
 					t.Fatal("missing live answer")
 				}
-				running.result <- controlledResult{text: "반영", steered: 1}
+				running.result <- controlledResult{text: "반영", receipts: receivedInput(msg.ID)}
 			} else {
 				if state == "queued" {
 					finishCall(running, "진행 작업 끝")

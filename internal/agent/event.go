@@ -21,6 +21,7 @@ const (
 	KindUsage         = "usage"          // Meta = tokens/cost/context_tokens/context_window
 	KindLimits        = "limits"         // Meta = Limits snapshot of the vendor account
 	KindAsk           = "ask"            // ID = question call id, Meta["questions"] = []AskQuestion; the room keeps it on the reply, not in the trace
+	KindDelivery      = "delivery"       // Receipt identifies one mid-turn input and its outcome
 )
 
 // AskQuestion is one question an agent asked the person mid-turn (Codex
@@ -50,16 +51,17 @@ type LimitWindow struct {
 
 // Event is one normalized trace item of an agent turn.
 type Event struct {
-	TS     int64          `json:"ts"`
-	Kind   string         `json:"kind"`
-	ID     string         `json:"id,omitempty"`
-	Parent string         `json:"parent,omitempty"`
-	Name   string         `json:"name,omitempty"`
-	Role   string         `json:"role,omitempty"`
-	Input  string         `json:"input,omitempty"`
-	Output string         `json:"output,omitempty"`
-	Text   string         `json:"text,omitempty"`
-	Meta   map[string]any `json:"meta,omitempty"`
+	Receipt *SteerReceipt  `json:"receipt,omitempty"`
+	TS      int64          `json:"ts"`
+	Kind    string         `json:"kind"`
+	ID      string         `json:"id,omitempty"`
+	Parent  string         `json:"parent,omitempty"`
+	Name    string         `json:"name,omitempty"`
+	Role    string         `json:"role,omitempty"`
+	Input   string         `json:"input,omitempty"`
+	Output  string         `json:"output,omitempty"`
+	Text    string         `json:"text,omitempty"`
+	Meta    map[string]any `json:"meta,omitempty"`
 }
 
 func now() int64 { return time.Now().UnixMilli() }

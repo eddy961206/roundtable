@@ -165,9 +165,10 @@ type Message struct {
 	Author           string            `json:"author"`       // "user" or participant id
 	By               string            `json:"by,omitempty"` // a person on another PC who wrote this user message (people.go)
 	Text             string            `json:"text"`
-	Status           string            `json:"status"`           // done | streaming | error | cancelled
-	Target           string            `json:"target,omitempty"` // user message addressed to one agent only
-	Live             bool              `json:"live,omitempty"`   // injected into a running turn (steering)
+	Status           string            `json:"status"`             // done | streaming | error | cancelled
+	Target           string            `json:"target,omitempty"`   // user message addressed to one agent only
+	Live             bool              `json:"live,omitempty"`     // confirmed injection; legacy records retain their original value
+	Delivery         *InputDelivery    `json:"delivery,omitempty"` // immutable value: replace the pointer when updating
 	TurnID           string            `json:"turn_id,omitempty"`
 	ReplyTo          string            `json:"reply_to,omitempty"` // triggering message ID, when the turn has one
 	Reason           string            `json:"reason,omitempty"`   // mention | broadcast | discussion | part | review

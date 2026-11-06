@@ -311,6 +311,9 @@ func (h *Hub) StopParticipant(id, seatID string) ([]byte, error) {
 	}
 	if running != nil {
 		running.discardFollowups = true
+		if err := h.haltDeliveries(rs, running); err != nil {
+			h.reportPersistenceError(rs, "좌석 중단 입력", err)
+		}
 		running.cancel()
 	}
 	rs.dropQueuedFor(h, seatID)
