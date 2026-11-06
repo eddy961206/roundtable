@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// A turn may run at most the room's turn_timeout_minutes (default 45). Running
+// A turn may run at most the room's turn_timeout_minutes (default 240). Running
 // past it ends the turn as an error of kind "turn_timeout", not as a user stop.
 const (
-	DefaultTurnTimeoutMinutes = 45
+	DefaultTurnTimeoutMinutes = 240
 	MinTurnTimeoutMinutes     = 5
 	MaxTurnTimeoutMinutes     = 720
 )

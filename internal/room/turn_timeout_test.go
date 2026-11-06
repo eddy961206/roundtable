@@ -51,7 +51,10 @@ func TestTurnTimeoutIsAnErrorNotACancel(t *testing.T) {
 
 func TestTurnTimeoutSetting(t *testing.T) {
 	h, r, _ := controlledHub(t, "codex")
-	if got := r.turnTimeout(); got != 45*time.Minute {
+	if r.TurnTimeoutMinutes != 0 {
+		t.Fatalf("expected 0 for unset room timeout, got %d", r.TurnTimeoutMinutes)
+	}
+	if got := r.turnTimeout(); got != 240*time.Minute {
 		t.Fatalf("default %v", got)
 	}
 	for _, bad := range []int{4, 721, -1} {
@@ -69,6 +72,9 @@ func TestTurnTimeoutSetting(t *testing.T) {
 	created, err := h.CreateRoom(RoomSpec{Title: "long", Mode: "chat", Participants: []string{"codex"}, TurnTimeoutMinutes: 90})
 	if err != nil || created.TurnTimeoutMinutes != 90 {
 		t.Fatalf("%v %+v", err, created)
+	}
+	if got := h.rooms[created.ID].room.turnTimeout(); got != 90*time.Minute {
+		t.Fatalf("expected 90m for explicitly set room, got %v", got)
 	}
 	if _, err := h.CreateRoom(RoomSpec{Title: "bad", Mode: "chat", Participants: []string{"codex"}, TurnTimeoutMinutes: 3}); err == nil {
 		t.Fatal("create accepted 3 minutes")
