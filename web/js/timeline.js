@@ -14,6 +14,7 @@ import { buildSessionActions, updateSessionActions } from "./participants.js";
 import { openForwardDialog } from "./forward.js";
 import { timingTitle } from "./stats.js";
 import { activeTraceActivity, ensureAndRenderTrace, liveHtml, toggleTrace } from "./trace.js";
+import { deliveryLabel } from "./delivery.js";
 
 // ---------- timeline (Fix P2 #2: Strict 200 DOM cap in all scroll positions) ----------
 let isRenderingTimeline = false;
@@ -574,9 +575,10 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
       );
     }
     if (m.kind === "user" && m.target) {
-      const how = m.live ? "즉시 주입됨" : "다음 턴 전달";
+      const how = deliveryLabel(m.delivery, m.live);
+      const detail = m.delivery && m.delivery.detail ? m.delivery.detail : how;
       meta.push(
-        '<span class="steer-tag route" role="group" aria-label="' + esc("나 → " + participantLabel(m.target) + ", " + how) + '">나' +
+        '<span class="steer-tag route" data-delivery-state="' + esc(m.delivery ? m.delivery.state : "legacy") + '" title="' + esc(detail) + '" role="group" aria-label="' + esc("나 → " + participantLabel(m.target) + ", " + how) + '">나' +
           '<span class="route-arrow" aria-hidden="true">→</span>' + seatChipHtml(m.target) +
           '<span class="route-how">' + how + "</span></span>"
       );

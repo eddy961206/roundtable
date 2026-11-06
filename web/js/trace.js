@@ -4,6 +4,7 @@ import { api } from "./api.js";
 import { hooks } from "./hooks.js";
 import { openSeq, state } from "./state.js";
 import { md } from "./markdown.js";
+import { deliveryLabel } from "./delivery.js";
 
 // ---------- live progress for replies that have no text yet ----------
 // Codex narrates while it works; Claude and Antigravity often stay silent and
@@ -553,6 +554,9 @@ function syncSubLines(linesBox, lines) {
 
 function renderPlainTraceHtml(e) {
   switch (e.kind) {
+    case "delivery":
+      return '<div class="item status">입력 전달: ' + esc(deliveryLabel(e.receipt)) +
+        (e.receipt && e.receipt.detail ? " · " + esc(e.receipt.detail) : "") + "</div>";
     case "status":
       return '<div class="item status">· ' + esc(e.text) + "</div>";
     case "error":

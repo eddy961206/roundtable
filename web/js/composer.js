@@ -66,7 +66,7 @@ export function renderTargetControls() {
       const modeTxt =
         p && p.status === "running"
           ? info.can_steer
-            ? "⚡ 실행 중 즉시 주입"
+            ? "⚡ 현재 턴에 전달 시도"
             : "⏳ 현재 턴 직후 전달"
           : "🎯 1회성 단독 전달";
       actChip.hidden = false;
