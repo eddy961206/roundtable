@@ -1,6 +1,8 @@
 ------------------------------- MODULE RtWait -------------------------------
-\* covers: internal/rtmcp/wait.go internal/rtmcp/api.go internal/room/hub.go internal/room/history.go internal/room/lifecycle.go internal/room/work.go internal/room/work_cleanup.go
+\* covers: internal/rtmcp/wait.go internal/rtmcp/api.go internal/room/hub.go internal/room/history.go internal/room/lifecycle.go internal/room/work.go internal/room/work_cleanup.go internal/room/user_requests.go internal/room/requests.go
 \* reach: phase = "ready"
+\* reach: (MaxRequests = 0 /\ phase = "ready") \/ phase = "requested"
+\* reach: (MaxResumes = 0 \/ resumes = 1) /\ phase = "sleep"
 (* rt wait (internal/rtmcp/wait.go) against one room's turn state machine.
 
    Room (internal/room/hub.go), every step under h.mu, one seat:
@@ -42,9 +44,23 @@
    Steering = TRUE starts the behavior after a steer: rt post to the running
    seat returned seq 3, and the waiter runs rt wait --rooms <room>:3.
 
-   Not modeled: history pages (200 messages each). The after_seq 0 paging case
+   User requests: a completed reply may append a user_request notice while
+   another turn is queued. It remains pending until Resolve. Receipt is the
+   third component of the caller's rooms argument, initially 0, returned in
+   waiting; Resume models a new call with that value. InitialRequest models a
+   notice that existed before the call (including a restored legacy notice).
+   Notify = "notice" is the old code (only a notice); "level" returns for
+   every pending request without checking its receipt; "current" uses it.
+   Request numbers abstract monotonically increasing notice message seqs.
+   "requested" denotes user_requested even if the same return also has ready
+   rooms; "ready" here denotes a return caused only by a completed room.
+   ListRead and RequestRead are separate HTTP reads; a request can be resolved
+   between them. Receipt changes only on a returned snapshot, not on subscribe.
+
+   Not modeled: disk failures, process restart, Ask counts, multiple rooms and
+   history pages (200 messages each). These have Go regression tests. The after_seq 0 paging case
    is TestWaitAfterZeroFindsReplyBehindAFullPage. *)
-EXTENDS Naturals, Sequences
+EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS
     Budget,      \* max_chars
@@ -58,9 +74,11 @@ CONSTANTS
     MaxWork,     \* work steps after a finished reply
     Steering,    \* see above
     PublishWork, \* see above
-    Done         \* "window", "replied", "idle" or "current"
+    Done,        \* "window", "replied", "idle" or "current"
+    MaxRequests, MaxResumes, InitialRequest, Notify
 
 ASSUME Done \in {"window", "replied", "idle", "current"} /\ Steering \in BOOLEAN /\ PublishWork \in BOOLEAN
+ASSUME Notify \in {"notice", "level", "current"} /\ InitialRequest \in BOOLEAN
 
 After == IF Steering THEN 3 ELSE 1   \* the seq rt post returned
 
@@ -68,10 +86,11 @@ VARIABLES
     msgs, queued, running, work, listed,      \* room
     turns, posts, steers, bare, drops, works, \* bounds
     signal,                                   \* pending SSE signal (one slot)
-    phase, seen, checked                      \* waiter
-room == <<msgs, queued, running, work, listed>>
+    phase, seen, checked, receipt, resumes,    \* waiter
+    pending, requests                         \* user requests, issued count
+room == <<msgs, queued, running, work, listed, pending, requests>>
 bounds == <<turns, posts, steers, bare, drops, works>>
-waiter == <<phase, seen, checked>>
+waiter == <<phase, seen, checked, receipt, resumes>>
 vars == <<room, bounds, signal, waiter>>
 
 Msg(k, s, n, l) == [kind |-> k, status |-> s, len |-> n, live |-> l]
@@ -80,7 +99,12 @@ Msg(k, s, n, l) == [kind |-> k, status |-> s, len |-> n, live |-> l]
 Busy == queued \/ running \/ work
 Reported == IF Done = "current" THEN Busy ELSE queued \/ running
 
-Summary == <<Reported, Len(msgs)>>
+LatestPending == IF pending = {} THEN 0 ELSE CHOOSE n \in pending : \A i \in pending : n >= i
+Summary == <<Reported, Len(msgs), Cardinality(pending), LatestPending>>
+UnseenRequest == \E i \in pending : i > receipt
+NotifyRequest == CASE Notify = "notice" -> FALSE
+                   [] Notify = "level" -> pending # {}
+                   [] Notify = "current" -> UnseenRequest
 
 \* A room step ends by publishing its summary; the feed gets a signal if it moved.
 Publish(new) ==
@@ -120,12 +144,15 @@ Init ==
        ELSE /\ msgs = <<Msg("user", "done", 1, FALSE)>>
             /\ queued = TRUE /\ running = FALSE /\ turns = 0 /\ steers = 0
     /\ work = FALSE
+    /\ requests = IF InitialRequest THEN 1 ELSE 0
+    /\ pending = IF InitialRequest THEN {1} ELSE {}
     /\ listed = Summary
     /\ posts = 0 /\ bare = 0 /\ drops = 0 /\ works = 0
     /\ signal = FALSE     \* the waiter subscribes before its first read
     /\ phase = "list"
     /\ seen = 0
     /\ checked = 0        \* no idle read yet (a room always has messages)
+    /\ receipt = 0 /\ resumes = 0
 
 -------------------------------------------------------------------------------
 \* Room
@@ -136,7 +163,7 @@ Start ==
     /\ running' = TRUE
     /\ turns' = turns + 1
     /\ msgs' = Append(msgs, Msg("agent", "streaming", ReplyLen, FALSE))
-    /\ UNCHANGED <<work, posts, steers, bare, drops, works, waiter>>
+    /\ UNCHANGED <<work, posts, steers, bare, drops, works, waiter, pending, requests>>
     /\ Publish(Summary')
 
 Streaming == CHOOSE i \in 1..Len(msgs) : IsReply(i) /\ msgs[i].status = "streaming"
@@ -146,20 +173,23 @@ Streaming == CHOOSE i \in 1..Len(msgs) : IsReply(i) /\ msgs[i].status = "streami
 Finish ==
     /\ running
     /\ running' = FALSE
-    /\ \E took, notice, step \in BOOLEAN :
+    /\ \E took, notice, step, userRequest \in BOOLEAN :
         LET r == Streaming
             done == [msgs EXCEPT ![r].status = "done"]
             left == {j \in (r + 1)..Len(msgs) : msgs[j].live}
             kept == IF took THEN done
                     ELSE [j \in 1..Len(done) |-> IF j \in left THEN [done[j] EXCEPT !.live = FALSE] ELSE done[j]]
         IN  /\ (step => works < MaxWork)
-            /\ msgs' = IF notice THEN Append(kept, Msg("system", "done", NoticeLen, FALSE)) ELSE kept
+            /\ (userRequest => requests < MaxRequests)
+            /\ msgs' = IF notice \/ userRequest THEN Append(kept, Msg("system", "done", NoticeLen, FALSE)) ELSE kept
+            /\ requests' = IF userRequest THEN requests + 1 ELSE requests
+            /\ pending' = IF userRequest THEN pending \cup {requests + 1} ELSE pending
             /\ queued' = (queued \/ (~took /\ left # {}))
             /\ work' = step
             /\ works' = IF step THEN works + 1 ELSE works
             \* The reply's event comes before the step; without publishList the
             \* step itself publishes nothing.
-            /\ Publish(IF PublishWork THEN Summary' ELSE <<queued' \/ running', Len(msgs')>>)
+            /\ Publish(IF PublishWork THEN Summary' ELSE <<queued' \/ running', Len(msgs'), Cardinality(pending'), LatestPending'>>)
     /\ UNCHANGED <<turns, posts, steers, bare, drops, waiter>>
 
 \* The work step ends: it queues the review turn, or it stops (blocked part).
@@ -167,7 +197,7 @@ WorkEnd ==
     /\ work
     /\ work' = FALSE
     /\ \E review \in BOOLEAN : queued' = (queued \/ review)
-    /\ UNCHANGED <<msgs, running, bounds, waiter>>
+    /\ UNCHANGED <<msgs, running, bounds, waiter, pending, requests>>
     /\ Publish(Summary')
 
 \* Another user message to an idle seat, e.g. from a second orchestrator.
@@ -176,7 +206,7 @@ Post ==
     /\ posts' = posts + 1
     /\ msgs' = Append(msgs, Msg("user", "done", 1, FALSE))
     /\ queued' = TRUE
-    /\ UNCHANGED <<running, work, turns, steers, bare, drops, works, waiter>>
+    /\ UNCHANGED <<running, work, turns, steers, bare, drops, works, waiter, pending, requests>>
     /\ Publish(Summary')
 
 \* A post to the running seat joins its turn and queues nothing.
@@ -184,7 +214,7 @@ Steer ==
     /\ running /\ steers < MaxSteers
     /\ steers' = steers + 1
     /\ msgs' = Append(msgs, Msg("user", "done", 1, TRUE))
-    /\ UNCHANGED <<queued, running, work, turns, posts, bare, drops, works, waiter>>
+    /\ UNCHANGED <<queued, running, work, turns, posts, bare, drops, works, waiter, pending, requests>>
     /\ Publish(Summary')
 
 \* A turn queued without a message (discussion start, replayed turn).
@@ -192,7 +222,7 @@ QueueBare ==
     /\ ~queued /\ bare < MaxBare
     /\ bare' = bare + 1
     /\ queued' = TRUE
-    /\ UNCHANGED <<msgs, running, work, turns, posts, steers, drops, works, waiter>>
+    /\ UNCHANGED <<msgs, running, work, turns, posts, steers, drops, works, waiter, pending, requests>>
     /\ Publish(Summary')
 
 \* A queued turn leaves without an answer (CancelTurn, CancelRequest, holdTurn).
@@ -200,10 +230,19 @@ Drop ==
     /\ queued /\ drops < MaxDrops
     /\ drops' = drops + 1
     /\ queued' = FALSE
-    /\ UNCHANGED <<msgs, running, work, turns, posts, steers, bare, works, waiter>>
+    /\ UNCHANGED <<msgs, running, work, turns, posts, steers, bare, works, waiter, pending, requests>>
     /\ Publish(Summary')
 
-Room == Start \/ Finish \/ WorkEnd \/ Post \/ Steer \/ QueueBare \/ Drop
+\* Acknowledgement appends one durable resolution; no seat turn is created.
+\* Sending an answer uses the same resolution plus the existing post path.
+Resolve ==
+    /\ pending # {}
+    /\ \E i \in pending : pending' = pending \ {i}
+    /\ msgs' = Append(msgs, Msg("system", "done", NoticeLen, FALSE))
+    /\ UNCHANGED <<queued, running, work, requests, bounds, waiter>>
+    /\ Publish(Summary')
+
+Room == Start \/ Finish \/ WorkEnd \/ Post \/ Steer \/ QueueBare \/ Drop \/ Resolve
 
 -------------------------------------------------------------------------------
 \* Waiter
@@ -214,23 +253,37 @@ ListRead ==
        THEN /\ phase' = "read"
             /\ seen' = Len(msgs)
             /\ checked' = IF Done \in {"idle", "current"} THEN checked ELSE Len(msgs)
-       ELSE phase' = "sleep" /\ UNCHANGED <<seen, checked>>
-    /\ UNCHANGED <<room, bounds, signal>>
+       ELSE /\ phase' = IF Notify # "notice" /\ pending # {} THEN "request_read" ELSE "sleep"
+            /\ UNCHANGED <<seen, checked>>
+    /\ UNCHANGED <<room, bounds, signal, receipt, resumes>>
 
 \* A separate request: the room may have moved since ListRead.
 MsgRead ==
     /\ phase = "read"
-    /\ phase' = IF Finished THEN "ready" ELSE "sleep"
+    /\ phase' = IF NotifyRequest THEN "requested" ELSE IF Finished THEN "ready" ELSE "sleep"
+    /\ receipt' = IF NotifyRequest THEN LatestPending ELSE receipt
     /\ checked' = IF Done \in {"idle", "current"} /\ ~Reported THEN seen ELSE checked
-    /\ UNCHANGED <<room, bounds, signal, seen>>
+    /\ UNCHANGED <<room, bounds, signal, seen, resumes>>
+
+RequestRead ==
+    /\ phase = "request_read"
+    /\ phase' = IF NotifyRequest THEN "requested" ELSE "sleep"
+    /\ receipt' = IF NotifyRequest THEN LatestPending ELSE receipt
+    /\ UNCHANGED <<room, bounds, signal, seen, checked, resumes>>
 
 Wake ==
     /\ phase = "sleep" /\ signal
     /\ signal' = FALSE
     /\ phase' = "list"
-    /\ UNCHANGED <<room, bounds, seen, checked>>
+    /\ UNCHANGED <<room, bounds, seen, checked, receipt, resumes>>
 
-Waiter == ListRead \/ MsgRead \/ Wake
+Resume ==
+    /\ phase = "requested" /\ resumes < MaxResumes
+    /\ resumes' = resumes + 1
+    /\ phase' = "list" /\ checked' = 0 /\ seen' = 0 /\ signal' = FALSE
+    /\ UNCHANGED <<room, bounds, receipt>>
+
+Waiter == ListRead \/ MsgRead \/ RequestRead \/ Wake \/ Resume
 
 \* Nothing left to do: the room stopped and the waiter returned or sleeps.
 Halt ==
@@ -246,10 +299,12 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(Waiter)
 \* seat answered the message at after_seq or a later one".
 
 TypeOK ==
-    /\ phase \in {"list", "read", "sleep", "ready"}
+    /\ phase \in {"list", "read", "request_read", "sleep", "ready", "requested"}
     /\ seen \in 0..Len(msgs) /\ checked \in 0..Len(msgs)
     /\ queued \in BOOLEAN /\ running \in BOOLEAN /\ work \in BOOLEAN /\ signal \in BOOLEAN
-    /\ listed \in BOOLEAN \X (0..Len(msgs))
+    /\ listed \in BOOLEAN \X (0..Len(msgs)) \X (0..MaxRequests) \X (0..MaxRequests)
+    /\ pending \subseteq 1..requests /\ requests \in 0..MaxRequests
+    /\ receipt \in 0..requests /\ resumes \in 0..MaxResumes
 
 \* ready names a room whose seat answered.
 ReadyHasAnswer == phase = "ready" => Answered
@@ -257,11 +312,23 @@ ReadyHasAnswer == phase = "ready" => Answered
 \* A waiter asleep with no signal pending never sleeps through a finished room.
 SleepsOnlyWhenUnfinished == (phase = "sleep" /\ ~signal) => ~(~Busy /\ Answered)
 
+SleepsOnlyWhenNoUserRequest == (phase = "sleep" /\ ~signal) => ~UnseenRequest
+
+\* A notification must contain a currently pending, not previously receipted
+\* request. Resolve before RequestRead cannot create a spurious notification.
+NotifiesOnlyUnseenRequest == [][phase # "requested" /\ phase' = "requested" => UnseenRequest]_vars
+
 \* The read that returns ready saw no running or queued turn or work step.
 \* MsgRead leaves the room unchanged, so Busy here is what that read observed.
 ReadyOnlyWhenIdle == [][phase # "ready" /\ phase' = "ready" => ~Busy]_vars
 
 \* A room that stays idle with an answer wakes the waiter.
-WakesWhenFinished == <>[](~Busy /\ Answered) => <>(phase = "ready")
+WakesWhenFinished == <>[](~Busy /\ Answered) => <>(phase \in {"ready", "requested"})
+
+\* Only a live wait owes a notification. Requests created after a completed
+\* wait has returned are handled by the caller's next call, not that old one.
+WakesWhenUserRequests ==
+    (phase \in {"list", "read", "request_read", "sleep"} /\ UnseenRequest)
+        ~> (phase = "requested" \/ ~UnseenRequest)
 
 =============================================================================

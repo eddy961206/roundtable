@@ -55,7 +55,8 @@ type seatRow struct {
 	LastSeq    int64  `json:"last_seq,omitempty"`
 	Last       string `json:"last,omitempty"`
 	// Asks are this seat's questions to the person still waiting or open.
-	Asks []askView `json:"asks,omitempty"`
+	Asks         []askView     `json:"asks,omitempty"`
+	UserRequests []userRequest `json:"user_requests,omitempty"`
 }
 
 type toolState struct {
@@ -99,9 +100,10 @@ func (s *Server) seats(ctx context.Context, rooms string, limit int) (any, error
 				Title        string      `json:"title"`
 				Participants []seatState `json:"participants"`
 			} `json:"room"`
-			Messages []apiMessage `json:"messages"`
-			Queue    []apiTurn    `json:"queue"`
-			Asks     []askView    `json:"asks"`
+			Messages     []apiMessage  `json:"messages"`
+			Queue        []apiTurn     `json:"queue"`
+			Asks         []askView     `json:"asks"`
+			UserRequests []userRequest `json:"user_requests"`
 		}
 		path := fmt.Sprintf("/api/rooms/%s?limit=%d", id, seatsWindow)
 		if err := s.api(ctx, "GET", path, nil, &p); err != nil {
@@ -117,6 +119,12 @@ func (s *Server) seats(ctx context.Context, rooms string, limit int) (any, error
 			}
 		}
 		rows := []seatRow{}
+		pendingRequests := []userRequest{}
+		for _, request := range p.UserRequests {
+			if request.Status == "pending" {
+				pendingRequests = append(pendingRequests, request)
+			}
+		}
 		for _, sp := range p.Room.Participants {
 			if sp.Removed || !sp.Enabled {
 				continue
@@ -134,9 +142,15 @@ func (s *Server) seats(ctx context.Context, rooms string, limit int) (any, error
 					row.Asks = append(row.Asks, a)
 				}
 			}
+			for _, request := range pendingRequests {
+				if request.Seat == sp.ID {
+					row.UserRequests = append(row.UserRequests, request)
+				}
+			}
 			rows = append(rows, row)
 		}
-		out = append(out, map[string]any{"room": id, "title": p.Room.Title, "active": len(p.Queue) > 0, "seats": rows})
+		// Room-level requests retain a disabled/removed author's pending item.
+		out = append(out, map[string]any{"room": id, "title": p.Room.Title, "active": len(p.Queue) > 0, "seats": rows, "user_requests": pendingRequests})
 	}
 	return map[string]any{"rooms": out}, nil
 }

@@ -225,6 +225,22 @@ class ShellArgsTest(unittest.TestCase):
         self.assertIn('the answer', r.stdout)
         self.assertIn('WAITING r2:7', r.stdout)
 
+    def test_rtwait_preserves_user_request_receipt_and_prints_request(self):
+        payload = {
+            'ready': [], 'waiting': 'r1:5:9', 'user_requested': True,
+            'user_requests': [{'room': 'r1', 'requests': [
+                {'id': 'request-1', 'seat': 'codex-1', 'status': 'pending', 'text': '확인해 주세요'},
+            ]}],
+        }
+        (self.tmp / 'rt').write_text('#!/bin/bash\necho "$*" >> "$FAKE_LOG"\n' +
+                                   "echo '" + json.dumps(payload, ensure_ascii=False) + "'\n", encoding='utf-8', newline='\n')
+        r = self.run_sh('rtwait.sh', 'r1:5:7')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('wait --rooms r1:5:7', self.calls())
+        self.assertIn('USER_REQUESTED', r.stdout)
+        self.assertIn('USER_REQUEST r1 request-1 pending @codex-1 확인해 주세요', r.stdout)
+        self.assertIn('WAITING r1:5:9', r.stdout)
+
     def test_ci_wait_context_filter(self):
         r = self.run_sh('ci_wait.sh', '12', ORCH_REPO='o/r', ORCH_CI_CONTEXT='linux')
         self.assertEqual(r.returncode, 0, r.stderr)

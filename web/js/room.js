@@ -9,6 +9,7 @@ import { closeDiffDrawer, refreshPartErrorMessages, renderWork } from "./work.js
 import { renderRoomHead, renderRoomList } from "./rooms.js";
 import { renderDiscussion, renderParticipants, renderQueue } from "./participants.js";
 import { mergeSnapshotDecisions, renderDecisions, upsertDecision } from "./decisions.js";
+import { mergeUserRequests, renderUserRequests, upsertUserRequest } from "./user-requests.js";
 import { appendTraceEvent, boundedTraceEvent, expandTrace, liveFeed, seedLive, updateTraceCount } from "./trace.js";
 import { scheduleSpaceView } from "./space-view.js";
 import { cancelPendingScrollRestore, pruneMessageCaches, renderMessage, renderTimeline, scheduleRender, scheduleTraceRender, updateJumpBottomBtn, updateTimelineBanners } from "./timeline.js";
@@ -19,7 +20,7 @@ export function schedulePanels() {
   panelTimer = setTimeout(() => {
     panelTimer = null;
     if (!state.room || document.hidden) return;
-    renderParticipants(); renderTargetControls(); renderUsagePanel(); renderDecisions(); renderRequests(); renderQueue(); renderDiscussion(); renderWork(); updateHint();
+    renderParticipants(); renderTargetControls(); renderUsagePanel(); renderDecisions(); renderRequests(); renderUserRequests(); renderQueue(); renderDiscussion(); renderWork(); updateHint();
   }, STREAM_THROTTLE_MS);
 }
 
@@ -39,6 +40,7 @@ export async function openRoom(id, resync, latest = false) {
     state.work = null;
     state.workRevision = 0;
     state.requests.clear();
+    state.userRequests.clear();
     state.decisions.clear();
     state.partNotices.clear();
     state.partReviewOpen.clear();
@@ -91,6 +93,7 @@ export async function openRoom(id, resync, latest = false) {
     state.work = snap.work;
   }
   state.requests = mergeSnapshotRequests(state.requests, snap.requests, updatedReqIds);
+  state.userRequests = mergeUserRequests(state.userRequests, snap.user_requests);
   state.decisions = mergeSnapshotDecisions(state.decisions, snap.decisions);
   state.history = snap.history;
   state.browsingHistory = preserveHistory;
@@ -139,6 +142,7 @@ export async function openRoom(id, resync, latest = false) {
   renderParticipants();
   renderDecisions();
   renderRequests();
+  renderUserRequests();
   renderQueue();
   renderDiscussion();
   renderRoomList();
@@ -188,6 +192,9 @@ function handle(type, data) {
       break;
     case "request":
       upsertRequest(data);
+      break;
+    case "user_request":
+      upsertUserRequest(data);
       break;
     case "decision":
       upsertDecision(data);

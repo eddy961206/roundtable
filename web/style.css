@@ -3110,3 +3110,22 @@ body.people-page { display: flex; flex-direction: column; min-height: 100vh; mar
 .room-advanced > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 /* Usage belongs to a room's providers: without a room there is none to show. */
 body.no-room #provider-panel { display: none; }
+
+/* Durable requests to the person stay above seat cards, with a header shortcut. */
+.user-request-shortcut { color: var(--warn); border-color: var(--warn); white-space: nowrap; }
+#user-requests-section { border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+#user-requests, #resolved-user-requests { list-style: none; margin: 0; padding: 0 10px; display: grid; gap: 8px; }
+.user-request-card { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.user-request-card.status-pending { border-color: var(--warn); }
+.user-request-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.user-request-head strong { overflow-wrap: anywhere; }
+.user-request-head .badge { white-space: nowrap; }
+.user-request-seat { font-size: 11px; overflow-wrap: anywhere; }
+.user-request-text, .user-request-answer { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
+.user-request-answer { font-size: 12px; }
+.user-request-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.user-request-reply { margin-top: 8px; }
+.user-request-reply summary, #resolved-user-requests-title { cursor: pointer; }
+.user-request-reply form { display: grid; gap: 6px; padding-top: 6px; }
+.user-request-reply textarea { width: 100%; min-width: 0; resize: vertical; }
+#resolved-user-requests-title { padding: 8px 12px; color: var(--muted); font-size: 12px; }

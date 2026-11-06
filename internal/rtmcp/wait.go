@@ -12,9 +12,11 @@ import (
 	"time"
 )
 
-// waitRooms is "<room>[:<after_seq>],...". Without after_seq a room counts only
-// replies newer than its latest message when the wait starts.
-var waitRooms = regexp.MustCompile(`^[A-Za-z0-9_-]+(:[0-9]+)?(,[A-Za-z0-9_-]+(:[0-9]+)?)*$`)
+// waitRooms is "<room>[:<after_seq>[:<user_request_seq>]],...". The optional
+// third number receipts user-request notifications without resolving them.
+// Without after_seq only replies newer than the wait's start count; pending
+// user requests are still reported, however old, unless receipted explicitly.
+var waitRooms = regexp.MustCompile(`^[A-Za-z0-9_-]+(:[0-9]+(:[0-9]+)?)?(,[A-Za-z0-9_-]+(:[0-9]+(:[0-9]+)?)?)*$`)
 
 var roomList = regexp.MustCompile(`^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$`)
 
@@ -26,6 +28,7 @@ type waitTarget struct {
 	after     int64
 	given     bool
 	steerFrom int64
+	userAfter int64
 }
 
 func parseWaitRooms(s string) ([]waitTarget, error) {
@@ -39,15 +42,32 @@ func parseWaitRooms(s string) ([]waitTarget, error) {
 		seen[room] = true
 		t := waitTarget{room: room, given: given}
 		if given {
+			var userSeq string
+			var receipted bool
+			seq, userSeq, receipted = strings.Cut(seq, ":")
 			n, err := strconv.ParseInt(seq, 10, 64)
 			if err != nil {
 				return nil, fmt.Errorf("rooms의 after_seq 오류: %s", item)
 			}
 			t.after = n
+			if receipted {
+				t.userAfter, err = strconv.ParseInt(userSeq, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("rooms의 user_request_seq 오류: %s", item)
+				}
+			}
 		}
 		out = append(out, t)
 	}
 	return out, nil
+}
+
+func (t waitTarget) resume() string {
+	s := t.room + ":" + strconv.FormatInt(t.after, 10)
+	if t.userAfter > 0 {
+		s += ":" + strconv.FormatInt(t.userAfter, 10)
+	}
+	return s
 }
 
 // waitResult lists every room that finished; waiting is the rooms argument
@@ -55,11 +75,18 @@ func parseWaitRooms(s string) ([]waitTarget, error) {
 // asking holds the unanswered seat questions of the rooms still waiting; asked
 // is true when the wait ended early because a seat asked a new one.
 type waitResult struct {
-	Ready    []*readResult `json:"ready"`
-	Waiting  string        `json:"waiting"`
-	TimedOut bool          `json:"timed_out"`
-	Asked    bool          `json:"asked,omitempty"`
-	Asking   []roomAsks    `json:"asking,omitempty"`
+	Ready         []*readResult      `json:"ready"`
+	Waiting       string             `json:"waiting"`
+	TimedOut      bool               `json:"timed_out"`
+	Asked         bool               `json:"asked,omitempty"`
+	Asking        []roomAsks         `json:"asking,omitempty"`
+	UserRequested bool               `json:"user_requested,omitempty"`
+	UserRequests  []roomUserRequests `json:"user_requests,omitempty"`
+}
+
+type roomUserRequests struct {
+	Room     string        `json:"room"`
+	Requests []userRequest `json:"requests"`
 }
 
 type roomAsks struct {
@@ -96,7 +123,7 @@ func (s *Server) wait(ctx context.Context, rooms string, timeout time.Duration, 
 	checked := map[string]int{} // room-list message count at the last read that found the room idle
 	var fewest map[string]int   // lowest unanswered question count seen per room
 	for {
-		ready, waiting, asks, err := s.readyRooms(ctx, targets, maxChars, checked)
+		res, asks, err := s.readyRooms(ctx, targets, maxChars, checked)
 		if err != nil {
 			return nil, err
 		}
@@ -109,7 +136,7 @@ func (s *Server) wait(ctx context.Context, rooms string, timeout time.Duration, 
 			fewest[room] = min(fewest[room], n)
 		}
 		timedOut := false
-		if len(ready) == 0 && !asked {
+		if len(res.Ready) == 0 && !asked && !res.UserRequested {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -122,8 +149,8 @@ func (s *Server) wait(ctx context.Context, rooms string, timeout time.Duration, 
 				continue
 			}
 		}
-		res := &waitResult{Ready: ready, Waiting: waiting, TimedOut: timedOut, Asked: asked}
-		if res.Asking, err = s.asking(ctx, waiting, asks); err != nil {
+		res.TimedOut, res.Asked = timedOut, asked
+		if res.Asking, err = s.asking(ctx, res.Waiting, asks); err != nil {
 			return nil, err
 		}
 		return res, nil
@@ -154,40 +181,45 @@ func (s *Server) asking(ctx context.Context, waiting string, asks map[string]int
 }
 
 // readyRooms also returns each target room's count of unanswered questions.
-func (s *Server) readyRooms(ctx context.Context, targets []waitTarget, maxChars int64, checked map[string]int) ([]*readResult, string, map[string]int, error) {
+func (s *Server) readyRooms(ctx context.Context, targets []waitTarget, maxChars int64, checked map[string]int) (*waitResult, map[string]int, error) {
 	var rooms []struct {
-		ID       string `json:"id"`
-		Active   bool   `json:"active"`
-		Messages int    `json:"messages"`
-		Asks     int    `json:"asks"`
+		ID           string `json:"id"`
+		Active       bool   `json:"active"`
+		Messages     int    `json:"messages"`
+		Asks         int    `json:"asks"`
+		UserRequests int    `json:"user_requests"`
 	}
 	if err := s.api(ctx, "GET", "/api/rooms", nil, &rooms); err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 	summaries := map[string]int{}
 	active := map[string]bool{}
 	all := map[string]int{}
+	userCounts := map[string]int{}
 	for _, r := range rooms {
 		summaries[r.ID], active[r.ID], all[r.ID] = r.Messages, r.Active, r.Asks
+		userCounts[r.ID] = r.UserRequests
 	}
 	asks := map[string]int{}
-	ready := []*readResult{}
+	res := &waitResult{Ready: []*readResult{}}
 	var waiting []string
 	for _, t := range targets {
 		count, ok := summaries[t.room]
 		if !ok {
-			return nil, "", nil, fmt.Errorf("방 없음: %s", t.room)
+			return nil, nil, fmt.Errorf("방 없음: %s", t.room)
 		}
 		asks[t.room] = all[t.room]
 		done := false
+		var latest *page
 		if !active[t.room] && checked[t.room] != count {
-			latest, err := s.snapshot(ctx, t.room, 0, 200)
+			var err error
+			latest, err = s.snapshot(ctx, t.room, 0, 200)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 			read, err := s.readSelected(ctx, t.room, t.after, t.after, maxChars, latest, nil, t.steerFrom)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 			// A turn may start between the two requests. Its end signals the
 			// feed, and the room is read again even if no message was added.
@@ -195,14 +227,37 @@ func (s *Server) readyRooms(ctx context.Context, targets []waitTarget, maxChars 
 				checked[t.room] = count
 			}
 			if done = read.replied && !read.active; done {
-				ready = append(ready, read)
+				res.Ready = append(res.Ready, read)
+			}
+		}
+		// A user request is independent of active, after_seq and max_chars.
+		// Read its current state even when another queued turn has started.
+		if latest == nil && userCounts[t.room] > 0 {
+			var err error
+			latest, err = s.snapshot(ctx, t.room, 0, 1)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		if latest != nil {
+			ra := roomUserRequests{Room: t.room}
+			for _, r := range latest.UserRequests {
+				if r.Status == "pending" {
+					ra.Requests = append(ra.Requests, r)
+					res.UserRequested = res.UserRequested || r.Seq > t.userAfter
+					t.userAfter = max(t.userAfter, r.Seq)
+				}
+			}
+			if len(ra.Requests) > 0 {
+				res.UserRequests = append(res.UserRequests, ra)
 			}
 		}
 		if !done {
-			waiting = append(waiting, t.room+":"+strconv.FormatInt(t.after, 10))
+			waiting = append(waiting, t.resume())
 		}
 	}
-	return ready, strings.Join(waiting, ","), asks, nil
+	res.Waiting = strings.Join(waiting, ",")
+	return res, asks, nil
 }
 
 // subscribeRooms opens GET /api/stream. The channel receives nil for every

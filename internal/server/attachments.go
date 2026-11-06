@@ -110,3 +110,20 @@ func (s *Server) cancelRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, request)
 }
+
+func (s *Server) resolveUserRequest(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text        string `json:"text"`
+		Acknowledge bool   `json:"acknowledge"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	msg, request, err := s.hub.ResolveUserRequest(r.PathValue("id"), r.PathValue("rid"), body.Text, body.Acknowledge)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": msg, "user_request": request})
+}

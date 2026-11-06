@@ -23,6 +23,7 @@ func TestCLIWaitChunks(t *testing.T) {
 		{"timeout", []*waitResult{{TimedOut: true, Waiting: "r1:7"}, {TimedOut: true, Waiting: "r1:7"}, {TimedOut: true, Waiting: "r1:7"}}, false, 3},
 		{"ready", []*waitResult{{TimedOut: true, Waiting: "r1:7"}, {Ready: []*readResult{{}}}}, false, 2},
 		{"asked", []*waitResult{{TimedOut: true, Waiting: "r1:7"}, {Asked: true, Waiting: "r1:7"}}, false, 2},
+		{"user request", []*waitResult{{TimedOut: true, Waiting: "r1:7:5"}, {UserRequested: true, Waiting: "r1:7:9"}}, false, 2},
 		{"sse error", []*waitResult{{TimedOut: true, Waiting: "r1:7"}}, true, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -35,7 +36,7 @@ func TestCLIWaitChunks(t *testing.T) {
 				}
 				wantRoom := "r1"
 				if calls > 0 {
-					wantRoom = "r1:7"
+					wantRoom = tc.results[calls-1].Waiting
 				}
 				wantSeconds := float64(2)
 				if calls == 2 {

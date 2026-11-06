@@ -430,13 +430,15 @@ class ShellClaimsTest(Fixture):
         tpl.write_text('review\n', encoding='utf-8')
         self.rt.room('writer', wt, True)
         head = g(wt, 'rev-parse', 'HEAD')
-        r, calls = self.sh('queue_review.sh', 'L', fwd(wt), 'writer', 'reviewer', 'focus', ORCH_REVIEW_TEMPLATE=fwd(tpl))
+        # This fixture tests the worktree guard, not reviewer-seat discovery.
+        # queue_review now resolves a seat before reading the writer room.
+        r, calls = self.sh('queue_review.sh', 'L', fwd(wt), 'writer', 'reviewer', 'focus', ORCH_REVIEW_TEMPLATE=fwd(tpl), TARGET='review-seat')
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn('room writer', r.stdout)
         self.assertEqual(calls, '')
         self.assertEqual(g(wt, 'rev-parse', 'HEAD'), head)
         self.rt.rooms['writer']['active'] = False
-        r, calls = self.sh('queue_review.sh', 'L', fwd(wt), 'writer', 'reviewer', 'focus', ORCH_REVIEW_TEMPLATE=fwd(tpl))
+        r, calls = self.sh('queue_review.sh', 'L', fwd(wt), 'writer', 'reviewer', 'focus', ORCH_REVIEW_TEMPLATE=fwd(tpl), TARGET='review-seat')
         self.assertIn('read --room writer', calls)  # check passed, the script went on
 
     def test_assign_fix_refuses_busy_room_workspace(self):

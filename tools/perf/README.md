@@ -23,6 +23,8 @@
 | `frontend-mentions.test.mjs` | 본문 @멘션 판정·알약 표시(코드 안 제외, 꺼진 좌석·없는 좌석 구분, 이스케이프), 마커 거절 안내와 거절된 요청 줄의 "보낸 좌석 → 받는 좌석" 표시 |
 | `frontend-browser.mjs` | 실제 HTML/CSS/marked/JS에서 200개 메시지와 동시 렌더, CDP CPU·layout 지표·UI 상태 검사 |
 | `frontend-live-smoke.mjs` | 실제 앱 부팅·HTTP·합성 CLI로 방 생성, 1,000개 기록, 입력·키보드·방 전환·중단·테마 검사 |
+| `frontend-user-requests.test.mjs` | 뒤늦은 스냅샷이 사용자 요청의 처리 상태를 되돌리지 않는지 검사 |
+| `user-request-live.mjs` | **실제 Codex gpt-6-luna·low를 호출**합니다. 새 포트·새 데이터 서버에서 사용자 요청의 조기 알림·수신 커서·CLI와 화면 처리·실제 답 수신·재기동 복원을 검사합니다. 명령·관측·범위는 [사용자 요청 전달](../../docs/사용자_요청_전달.md)을 참고하세요. |
 | `summarize.py` | Go 원자료의 중앙값·범위·증감률 JSON. 서로 다른 benchmark 이름은 비교하지 않음 |
 
 ## 기준선 준비와 Go 측정

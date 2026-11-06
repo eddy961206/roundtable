@@ -38,17 +38,17 @@ python tools/tla/modelcheck.py RtWait     # 하나만
 
 | 명세 | 지키는 규칙(한 문장) | 덮는 코드 | 변형(실패해야 함) |
 |---|---|---|---|
-| `RtWait` | 실행·대기 중인 턴과 작업 단계가 없고 after_seq 뒤(또는 after_seq와 그 뒤 steering 입력을 받은 턴)에 좌석 답이 있을 때만, 그리고 그때는 반드시 rt wait가 ready를 돌려준다 | `internal/rtmcp/wait.go` readyRooms, `api.go` readSelected, `internal/room/hub.go` busy·publishList, `history.go` Snapshot.Active, `lifecycle.go` idleLocked, `work.go`·`work_cleanup.go`의 publishList 호출 | `window`(5d6506c 이전), `replied`(5d6506c), `idle_steer`·`idle_work`(b3a7b76), `current_nopublish`(publishList 이전) |
+| `RtWait` | 실행·대기 중인 턴과 작업 단계가 없고 after_seq 뒤(또는 after_seq와 그 뒤 steering 입력을 받은 턴)에 좌석 답이 있을 때만, 그리고 그때는 반드시 rt wait가 ready를 돌려주며, 미처리 사용자 요청은 방 완료와 별도로 알리고 수신 커서로 같은 요청의 재알림을 막습니다 | `internal/rtmcp/wait.go` readyRooms, `api.go` readSelected, `internal/room/hub.go` busy·publishList, `history.go` Snapshot.Active, `lifecycle.go` idleLocked, `work.go`·`work_cleanup.go`의 publishList 호출, `user_requests.go`·`requests.go`의 미처리 요청과 알림 | `window`(5d6506c 이전), `replied`(5d6506c), `idle_steer`·`idle_work`(b3a7b76), `current_nopublish`(publishList 이전), `user_request_notice`(383e02d 공지 전용), `user_request_repeat`(수신 커서 무시) |
 | `RemoteLease` | 원격 턴은 결과를 한 번만 받고, 임대가 만료됐을 때만 두 번 실행되며, 가져가지 않았다고 끝낸 턴은 아무 worker도 실행하지 않았다 | `internal/room/remote.go` claim·RemoteNext·RemoteProgress·RemoteFinish·runRemote, `internal/worker/worker.go` deliver | `norecheck`·`noretry`(d69d988), `nolease`(b93c27c), `splittimeout`(claim 시간 초과의 확인과 drop이 다른 임계구역) |
 | `TurnDelivery` | 좌석은 한 메시지로 한 번만 일하고, 방이 조용해지면 좌석을 부른 메시지는 모두 답을 받았거나 눈에 보이게 실패한 턴이 읽었다 | `internal/room/hub.go` deltaForContext·buildTurn의 빈 턴 버리기·runTurn의 delivered 판정·acceptUser의 enqueueFront·chainMentions | `nooutput`(a458c08 이전), `noholes` |
 | `WorkMerge` | 한 번에 한 파트만 병합하고, 병합과 worktree 정리가 겹치지 않으며, 통합 branch는 병합 기록이 디스크에 있을 때만 움직이고, 재시작 뒤에도 branch 커밋 수가 merged 파트 수와 같다 | `internal/room/work.go` queuePart·advanceQueue·mergePart·completeMerge·recoverWork, `work_cleanup.go` startWorktreeCleanup, `hub.go` resumeRecoveredWork | `nointent`(D13 이전), `nocleangate`, `nohaltgate`(D5) |
 
-마지막으로 명세가 코드와 같은지 확인한 커밋: 이 스킬을 추가한 커밋(`git log -1 --format=%h -- .claude/skills/rt-model-check/SKILL.md`). 덮는 코드를 고친 뒤 명세가 여전히 코드를 그대로 옮겼는지 확인했으면, 이 줄과 함께 커밋해 기준을 앞으로 옮긴다.
+마지막으로 명세가 코드와 같은지 확인한 커밋: 사용자 요청 수신 커서를 반영한 이 스킬의 최신 커밋(`git log -1 --format=%h -- .claude/skills/rt-model-check/SKILL.md`). 덮는 코드를 고친 뒤 명세가 여전히 코드를 그대로 옮겼는지 확인했으면, 이 줄과 함께 커밋해 기준을 앞으로 옮긴다.
 
 ## 명세가 잡는 것과 못 잡는 것
 
 - 명세는 Go 코드를 읽지 않는다. 덮는 코드를 바꿨는데 명세를 그대로 두면 명세는 계속 통과한다. 코드 변경이 설계(잠금 경계, 저장 순서, 신호)를 바꾸면 명세를 같은 커밋에서 고친다.
-- 코드 회귀는 Go 시험이 잡는다. 명세 반례마다 같은 사건열의 Go 시험이 있다: `internal/rtmcp/wait_rooms_test.go`, `internal/room/busy_test.go`, `internal/room/turn_races_test.go`, `internal/room/work_races_test.go`. 2026-11-04에 각 수정을 되돌려 이 시험들이 실패하는 것을 확인했다.
+- 코드 회귀는 Go 시험이 잡는다. 명세 반례마다 같은 사건열의 Go 시험이 있다: `internal/rtmcp/user_requests_test.go`, `internal/rtmcp/wait_rooms_test.go`, `internal/room/busy_test.go`, `internal/room/turn_races_test.go`, `internal/room/work_races_test.go`. 2026-11-04에 각 수정을 되돌려 이 시험들이 실패하는 것을 확인했다.
 - 원격 claim 시간 초과처럼 Go 시험으로 순서를 고정할 수 없는 경합은 명세만 막는다. 그 코드를 고칠 때는 명세 설정을 먼저 바꿔 본다.
 
 ## 결과 읽기

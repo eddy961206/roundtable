@@ -87,7 +87,7 @@ func cliWaitChunks(ctx context.Context, input map[string]any, chunkSeconds int64
 		}
 		result := value.(*waitResult)
 		remaining -= chunk
-		if !result.TimedOut || len(result.Ready) != 0 || result.Asked || remaining == 0 {
+		if !result.TimedOut || len(result.Ready) != 0 || result.Asked || result.UserRequested || remaining == 0 {
 			return result, nil
 		}
 		input["rooms"] = result.Waiting

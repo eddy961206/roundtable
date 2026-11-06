@@ -32,10 +32,11 @@ Roundtable은 서로 다른 공급사의 AI CLI가 한 방에서 대화·리뷰�
 9. 409 "작업 폴더 사용 중"은 같은 폴더의 다른 방이 끝난 뒤 다시 보낸다. 좌석에 `held_until`(한도 오류)이나 `budget_held`(새 턴을 막은 사유)가 있으면 같은 좌석으로 곧장 재시도하지 말고 안내의 다음 행동을 따른다.
 10. 끝난 방은 `rt archive_rooms --rooms <방>,...`으로 보관한다(목록에서만 숨김). 삭제는 사람에게 확인받는다.
 11. `rt wait`가 `asked:true`로 돌아오면 좌석이 사용자에게 질문한 것이다. `rt answer --room <방> --id <질문 id> --choice N`(또는 `--text`)으로 답한다. 권한·파괴적 작업 승인은 사람에게 확인받은 뒤 답한다.
+12. `user_requested:true`는 좌석의 사용자 요청입니다. `user_requests[].requests[]`의 `id`·`seat`·`text`·`status`를 읽고 `rt resolve_user_request --room <방> --id <요청 id> --text "답"` 또는 `--acknowledge true`로 처리하세요. 확인 표시는 좌석을 부르지 않습니다. 바로 답할 수 없으면 반환된 `waiting`을 다음 `wait --rooms`에 그대로 쓰세요. `방:after_seq:user_request_seq`의 세 번째 값이 이미 받은 알림을 기억하므로 같은 요청으로 반복 반환하지 않습니다. 값을 버리면 기존 미처리 요청도 다시 알립니다. 요청은 다음 턴이나 재기동으로 닫히지 않습니다. 권한·파괴적 작업 승인은 사람에게 확인받은 뒤 답하세요.
 
 ## 기본 흐름
 1. `roundtable rt list_rooms --limit 5` — 방과 좌석 id 확인. 좌석 상태·문맥 크기는 `roundtable rt seats --rooms <방>,...`. 알맞은 방이 없으면 `create_room`(같은 프로젝트의 여러 작업이면 안내서의 기반 세션 포크).
 2. `roundtable rt post --room <방> --target <좌석> --text - < 지시.md` — 보낸 메시지의 `seq`를 받는다. 한 방만 짧게 기다릴 때는 `--wait_seconds 300`.
-3. `roundtable rt wait --rooms <방A>:<seqA>,<방B>:<seqB> --timeout_seconds 3600` — 먼저 끝난 방의 새 답(`ready[]`)과 남은 방(`waiting`)을 받는다. 셸은 최대 86400초, MCP는 1~3600초다. 셸 제한보다 길면 백그라운드로 실행한다. 폴링하지 않는다.
+3. `roundtable rt wait --rooms <방A>:<seqA>,<방B>:<seqB> --timeout_seconds 3600` — 먼저 끝난 방의 새 답(`ready[]`)과 남은 방(`waiting`)을 받습니다. 사용자 요청(`user_requested:true`)이나 새 질문(`asked:true`)이 생겨도 일찍 반환합니다. `waiting`에는 알림 수신 위치가 포함되므로 다음 대기에 그대로 사용하세요. 셸은 최대 86400초, MCP는 1~3600초입니다. 셸 제한보다 길면 백그라운드로 실행하세요. 폴링하지 않습니다.
 4. `roundtable rt read --room <방> --after_seq <seq>` — 답 원문. `roundtable rt usage --rooms <방>` — 좌석별 토큰.
 5. `roundtable rt decisions --room <방>` → 근거 확인 뒤 `update_decision --status active|dropped`. AGREE는 검증이 아니다.

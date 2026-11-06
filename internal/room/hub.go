@@ -54,20 +54,21 @@ type Hub struct {
 }
 
 type roomState struct {
-	requests  []Request
-	decisions []Decision
-	room      *Room
-	msgs      []*Message
-	queue     []*Turn
-	running   map[string]*running
-	subs      map[chan []byte]struct{}
-	listSubs  map[chan []byte]struct{} // Hub.listSubs; nil once the room is deleted
-	listed    RoomSummary              // sidebar values last announced on the room-list feed
-	disc      *discussion
-	deleted   bool // late invocation callbacks must not recreate a deleted room
-	stopGen   int  // prevents a stopped turn from scheduling follow-up work
-	resetGen  int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
-	openAsks  int  // asks neither answered nor closed (asks.go); RoomSummary.Asks
+	requests     []Request
+	userRequests []UserRequest
+	decisions    []Decision
+	room         *Room
+	msgs         []*Message
+	queue        []*Turn
+	running      map[string]*running
+	subs         map[chan []byte]struct{}
+	listSubs     map[chan []byte]struct{} // Hub.listSubs; nil once the room is deleted
+	listed       RoomSummary              // sidebar values last announced on the room-list feed
+	disc         *discussion
+	deleted      bool // late invocation callbacks must not recreate a deleted room
+	stopGen      int  // prevents a stopped turn from scheduling follow-up work
+	resetGen     int  // bumped by ResetSessions so a finishing turn does not resurrect the old session
+	openAsks     int  // asks neither answered nor closed (asks.go); RoomSummary.Asks
 
 	workBusy          map[string]bool   // plan creation, submit checks or cleanup running git outside h.mu
 	participantEvents map[string]string // last serialized seat state sent to subscribers
@@ -143,6 +144,12 @@ func NewHub(store *Store, reg *agent.Registry, scratch string, logger *log.Logge
 		}
 		rs := &roomState{room: r, msgs: msgs[r.ID], running: map[string]*running{}, subs: map[chan []byte]struct{}{}, listSubs: h.listSubs, workBusy: map[string]bool{}}
 		backfillInput(rs)
+		for _, m := range rs.msgs {
+			if reply := m.UserRequestReply; reply != nil && rs.userRequest(reply.ID) == nil {
+				return nil, fmt.Errorf("방 %s 사용자 요청 처리 메시지 %s의 원본이 없습니다: %s", r.ID, m.ID, reply.ID)
+			}
+			rs.applyUserRequestMessage(m)
+		}
 		rs.openAsks = countOpenAsks(rs.msgs)
 		rs.requests, err = store.loadRequests(r.ID)
 		if err != nil {
@@ -353,17 +360,19 @@ func (h *Hub) CreateRoom(spec RoomSpec) (*Room, error) {
 
 // RoomSummary is the sidebar view.
 type RoomSummary struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	UpdatedAt int64  `json:"updated_at"`
-	Mode      string `json:"mode"`
-	Messages  int    `json:"messages"`
-	Active    bool   `json:"active"`
-	Archived  bool   `json:"archived,omitempty"`
-	Asks      int    `json:"asks,omitempty"` // seat questions to the person still waiting or open (asks.go)
-	Workspace string `json:"workspace,omitempty"`
-	Group     string `json:"group,omitempty"`
-	Kind      string `json:"kind,omitempty"`
+	ID             string `json:"id"`
+	Title          string `json:"title"`
+	UpdatedAt      int64  `json:"updated_at"`
+	Mode           string `json:"mode"`
+	Messages       int    `json:"messages"`
+	Active         bool   `json:"active"`
+	Archived       bool   `json:"archived,omitempty"`
+	Asks           int    `json:"asks,omitempty"`             // seat questions to the person still waiting or open (asks.go)
+	UserRequests   int    `json:"user_requests,omitempty"`    // pending requests to the person
+	UserRequestSeq int64  `json:"user_request_seq,omitempty"` // newest pending notice, independent of reply/Ask lifetime
+	Workspace      string `json:"workspace,omitempty"`
+	Group          string `json:"group,omitempty"`
+	Kind           string `json:"kind,omitempty"`
 }
 
 func (h *Hub) Rooms() []RoomSummary {
@@ -400,7 +409,14 @@ func (rs *roomState) busy() bool {
 }
 
 func (rs *roomState) summary() RoomSummary {
-	return RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: rs.busy(), Archived: rs.room.Archived, Asks: rs.openAsks, Workspace: rs.room.Workspace, Group: rs.room.Group, Kind: rs.room.Kind}
+	s := RoomSummary{ID: rs.room.ID, Title: rs.room.Title, UpdatedAt: rs.room.UpdatedAt, Mode: rs.room.Mode, Messages: len(rs.msgs), Active: rs.busy(), Archived: rs.room.Archived, Asks: rs.openAsks, Workspace: rs.room.Workspace, Group: rs.room.Group, Kind: rs.room.Kind}
+	for _, r := range rs.userRequests {
+		if r.Status == "pending" {
+			s.UserRequests++
+			s.UserRequestSeq = max(s.UserRequestSeq, r.Seq)
+		}
+	}
+	return s
 }
 
 func sortSummaries(s []RoomSummary) {
@@ -413,17 +429,18 @@ func sortSummaries(s []RoomSummary) {
 
 // Snapshot is everything the page needs to render a room.
 type Snapshot struct {
-	Active     bool                    `json:"active"` // the room list's active, read under the same lock
-	Requests   []Request               `json:"requests"`
-	Asks       []AskView               `json:"asks"` // every seat question in the room, oldest first (asks.go)
-	Decisions  []Decision              `json:"decisions"`
-	Room       *Room                   `json:"room"`
-	Messages   []*Message              `json:"messages"`
-	Queue      []*Turn                 `json:"queue"`
-	Discussion *DiscussionView         `json:"discussion"`
-	Limits     map[string]agent.Limits `json:"limits"`
-	History    HistoryPage             `json:"history"`
-	Work       *WorkPlan               `json:"work"`
+	Active       bool                    `json:"active"` // the room list's active, read under the same lock
+	Requests     []Request               `json:"requests"`
+	UserRequests []UserRequest           `json:"user_requests"`
+	Asks         []AskView               `json:"asks"` // every seat question in the room, oldest first (asks.go)
+	Decisions    []Decision              `json:"decisions"`
+	Room         *Room                   `json:"room"`
+	Messages     []*Message              `json:"messages"`
+	Queue        []*Turn                 `json:"queue"`
+	Discussion   *DiscussionView         `json:"discussion"`
+	Limits       map[string]agent.Limits `json:"limits"`
+	History      HistoryPage             `json:"history"`
+	Work         *WorkPlan               `json:"work"`
 }
 
 type DiscussionView struct {
@@ -1062,13 +1079,13 @@ func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentID
 	if !ok {
 		return nil, fmt.Errorf("방 없음: %s", id)
 	}
-	return h.acceptUser(rs, text, target, fwd, attachmentIDs, nil, by)
+	return h.acceptUser(rs, text, target, fwd, attachmentIDs, nil, nil, by)
 }
 
 // acceptUser stores and routes a user message. A task (AssignTask) is saved
 // with the message as its source before the target's turn can start and claim
 // it. Caller holds h.mu.
-func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource, attachmentIDs []string, task *Request, by string) (*Message, error) {
+func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource, attachmentIDs []string, task *Request, userRequestReply *UserRequestReply, by string) (*Message, error) {
 	id := rs.room.ID
 	if target != "" {
 		p := rs.room.participant(target)
@@ -1100,6 +1117,7 @@ func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource,
 	m.Mentions = &mentioned
 	m.Forward = fwd
 	m.By = by
+	m.UserRequestReply = userRequestReply
 	if task != nil {
 		m.Requests = []string{task.ID}
 	}
@@ -1119,6 +1137,10 @@ func (h *Hub) acceptUser(rs *roomState, text, target string, fwd *ForwardSource,
 	}
 	// The message append is the acceptance boundary. Subsequent metadata or
 	// explanatory-note failures must not tell the caller to resend accepted input.
+	if userRequestReply != nil {
+		rs.applyUserRequestMessage(m)
+		rs.broadcast("user_request", *rs.userRequest(userRequestReply.ID))
+	}
 	if task != nil {
 		task.SourceMsg, task.At = m.ID, nowMs()
 		if err := h.saveRequest(rs, *task); err != nil {

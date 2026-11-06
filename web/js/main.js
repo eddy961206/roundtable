@@ -15,6 +15,7 @@ import { ensureAndRenderTrace, expandTrace } from "./trace.js";
 import { bindTimeline, focusTimelineMessage, jumpToLatestMessages, onTimelineImageLoad, renderMessage, renderTimeline, scheduleRender, scrollToTimelineBottom, syncPendingScrollRestore } from "./timeline.js";
 import { connect, openRoom, schedulePanels, upsertRequest } from "./room.js";
 import { bindDecisionControls, renderDecisions } from "./decisions.js";
+import { renderUserRequests } from "./user-requests.js";
 import { bindSpaceControls } from "./community.js";
 import { bindSpaceView } from "./space-view.js";
 import { startUpdateCheck } from "./update.js";
@@ -391,6 +392,13 @@ function bindUI() {
 
   // Responsive drawers
   $("#btn-right").onclick = () => toggleDrawer("right");
+  $("#btn-user-requests").onclick = () => {
+    const expand = $$(".panel-expand-right").find((button) => button.offsetParent);
+    if (expand) expand.click();
+    else if (!document.body.classList.contains("show-right") && $("#btn-right").offsetParent) toggleDrawer("right");
+    $("#user-requests-title").scrollIntoView({ block: "nearest" });
+    $("#user-requests-title").focus();
+  };
   const btnLeft = $("#btn-left");
   if (btnLeft) btnLeft.onclick = () => toggleDrawer("left");
   const btnEmptyLeft = $("#btn-empty-left");
@@ -464,6 +472,8 @@ function closeRoom(notice) {
   state.room = null;
   state.work = null;
   state.requests.clear();
+  state.userRequests.clear();
+  renderUserRequests();
   state.decisions.clear();
   closeLightbox();
   clearDraftAttachments();

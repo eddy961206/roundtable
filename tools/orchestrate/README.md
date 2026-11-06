@@ -13,7 +13,7 @@ roundtable 방(작성·검수 좌석)과 Gitea PR·리뷰를 오케스트레이�
 
 - **제품 코드 PR에는 자동 병합을 쓰지 않는다.** CI 통과·검수 방 승인은 병합 근거가 아니다. 상대 개발자가 승인한 것을 확인한 뒤 사람이 손으로 병합한다. `ci_wait.sh`는 CI 상태만 알려 준다.
 - **push 뒤 게시는 push를 확인한 뒤에만 한다.** push 종료 코드가 0이고 원격 브랜치 head가 로컬 HEAD와 같을 때만 PR·댓글·재리뷰 요청을 보낸다. `gpost.sh pr`과 `push_and_notify.sh`가 이 순서를 지킨다. 손으로 push했다면 `git ls-remote origin refs/heads/<branch>`로 확인한 뒤 게시한다(2026-10-27 VMS-next #66: 인증 실패로 끝난 force push 뒤 "새 head로 반영" 댓글이 먼저 나갔다).
-- **`rt wait`에는 after_seq를 준다.** `rtwait.sh`는 `방:seq` 형식만 받는다. seq는 `rt post` 결과의 `seq`다. after_seq를 빼면 서버는 대기를 시작한 뒤 생긴 답만 센다. 그래서 대기 전에 이미 도착한 답은 보이지 않고 timeout까지 기다린다.
+- **`rt wait`에는 after_seq를 줍니다.** `rtwait.sh`는 `방:seq[:user_request_seq]` 형식을 받습니다. seq는 `rt post` 결과의 `seq`입니다. after_seq를 빼면 대기 전에 도착한 좌석 답은 완료로 세지 않습니다. 사용자 요청은 별도이며 기존 미처리 요청도 알립니다. `WAITING`의 세 번째 값은 이미 전달받은 사용자 요청 알림의 수신 위치입니다.
 - Gitea 게시물에 `Generated with`·`Co-Authored-By`·대리 작성 표식을 넣지 않는다. `glint.py`가 막는다.
 - Windows에서 한글이 든 JSON은 인라인 인자(`curl -d '{...}'`) 대신 UTF-8로 저장한 파일을 `curl --data-binary @파일`로 보낸다. 인라인 인자는 콘솔 코드 페이지 바이트로 넘어갈 수 있다. roundtable 서버는 UTF-8이 아닌 본문을 400으로 거절한다.
 - 토큰을 이 폴더·설정 파일·명령 인자에 넣지 않는다. `tea`는 자기 로그인 설정을, `git push`는 Git Credential Manager를 쓴다.
@@ -67,6 +67,7 @@ tools/orchestrate/rtwait.sh <방A>:<seqA> <방B>:<seqB>
 ```
 
 - 하나 이상의 방이 끝나면 돌아온다. 끝난 방마다 `READY <방> <상태> next_seq <n>`과 마지막 좌석 답의 끝부분(`ORCH_WAIT_TAIL`, 기본 1500자)을 출력한다. `WAITING` 줄은 남은 방이며 다음 호출 인자로 그대로 쓴다(쉼표를 공백으로 바꾼다).
+- 사용자 요청이 있으면 방이 끝나기 전에도 `USER_REQUESTED`로 돌아옵니다. `USER_REQUEST <방> <요청 id> <상태> @좌석 <내용>`을 읽고 `rt resolve_user_request --room <방> --id <요청 id> --text "답"` 또는 `--acknowledge true`로 처리하세요. 아직 답할 수 없어도 `WAITING`을 그대로 이어 쓰면 같은 요청으로 반복 반환하지 않습니다. 새 턴 중 질문은 `ASKED`로 표시하며 기존 `rt answer`로 답합니다.
 - `ORCH_WAIT_TIMEOUT`(기본 3600초)이 지나면 `TIMEOUT`을 출력한다. 시간 초과는 실행 중인 턴을 취소하지 않는다.
 - `ORCH_WAIT_SUMMARY=1`이면 `rt wait --summary true`로 기다린다. 좌석 답 본문 대신 판정 줄(`판정`·`결론`·`verdict` 뒤 `:`)과 마커·신호 줄(`[[...]]`, `WORK:DONE`)만 받는다. 원문은 `rt read`로 읽는다. 오케스트레이터가 긴 검수 원문을 읽지 않고 다음 단계를 정할 때 쓴다.
 - 관측 한계: "끝남"은 실행·대기 중인 턴이 없고 after_seq 뒤에 좌석 답이 있다는 뜻이다. READY는 답이 성공했다는 뜻이 아니므로 상태 칸과 오류 문구를 확인한다. 답 전체는 `rt read --room <방> --after_seq <seq>`로 읽는다. 서버가 재기동되면 SSE가 끊겨 오류로 끝난다. 이때 답이 없는 것으로 보지 말고 다시 실행한다.

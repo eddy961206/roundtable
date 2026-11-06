@@ -80,6 +80,7 @@
             <span id="room-mode" class="badge"></span>
             <span id="room-space" class="badge space-badge" hidden></span>
             <span id="room-note-badge" class="badge note-badge" hidden>공지</span>
+            <button type="button" id="btn-user-requests" class="user-request-shortcut" aria-controls="user-requests-section" hidden>사용자 확인</button>
           </div>
           <div class="actions">
             <label class="rounds" for="rounds">라운드 <input id="rounds" type="number" min="1" max="10" value="3" aria-label="토론 라운드 수"></label>
@@ -177,6 +178,17 @@
       <button type="button" id="btn-collapse-right" class="icon-btn panel-collapse-right" aria-label="참가자 패널 닫기" aria-controls="right" aria-expanded="true" title="참가자 패널 닫기">»</button>
       <button type="button" id="btn-close-right" class="icon-btn tablet-only" aria-label="참가자 패널 닫기" title="닫기">✕</button>
     </div>
+    <section id="user-requests-section" aria-labelledby="user-requests-title" hidden>
+      <div class="requests-head">
+        <h2 id="user-requests-title" tabindex="-1">사용자 확인</h2>
+        <span id="user-requests-count" class="badge warn">0</span>
+      </div>
+      <ul id="user-requests" aria-label="답변을 기다리는 사용자 요청"></ul>
+      <details id="resolved-user-requests-wrap" hidden>
+        <summary id="resolved-user-requests-title">처리한 요청</summary>
+        <ul id="resolved-user-requests" aria-label="처리한 사용자 요청"></ul>
+      </details>
+    </section>
     <div id="participants"></div>
     <div class="decisions-head">
       <h2>결정</h2>

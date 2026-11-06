@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: rtwait.sh room:after_seq [room:after_seq ...]
+# usage: rtwait.sh room:after_seq[:user_request_seq] [...]
 # Blocks (server SSE, no polling) until one or more rooms answer after their seq,
 # then prints each ready room's status and the tail of its last seat answer.
 # after_seq is required: without it rt wait counts only replies newer than the wait
@@ -8,7 +8,7 @@
 set -o pipefail
 [ $# -gt 0 ] || die "usage: rtwait.sh room:after_seq [room:after_seq ...]"
 for a in "$@"; do
-  [[ $a =~ ^[^:,[:space:]]+:[0-9]+$ ]] || die "need room:after_seq (seq from rt post), got: $a"
+  [[ $a =~ ^[^:,[:space:]]+:[0-9]+(:[0-9]+)?$ ]] || die "need room:after_seq[:user_request_seq] (seq from rt post or cursor from WAITING), got: $a"
 done
 rooms=$(IFS=,; echo "$*")
 summary=()
@@ -19,6 +19,11 @@ import json,sys
 tail=int(sys.argv[1])
 d=json.load(sys.stdin)
 if d.get('timed_out'): print('TIMEOUT')
+if d.get('asked'): print('ASKED', json.dumps(d.get('asking', []), ensure_ascii=False))
+if d.get('user_requested'): print('USER_REQUESTED')
+for room in d.get('user_requests', []):
+    for request in room['requests']:
+        print('USER_REQUEST', room['room'], request['id'], request['status'], '@' + request['seat'], request['text'])
 for r in d.get('ready') or []:
     ms=[m for m in r.get('messages',[]) if m.get('kind')!='user']
     m=ms[-1] if ms else {}

@@ -144,49 +144,50 @@ func (r *Room) enabled() []*Participant {
 
 // Message is one chat line. Agent messages stream in and end as done|error|cancelled.
 type Message struct {
-	NoticeFor        string         `json:"notice_for,omitempty"` // durable out-of-cap feedback to this seat; visible to everyone
-	NoticeDelivered  bool           `json:"notice_delivered,omitempty"`
-	NoticeMarker     string         `json:"notice_marker,omitempty"` // marker feedback: attach | request | request_result | decision | discussion
-	NoticeMsg        string         `json:"notice_msg,omitempty"`    // reply whose marker was rejected
-	UserOnly         bool           `json:"user_only,omitempty"`     // for people and the orchestrator; never in a seat's history (usage warnings)
-	Attachments      []Attachment   `json:"attachments,omitempty"`
-	Requests         []string       `json:"requests,omitempty"`
-	Decisions        []string       `json:"decisions,omitempty"`       // decision cards recorded by this reply's markers
-	Asks             []Ask          `json:"asks,omitempty"`            // questions this reply asked the person (asks.go)
-	Forward          *ForwardSource `json:"forward,omitempty"`         // a copy of another room's message (Hub.Forward)
-	PendingMarkers   int            `json:"pending_markers,omitempty"` // marker lines a failed turn left unapplied (Hub.ApplyMarkers)
-	MarkersApplied   bool           `json:"markers_applied,omitempty"` // a person applied this failed turn's markers: the answer counts as complete
-	Mentions         *[]string      `json:"mentions,omitempty"`        // nil: legacy; empty list: resolved without ordinary mentions
-	ID               string         `json:"id"`
-	Seq              int64          `json:"seq"`
-	TS               int64          `json:"ts"`
-	Kind             string         `json:"kind"`         // user | agent | system
-	Author           string         `json:"author"`       // "user" or participant id
-	By               string         `json:"by,omitempty"` // a person on another PC who wrote this user message (people.go)
-	Text             string         `json:"text"`
-	Status           string         `json:"status"`           // done | streaming | error | cancelled
-	Target           string         `json:"target,omitempty"` // user message addressed to one agent only
-	Live             bool           `json:"live,omitempty"`   // injected into a running turn (steering)
-	TurnID           string         `json:"turn_id,omitempty"`
-	ReplyTo          string         `json:"reply_to,omitempty"` // triggering message ID, when the turn has one
-	Reason           string         `json:"reason,omitempty"`   // mention | broadcast | discussion | part | review
-	Round            int            `json:"round,omitempty"`
-	Signal           string         `json:"signal,omitempty"` // discussion signal or WORK:DONE
-	Part             string         `json:"part,omitempty"`
-	ReviewStep       string         `json:"review_step,omitempty"` // findings | author_reply | rebuttal | recheck
-	Error            string         `json:"error,omitempty"`
-	ErrorKind        string         `json:"error_kind,omitempty"` // review_format: the review table was not applied
-	Model            string         `json:"model,omitempty"`
-	Provider         string         `json:"provider,omitempty"`
-	SessionID        string         `json:"session_id,omitempty"`
-	SessionDirectory string         `json:"session_directory,omitempty"`
-	Mode             string         `json:"mode,omitempty"`
-	Effort           string         `json:"effort,omitempty"`
-	Duration         int64          `json:"duration_ms,omitempty"`
-	Role             string         `json:"role,omitempty"`   // the seat role when this reply was produced
-	Timing           *TurnTiming    `json:"timing,omitempty"` // stage durations of this agent turn
-	Usage            map[string]any `json:"usage,omitempty"`
-	Trace            int            `json:"trace"` // number of trace events stored
+	NoticeFor        string            `json:"notice_for,omitempty"` // durable out-of-cap feedback to this seat; visible to everyone
+	NoticeDelivered  bool              `json:"notice_delivered,omitempty"`
+	NoticeMarker     string            `json:"notice_marker,omitempty"` // marker feedback: attach | request | request_result | decision | discussion
+	NoticeMsg        string            `json:"notice_msg,omitempty"`    // reply whose marker was rejected
+	UserOnly         bool              `json:"user_only,omitempty"`     // for people and the orchestrator; never in a seat's history (usage warnings)
+	Attachments      []Attachment      `json:"attachments,omitempty"`
+	Requests         []string          `json:"requests,omitempty"`
+	Decisions        []string          `json:"decisions,omitempty"`          // decision cards recorded by this reply's markers
+	Asks             []Ask             `json:"asks,omitempty"`               // questions this reply asked the person (asks.go)
+	UserRequestReply *UserRequestReply `json:"user_request_reply,omitempty"` // answer or acknowledgement of a user_request notice
+	Forward          *ForwardSource    `json:"forward,omitempty"`            // a copy of another room's message (Hub.Forward)
+	PendingMarkers   int               `json:"pending_markers,omitempty"`    // marker lines a failed turn left unapplied (Hub.ApplyMarkers)
+	MarkersApplied   bool              `json:"markers_applied,omitempty"`    // a person applied this failed turn's markers: the answer counts as complete
+	Mentions         *[]string         `json:"mentions,omitempty"`           // nil: legacy; empty list: resolved without ordinary mentions
+	ID               string            `json:"id"`
+	Seq              int64             `json:"seq"`
+	TS               int64             `json:"ts"`
+	Kind             string            `json:"kind"`         // user | agent | system
+	Author           string            `json:"author"`       // "user" or participant id
+	By               string            `json:"by,omitempty"` // a person on another PC who wrote this user message (people.go)
+	Text             string            `json:"text"`
+	Status           string            `json:"status"`           // done | streaming | error | cancelled
+	Target           string            `json:"target,omitempty"` // user message addressed to one agent only
+	Live             bool              `json:"live,omitempty"`   // injected into a running turn (steering)
+	TurnID           string            `json:"turn_id,omitempty"`
+	ReplyTo          string            `json:"reply_to,omitempty"` // triggering message ID, when the turn has one
+	Reason           string            `json:"reason,omitempty"`   // mention | broadcast | discussion | part | review
+	Round            int               `json:"round,omitempty"`
+	Signal           string            `json:"signal,omitempty"` // discussion signal or WORK:DONE
+	Part             string            `json:"part,omitempty"`
+	ReviewStep       string            `json:"review_step,omitempty"` // findings | author_reply | rebuttal | recheck
+	Error            string            `json:"error,omitempty"`
+	ErrorKind        string            `json:"error_kind,omitempty"` // review_format: the review table was not applied
+	Model            string            `json:"model,omitempty"`
+	Provider         string            `json:"provider,omitempty"`
+	SessionID        string            `json:"session_id,omitempty"`
+	SessionDirectory string            `json:"session_directory,omitempty"`
+	Mode             string            `json:"mode,omitempty"`
+	Effort           string            `json:"effort,omitempty"`
+	Duration         int64             `json:"duration_ms,omitempty"`
+	Role             string            `json:"role,omitempty"`   // the seat role when this reply was produced
+	Timing           *TurnTiming       `json:"timing,omitempty"` // stage durations of this agent turn
+	Usage            map[string]any    `json:"usage,omitempty"`
+	Trace            int               `json:"trace"` // number of trace events stored
 }
 
 // Turn is a queued request for one agent to speak.

@@ -108,7 +108,7 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 - Codex: `codex mcp add roundtable -- roundtable mcp --url http://127.0.0.1:8787`
 - agy: `agy mcp add roundtable roundtable mcp --url http://127.0.0.1:8787`
 
-기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_seats`, `rt_archive_rooms`, `rt_version`, `rt_discuss`, `rt_answer`, `rt_requests`, `rt_cancel_request`, `rt_forward`, `rt_handoff`, `rt_cancel_turn`, `rt_apply_markers`, `rt_decisions`, `rt_update_room`, `rt_assign`(사람의 과제 맡기기), `rt_update_decision` 21개다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·좌석 상태·버전·요청·결정 카드 조회 8개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
+기본 도구는 `rt_list_rooms`, `rt_create_room`, `rt_post`, `rt_read`, `rt_wait`, `rt_usage`, `rt_seats`, `rt_archive_rooms`, `rt_version`, `rt_discuss`, `rt_answer`, `rt_resolve_user_request`, `rt_requests`, `rt_cancel_request`, `rt_forward`, `rt_handoff`, `rt_cancel_turn`, `rt_apply_markers`, `rt_decisions`, `rt_update_room`, `rt_assign`(사람의 과제 맡기기), `rt_update_decision` 22개다. 명령 끝에 `--read-only`를 추가하면 방 목록·메시지·대기·사용량·좌석 상태·버전·요청·결정 카드 조회 8개만 노출하고 쓰기 도구의 직접 호출도 거절한다. 연결 주소는 loopback만 허용하며 HTTP 리다이렉트와 프록시는 사용하지 않는다.
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 
@@ -117,6 +117,10 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 `rt_list_rooms`는 최근 갱신순으로 `limit`개(기본 20, 최대 100)를 반환한다. 방마다 id·제목·모드·실행 여부와 좌석의 id·이름·공급사·모델·`enabled`만 담는다. 삭제된 좌석은 호출할 수 없으므로 빼고, 꺼진 좌석은 `enabled:false`로 남긴다. 좌석 역할 같은 나머지 정보는 방 화면에서 본다.
 
 `rt_wait`(`rooms`, 선택 `timeout_seconds` 1~3600·기본 600, `max_chars`, `summary`)는 여러 방 중 하나 이상이 끝날 때까지 한 번의 호출로 기다린다. `rooms`는 `방ID:after_seq`를 쉼표로 이은 값이고, after_seq에는 `rt_post` 결과의 seq를 쓴다(생략하면 대기 시작 시점 이후의 답만 센다). 방이 끝났다는 것은 실행·대기 중인 턴과 작업 계획 단계(제출 검사·병합)가 없고 after_seq 뒤에 좌석 답이 있다는 뜻이다. `rt_post`가 `live:true`(실행 중인 턴에 끼워 넣음)를 돌려줬으면 그 seq로 기다려도 된다. 그 입력을 받은 턴의 답은 seq가 더 작아도 끝난 답으로 세고 `ready`에 담는다. `max_chars`가 작으면 `ready`에는 최신 메시지만 담기고 좌석 답은 `omitted_messages`로만 알릴 수 있다. 이때는 `rt_read`로 읽는다. 서버의 방 목록 SSE(`GET /api/stream`)로 깨어나므로 주기 조회가 없다. 결과 `ready`에는 끝난 방마다 `rt_read`와 같은 형식의 새 메시지가, `waiting`에는 남은 방이 다음 `rt_wait`의 `rooms` 값 그대로 들어간다. 시간이 지나면 `timed_out:true`다. 셸 도구의 실행 제한 시간이 더 짧으면 백그라운드로 실행한다.
+
+좌석의 `[[REQUEST:@User]]` 사용자 요청은 사람이 처리할 때까지 남습니다. `rt_wait`는 실행·대기 중인 턴이 있어도 `user_requested:true`와 `user_requests[].requests[]`의 요청 내용·좌석·상태를 반환합니다. 대기 전에 생긴 미처리 요청도 알립니다. 결과의 `waiting`은 `방:after_seq:user_request_seq` 형식일 수 있으며, 다음 `wait --rooms`에 그대로 사용하세요. 세 번째 값은 이미 받은 알림의 위치입니다. 아직 답할 수 없어도 같은 요청으로 반복 반환하지 않고, 새 요청은 다시 알립니다. 커서 없는 새 호출은 기존 미처리 요청을 다시 알립니다. `asked`의 기존 새 질문 판정과 `ready`의 완료 판정은 유지됩니다.
+
+`roundtable rt resolve_user_request --room <방ID> --id <요청ID> --text "답"`은 원래 요청한 좌석 ID로 답을 보내고 `answered`로 처리합니다. 실행 중인 턴에는 기존 steering 지원에 따라 전달하거나 다음 턴을 예약합니다. `--text` 대신 `--acknowledge true`를 주면 좌석을 부르지 않고 `acknowledged`로 닫습니다. 처리된 요청은 다시 깨우지 않습니다. 웹의 방 목록 `확인 N`과 방 제목 옆 `사용자 확인 N`에서 미처리 요청을 찾고 답변·확인 처리할 수 있습니다. `rt_read`·`rt_seats`에서도 `user_requests`를 조회합니다. 재기동 시 상태가 복원되며 옛 사용자 요청 공지도 미처리 요청으로 읽습니다. 이전 산문 답변의 처리 여부는 추측하지 않으므로 이미 처리한 옛 공지는 한 번 확인 표시해야 할 수 있습니다. [저장·대기 계약과 검증](docs/사용자_요청_전달.md)
 
 `rt_usage`(`rooms`)는 `GET /api/rooms/{id}/usage`를 방마다 불러 좌석별·방별 합계와 전체 합을 돌려준다. 공급사마다 다른 보고 방식을 맞춰 `input_tokens`(처리한 입력 전체) = `cached_tokens`(캐시 읽기) + `uncached_tokens`(나머지, 캐시 쓰기 포함)로 계산한다. Codex는 입력에 캐시가 포함되어 있고, Claude·agy·OpenCode는 캐시를 따로 보고한다. `output_tokens`, `cost_usd`(보고하는 공급사만), `max_context_tokens`(한 턴에서 가장 큰 단일 호출), `turns`·`errors`·`duration_ms`도 준다.
 

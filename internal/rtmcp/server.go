@@ -28,6 +28,7 @@ const instructions = "Roundtable: 서로 다른 공급사의 AI CLI 좌석이 �
 	"- 작업 하나에 방 하나를 쓴다. 작성 좌석과 다른 공급사의 검수 좌석을 같은 방에 두고 [[REQUEST:@좌석ID]]로 직접 주고받게 한다. 오케스트레이터는 원문을 옮기지 않고 판정 줄만 읽는다(rt_wait summary:true, 다른 방 답은 rt_forward). 끝난 방에는 보내지 않고 rt_archive_rooms로 보관한다.\n" +
 	"- 좌석은 이름이 아니라 id로 부른다. target 없이 보낸 메시지는 켜진 좌석 전원을 부른다.\n" +
 	"- 여러 방은 wait_seconds 없이 rt_post하고 받은 seq로 rt_wait(rooms=방:seq,...)를 부른다. 폴링하지 않는다.\n" +
+	"- rt_wait의 user_requested:true는 좌석의 사용자 요청입니다. user_requests의 내용·상태를 읽고 rt_resolve_user_request의 text 또는 acknowledge:true로 처리하세요. 바로 답할 수 없으면 결과의 waiting을 다음 rooms에 그대로 쓰세요. 세 번째 seq는 이미 받은 요청 알림의 수신 위치여서 반복 반환을 막습니다. 커서 없는 호출은 기존 미처리 요청도 알립니다. asked:true인 턴 중 질문은 기존 rt_answer로 답합니다.\n" +
 	"- timed_out은 대기만 끝낸 것이다. 같은 메시지를 다시 보내지 말고 결과의 resume_after_seq를 after_seq로 주어 rt_read로 이어 읽는다.\n" +
 	"- 좌석이 보류되면(held_until·budget_held·paced_until, 409 작업 폴더 사용 중) 같은 좌석으로 곧장 재시도하지 않고 사유의 다음 행동을 따른다. 세션이 길어지면 rt_handoff.\n" +
 	"- 좌석 안내문에는 '모두 반말' 규칙이 있다. 외부에 게시할 초안을 맡길 때는 지시에 문체를 따로 적는다.\n" +

@@ -383,7 +383,7 @@ func (h *Hub) AssignTaskAs(roomID, to, text, by string) (*Message, Request, erro
 		return nil, Request{}, fmt.Errorf("@%s은 파트 %s 작업 중이라 과제를 받을 수 없음", to, part.ID)
 	}
 	task := Request{ID: newID(), From: "user", To: to, Text: text, Status: "pending"}
-	m, err := h.acceptUser(rs, "과제: "+text, to, nil, nil, &task, by)
+	m, err := h.acceptUser(rs, "과제: "+text, to, nil, nil, &task, nil, by)
 	if err != nil {
 		return nil, Request{}, err
 	}

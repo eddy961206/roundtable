@@ -320,6 +320,9 @@ function buildGroupHead(key, rooms, marks, shown, searching) {
   const caret = el("span", "caret", collapsed ? "▸" : "▾");
   caret.setAttribute("aria-hidden", "true");
   btn.append(caret, el("span", "name", roomGroupLabel(rooms[0])), el("span", "count", String(rooms.length)));
+  if (collapsed && rooms.some((room) => room.user_requests > 0)) {
+    btn.append(el("span", "badge warn", "확인 요청"));
+  }
   const hidden = collapsed ? rooms.filter((r) => !shown.includes(r)).map((r) => marks[r.id]).filter(Boolean) : [];
   if (hidden.length) {
     const active = hidden.includes("active");
@@ -393,6 +396,11 @@ function buildRoomListItems(ul) {
       icon.setAttribute("aria-hidden", "true");
       btn.appendChild(icon);
       btn.appendChild(el("span", "name", r.title));
+      if (r.user_requests > 0) {
+        const requestBadge = el("span", "badge warn", "확인 " + r.user_requests);
+        requestBadge.title = "답변을 기다리는 사용자 요청 " + r.user_requests + "건";
+        btn.appendChild(requestBadge);
+      }
       if (SPACE_KIND[r.kind]) {
         const space = el("span", "space-mark", SPACE_KIND[r.kind].icon);
         space.title = SPACE_KIND[r.kind].name;

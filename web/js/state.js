@@ -43,6 +43,7 @@ export const state = {
   winStart: 0,
   winEnd: 0,
   requests: new Map(),
+  userRequests: new Map(),
   decisions: new Map(), // decision cards of the open room, in recorded order
   draftAttachments: [],
   queue: [],

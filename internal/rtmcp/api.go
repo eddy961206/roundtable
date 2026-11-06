@@ -94,12 +94,13 @@ type page struct {
 		Mode         string `json:"mode"`
 		Participants []seat `json:"participants"`
 	} `json:"room"`
-	Active   bool              `json:"active"` // a turn or work step runs or waits (room list's active)
-	Messages []apiMessage      `json:"messages"`
-	Queue    []apiTurn         `json:"queue"`
-	Requests []json.RawMessage `json:"requests"`
-	Asks     []askView         `json:"asks"`
-	History  struct {
+	Active       bool              `json:"active"` // a turn or work step runs or waits (room list's active)
+	Messages     []apiMessage      `json:"messages"`
+	Queue        []apiTurn         `json:"queue"`
+	Requests     []json.RawMessage `json:"requests"`
+	Asks         []askView         `json:"asks"`
+	UserRequests []userRequest     `json:"user_requests"`
+	History      struct {
 		HasMore   bool  `json:"has_more"`
 		BeforeSeq int64 `json:"before_seq"`
 		Total     int   `json:"total"`
@@ -228,6 +229,21 @@ type askView struct {
 
 func (a askView) unanswered() bool { return a.Status == "waiting" || a.Status == "open" }
 
+// userRequest mirrors room.UserRequest. It stays pending across seat turns.
+type userRequest struct {
+	ID          string `json:"id"`
+	Seat        string `json:"seat"`
+	Seq         int64  `json:"seq"`
+	SourceMsg   string `json:"source_msg"`
+	Part        string `json:"part,omitempty"`
+	Text        string `json:"text"`
+	Status      string `json:"status"`
+	At          int64  `json:"at"`
+	Answer      string `json:"answer,omitempty"`
+	ResolvedSeq int64  `json:"resolved_seq,omitempty"`
+	ResolvedAt  int64  `json:"resolved_at,omitempty"`
+}
+
 // omitted_chars counts what was cut from the messages held. omitted_messages
 // counts selected messages left out whole; first_seq is then the oldest seq held.
 type readResult struct {
@@ -240,7 +256,8 @@ type readResult struct {
 	FirstSeq        int64         `json:"first_seq,omitempty"`
 	// asks are the seat questions asked in the selected replies, and every
 	// one still unanswered however old (answer with rt_answer).
-	Asks []askView `json:"asks,omitempty"`
+	Asks         []askView     `json:"asks,omitempty"`
+	UserRequests []userRequest `json:"user_requests,omitempty"`
 	// unsettled is the lowest selected seq still streaming or left out whole,
 	// counted even when the message is not in the array; 0 when none.
 	unsettled int64
@@ -387,6 +404,11 @@ func (s *Server) readSelected(ctx context.Context, room string, after, lower, ma
 	for _, a := range latest.Asks {
 		if a.Seq > after || a.unanswered() {
 			result.Asks = append(result.Asks, a)
+		}
+	}
+	for _, r := range latest.UserRequests {
+		if r.Status == "pending" || r.Seq > after || r.ResolvedSeq > after {
+			result.UserRequests = append(result.UserRequests, r)
 		}
 	}
 	if result.OmittedMessages > 0 {
