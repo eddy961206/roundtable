@@ -509,13 +509,6 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
     return;
   }
 
-  for (const cand of state.messages.values()) {
-    if (cand.kind === "system" && cand.notice_marker === "user_request" && cand.notice_msg === id) {
-      const noticeNode = $("#m-" + cand.id);
-      if (noticeNode) noticeNode.remove();
-    }
-  }
-
   const atBottom = !state.browsingHistory && state.stickToBottom;
   const total = state.order.length;
   const idx = state.order.indexOf(id);

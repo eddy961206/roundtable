@@ -307,16 +307,6 @@ function upsertMessage(m) {
   }
   state.messages.set(m.id, m);
   if (!existed) {
-    for (const cand of state.messages.values()) {
-      if (cand.kind === "system" && cand.notice_marker === "user_request" && cand.notice_msg === m.id) {
-        if ($("#m-" + cand.id)) {
-          if (state.unreadBelow > 0) state.unreadBelow--;
-          if (state.pendingMessages > 0) state.pendingMessages--;
-          updateTimelineBanners();
-          updateJumpBottomBtn();
-        }
-      }
-    }
     state.order.push(m.id);
     if (state.order.length > DOM_CAP_STEP) {
       const removed = state.order.shift();

@@ -90,25 +90,6 @@ test("timeline suppresses user_request notice when original seat reply is loaded
   assert.equal(state.messages.get("n1"), notice, "메시지 데이터는 그대로 보존");
 });
 
-test("SSE or streaming: notice arriving first is removed once original seat reply renders", () => {
-  mounted.clear(); tl.children = []; state.messages.clear(); state.order = []; state.roomId = "t";
-  const agent = { id: "a2", seq: 2, kind: "agent", author: "agy-flash", status: "done", text: "답변" };
-  const notice = { id: "n2", seq: 3, kind: "system", notice_marker: "user_request", notice_msg: "a2", text: "공지" };
-
-  // 공지 먼저 도착 (원본 미도착)
-  state.messages.set(notice.id, notice);
-  state.order = [notice.id];
-  state.winStart = 0; state.winEnd = 10;
-  renderMessage(notice.id, true, false);
-  assert.equal(mounted.has("m-n2"), true, "원본 부재 시 공지가 먼저 마운트됨");
-
-  // 나중에 원본 도착/렌더링
-  state.messages.set(agent.id, agent);
-  state.order = [agent.id, notice.id];
-  renderMessage(agent.id, true, false);
-  assert.equal(mounted.has("m-n2"), false, "원본 렌더링 후 기존 공지가 타임라인에서 제거됨");
-});
-
 test("when original seat reply is not in loaded messages, notice remains visible", () => {
   mounted.clear(); tl.children = []; state.messages.clear(); state.order = []; state.roomId = "t";
   const notice = { id: "n3", seq: 3, kind: "system", notice_marker: "user_request", notice_msg: "missing", text: "공지" };
