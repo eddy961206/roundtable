@@ -492,11 +492,29 @@ async function retryTurn(msgId, btn) {
   }
 }
 
+export function isUserRequestNoticeHidden(m, messages = state.messages) {
+  if (!m || m.kind !== "system" || m.notice_marker !== "user_request") return false;
+  return Boolean(m.notice_msg && messages && messages.has(m.notice_msg));
+}
+
 export function renderMessage(id, isNew, batch, insertBeforeNode) {
   const m = state.messages.get(id);
   if (!m) return;
   const tl = $("#timeline");
   if (!tl) return;
+
+  if (isUserRequestNoticeHidden(m, state.messages)) {
+    const existing = $("#m-" + id);
+    if (existing) existing.remove();
+    return;
+  }
+
+  for (const cand of state.messages.values()) {
+    if (cand.kind === "system" && cand.notice_marker === "user_request" && cand.notice_msg === id) {
+      const noticeNode = $("#m-" + cand.id);
+      if (noticeNode) noticeNode.remove();
+    }
+  }
 
   const atBottom = !state.browsingHistory && state.stickToBottom;
   const total = state.order.length;

@@ -12,7 +12,7 @@ import { mergeSnapshotDecisions, renderDecisions, upsertDecision } from "./decis
 import { mergeUserRequests, renderUserRequests, upsertUserRequest } from "./user-requests.js";
 import { appendTraceEvent, boundedTraceEvent, expandTrace, liveFeed, seedLive, updateTraceCount } from "./trace.js";
 import { scheduleSpaceView } from "./space-view.js";
-import { cancelPendingScrollRestore, pruneMessageCaches, renderMessage, renderTimeline, scheduleRender, scheduleTraceRender, updateJumpBottomBtn, updateTimelineBanners } from "./timeline.js";
+import { cancelPendingScrollRestore, isUserRequestNoticeHidden, pruneMessageCaches, renderMessage, renderTimeline, scheduleRender, scheduleTraceRender, updateJumpBottomBtn, updateTimelineBanners } from "./timeline.js";
 
 let panelTimer = null;
 export function schedulePanels() {
@@ -295,16 +295,28 @@ function upsertMessage(m) {
   const atBottomNow = !state.browsingHistory && state.stickToBottom;
   if (!existed && !state.browsingHistory && state.order.length >= DOM_CAP_STEP && !atBottomNow) state.browsingHistory = true;
   if (!existed && (state.browsingHistory || (!isNewSequence && state.order.length))) {
-    if (isNewSequence) state.pendingMessages++;
+    if (isNewSequence && !isUserRequestNoticeHidden(m, state.messages)) state.pendingMessages++;
     updateTimelineBanners();
     updateJumpBottomBtn();
     return;
   }
   if (!existed && isNewSequence && m.kind !== "user" && !atBottomNow) {
-    state.unreadBelow++;
+    if (!isUserRequestNoticeHidden(m, state.messages)) {
+      state.unreadBelow++;
+    }
   }
   state.messages.set(m.id, m);
   if (!existed) {
+    for (const cand of state.messages.values()) {
+      if (cand.kind === "system" && cand.notice_marker === "user_request" && cand.notice_msg === m.id) {
+        if ($("#m-" + cand.id)) {
+          if (state.unreadBelow > 0) state.unreadBelow--;
+          if (state.pendingMessages > 0) state.pendingMessages--;
+          updateTimelineBanners();
+          updateJumpBottomBtn();
+        }
+      }
+    }
     state.order.push(m.id);
     if (state.order.length > DOM_CAP_STEP) {
       const removed = state.order.shift();
@@ -334,7 +346,9 @@ function upsertMessage(m) {
   if (state.room) schedulePanels();
 
   if (m.kind === "system" && !existed) {
-    announce("시스템 알림: " + m.text);
+    if (!isUserRequestNoticeHidden(m, state.messages)) {
+      announce("시스템 알림: " + m.text);
+    }
   } else if (m.kind === "user" && !existed) {
     announce("내 메시지 전송됨");
   } else if (m.kind === "agent" && m.status !== "streaming" && (!prev || prev.status === "streaming")) {
