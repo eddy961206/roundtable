@@ -103,6 +103,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/rooms/{id}/participants/{participant}/session/open", s.openNativeSession)
 	s.mux.HandleFunc("DELETE /api/rooms/{id}", s.deleteRoom)
 	s.mux.HandleFunc("POST /api/rooms/{id}/messages", s.postMessage)
+	s.mux.HandleFunc("POST /api/rooms/{id}/notices", s.postNotice)
 	s.mux.HandleFunc("POST /api/rooms/{id}/tasks", s.assignTask)
 	s.mux.HandleFunc("GET /api/community/people", s.listPeople)
 	s.mux.HandleFunc("POST /api/community/people", s.invitePerson)
@@ -309,27 +310,36 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		Attachments []string `json:"attachments"`
 		Text        string   `json:"text"`
 		Target      string   `json:"target"`
-		Notice      bool     `json:"notice"` // record only: start no turn (Hub.PostNotice)
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
-	if body.Notice && len(body.Attachments) > 0 {
-		writeErr(w, 400, errors.New("알림 메시지에는 첨부를 붙일 수 없음"))
-		return
-	}
-	var m *room.Message
-	var err error
-	if body.Notice {
-		m, err = s.hub.PostNotice(r.PathValue("id"), body.Text, body.Target)
-	} else {
-		m, err = s.hub.PostUser(r.PathValue("id"), body.Text, body.Target, body.Attachments...)
-	}
+	m, err := s.hub.PostUser(r.PathValue("id"), body.Text, body.Target, body.Attachments...)
 	if errors.Is(err, room.ErrWorkspaceBusy) {
 		writeErr(w, 409, err)
 		return
 	}
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 201, m)
+}
+
+// postNotice records a message that starts no turn (Hub.PostNotice). It has
+// its own path, not a messages field: a server that predates it answers 404
+// instead of ignoring the field and waking the seat.
+func (s *Server) postNotice(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text   string `json:"text"`
+		Target string `json:"target"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	m, err := s.hub.PostNotice(r.PathValue("id"), body.Text, body.Target)
 	if err != nil {
 		writeErr(w, 400, err)
 		return

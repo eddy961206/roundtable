@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -99,5 +100,24 @@ func TestPostHelpSaysWhenToUseNotice(t *testing.T) {
 	help := out.String()
 	if !strings.Contains(help, "--notice boolean") || !strings.Contains(help, "상태·사용량 보고처럼 답이 필요 없는 정보") {
 		t.Fatalf("post help:\n%s", help)
+	}
+}
+
+// A server that predates notices must refuse, not take the text as an
+// ordinary post that wakes the seat (old servers ignore unknown JSON fields).
+func TestPostNoticeOnOldServerSendsNothing(t *testing.T) {
+	var messages atomic.Int32
+	s := newHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/rooms/r1/messages" {
+			messages.Add(1)
+		}
+		http.NotFound(w, r)
+	}, false)
+	_, err := s.call(context.Background(), "rt_post", json.RawMessage(`{"room":"r1","text":"사용량","target":"s1","notice":true}`))
+	if err == nil || !strings.Contains(err.Error(), "알림 전송을 지원하지 않음") {
+		t.Fatalf("err = %v", err)
+	}
+	if messages.Load() != 0 {
+		t.Fatal("notice fell back to an ordinary post")
 	}
 }

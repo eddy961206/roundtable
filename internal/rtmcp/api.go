@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -466,7 +467,10 @@ func (s *Server) post(ctx context.Context, a arguments) (any, error) {
 	if a.Notice {
 		// A notice starts no turn, so there is no answer to wait for.
 		var sent apiMessage
-		if err := s.api(ctx, "POST", "/api/rooms/"+a.Room+"/messages", map[string]any{"text": a.Text, "target": a.Target, "notice": true}, &sent); err != nil {
+		if err := s.api(ctx, "POST", "/api/rooms/"+a.Room+"/notices", map[string]string{"text": a.Text, "target": a.Target}, &sent); err != nil {
+			if strings.Contains(err.Error(), "HTTP 404") || strings.Contains(err.Error(), "HTTP 405") {
+				return nil, fmt.Errorf("서버가 알림 전송을 지원하지 않음(보내지 않았음). 서버를 새 빌드로 교체해: %w", err)
+			}
 			return nil, err
 		}
 		if sent.ID == "" || sent.Seq < 1 {
