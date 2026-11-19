@@ -585,8 +585,12 @@ export function renderMessage(id, isNew, batch, insertBeforeNode) {
           (f.note ? '<span class="muted forward-note">' + esc(f.note) + "</span>" : "")
       );
     }
+    if (m.kind === "user" && m.notice) {
+      // rt post --notice: kept for reading in a later turn; it woke nobody.
+      meta.push('<span class="badge notice-tag" title="알림: 기록만 남기고 턴을 시작하지 않음. 좌석은 다음 일반 턴에 읽음">🔔 알림 · 턴 없음</span>');
+    }
     if (m.kind === "user" && m.target) {
-      const how = deliveryLabel(m.delivery, m.live);
+      const how = m.notice ? "다음 턴에 읽음" : deliveryLabel(m.delivery, m.live);
       const detail = m.delivery && m.delivery.detail ? m.delivery.detail : how;
       meta.push(
         '<span class="steer-tag route" data-delivery-state="' + esc(m.delivery ? m.delivery.state : "legacy") + '" title="' + esc(detail) + '" role="group" aria-label="' + esc("나 → " + participantLabel(m.target) + ", " + how) + '">나' +

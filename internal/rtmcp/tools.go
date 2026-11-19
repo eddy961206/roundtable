@@ -68,8 +68,8 @@ func (s *Server) tools() []tool {
 			"kind": {Type: "string", Enum: []string{"work", "lounge"}}, "speak_interval_seconds": integer(0, &maxInterval), "daily_speak_limit": integer(0, &maxDaily),
 			"participants": {Type: "array", Items: &participant, MinItems: 1},
 		}, "title", "workspace", "mode", "participants")},
-		{Name: "rt_post", Description: "메시지 전송. 결과의 seq는 보낸 메시지 번호. target은 좌석 id(rt_list_rooms의 participants[].id)이며 생략하면 방 규칙대로 전달. wait_seconds(0~600) 생략·0이면 기다리지 않음. 지정하면 이 메시지로 시작된 턴과 연쇄 호출 턴이 끝날 때까지 대기하고 답변도 반환. Codex·Claude 실행 중 대상은 현재 턴 전달을 시도함. delivery.state의 pending·sending은 전송 중, accepted는 수신 확인(live:true), queued는 다음 턴 대기. 주입 미지원·거절·종료 경합이면 다음 턴으로 한 번 넘김. uncertain·failed는 수신 조회 중·조회 실패이므로 임의 재전송하지 말 것. 주입된 답의 seq는 보낸 seq보다 낮을 수 있음. 시간 초과(timed_out)는 실행 취소가 아니며, 그때 결과의 resume_after_seq를 rt_read의 after_seq로 써서 이어 읽음", InputSchema: object(map[string]schema{
-			"room": id, "text": text, "target": id, "wait_seconds": integer(0, &limit),
+		{Name: "rt_post", Description: "메시지 전송. 결과의 seq는 보낸 메시지 번호. target은 좌석 id(rt_list_rooms의 participants[].id)이며 생략하면 방 규칙대로 전달. wait_seconds(0~600) 생략·0이면 기다리지 않음. 지정하면 이 메시지로 시작된 턴과 연쇄 호출 턴이 끝날 때까지 대기하고 답변도 반환. Codex·Claude 실행 중 대상은 현재 턴 전달을 시도함. delivery.state의 pending·sending은 전송 중, accepted는 수신 확인(live:true), queued는 다음 턴 대기. 주입 미지원·거절·종료 경합이면 다음 턴으로 한 번 넘김. uncertain·failed는 수신 조회 중·조회 실패이므로 임의 재전송하지 말 것. 주입된 답의 seq는 보낸 seq보다 낮을 수 있음. 시간 초과(timed_out)는 실행 취소가 아니며, 그때 결과의 resume_after_seq를 rt_read의 after_seq로 써서 이어 읽음. notice:true는 알림: 방 기록에만 남기고 턴을 시작하거나 실행 중 턴에 주입하지 않음(@호출도 무시, 첨부·대기 없음). 대상 좌석(없으면 모든 좌석)은 다음 일반 턴 문맥에서 읽음. 상태·사용량 보고처럼 답이 필요 없는 정보에 씀", InputSchema: object(map[string]schema{
+			"room": id, "text": text, "target": id, "wait_seconds": integer(0, &limit), "notice": {Type: "boolean"},
 		}, "room", "text")},
 		{Name: "rt_read", Description: "메시지를 오래된 순으로 조회. after_seq가 있으면 그보다 큰 seq만, 생략하면 최신 메시지까지. max_chars(기본 20000, 본문 합계의 Unicode 문자 수)는 최신 메시지부터 채움: 경계 메시지는 앞을 줄여 truncated, 담지 못한 오래된 메시지는 빼고 omitted_messages(개수)·first_seq(담긴 첫 seq)로 알림. reply_to는 그 답이 응답한 메시지의 seq. asks는 조회한 답이 사용자에게 한 질문과, 오래됐어도 아직 답하지 않은(waiting·open) 질문(rt_answer 참고). user_requests에는 미처리 사용자 요청과 조회 범위에서 생성·처리된 요청이 들어갑니다(rt_resolve_user_request 참고)", InputSchema: object(map[string]schema{
 			"room": id, "after_seq": integer(0, nil), "max_chars": integer(1, nil),
@@ -208,6 +208,7 @@ type arguments struct {
 	Text               string             `json:"text"`
 	Target             string             `json:"target"`
 	WaitSeconds        *int               `json:"wait_seconds"`
+	Notice             bool               `json:"notice"`
 	AfterSeq           int64              `json:"after_seq"`
 	Seq                int64              `json:"seq"`
 	MaxChars           int64              `json:"max_chars"`

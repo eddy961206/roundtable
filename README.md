@@ -112,6 +112,8 @@ Claude·Antigravity용 샌드박스 서버 옵션은 현재 없다. 다시 켜�
 
 `rt_post`의 `wait_seconds`는 0~600초다. 생략하면 전송한 메시지의 `seq`를 반환한다. 지정하면 전송 전에 기존 HTTP SSE 구독을 열고, 그 메시지에서 시작된 턴과 연쇄 호출된 턴이 끝날 때까지 기다린다. 독립적으로 시작된 턴은 기다리지 않는다. 기존 턴에 주입된 steering 입력은 `live:true`로 표시한다. 이 경우 기존 턴도 기다리고, 입력보다 seq가 낮은 기존 응답도 결과에 포함한다. 기존 실행 응답이 최신 페이지 밖에 있으면 전송 전에 이력을 조회해 턴 id를 확인한다. 대기 중 HTTP 스냅샷은 `limit=1`로 조회하고 결과에 넣을 본문은 대기 종료 후 읽는다. SSE가 끊기거나 연결 정보를 확인할 수 없으면 완료로 처리하지 않고 오류를 반환한다. 전송 후 오류에는 전송된 `seq`를 표시하므로 재전송 전에 `rt_read`로 확인한다.
 
+`rt_post`의 `notice:true`(셸은 `--notice true`)는 알림이다. 메시지를 방 기록에 남기기만 하고 대상 좌석의 턴을 시작하거나 실행 중 턴에 주입하지 않는다. @호출도 무시하고 첨부·대기는 받지 않는다. 대상 좌석(없으면 모든 좌석)은 다음 일반 턴 문맥에서 `User (알림, 답 불필요)`로 읽는다. 상태·사용량 보고처럼 답이 필요 없는 정보에 쓴다. 일반 전송은 보고마다 큰 문맥의 턴을 돌린다(2026-11-20, 2분마다 보낸 사용량 보고로 오케스트레이터 좌석이 60턴 넘게 답함). 웹 화면은 `🔔 알림 · 턴 없음`으로 표시한다.
+
 `timed_out:true`는 대기 시간 초과이며 실행 취소가 아니다. 긴 대기를 쓸 때는 MCP 클라이언트의 도구 제한 시간도 그보다 길게 설정해야 한다. MCP의 `notifications/cancelled`는 해당 요청의 HTTP 조회와 대기만 취소한다. 클라이언트가 stdin을 닫으면 진행 중인 MCP 요청을 모두 취소하고 MCP 서버를 종료한다. 방에서 실행 중인 에이전트 턴은 취소하지 않는다. 대기 중에도 `ping`과 다른 도구 호출을 처리하며, 응답은 요청 id로 구분한다. MCP `initialize`의 instructions에는 핵심 규칙(작업 하나에 방 하나, 좌석 id로 부르기, `rt_wait` 사용, 흐름을 바꾸는 호출은 사람 확인)과 [에이전트 안내서](docs/AGENT_GUIDE.md) 경로를 싣는다. 그중 `timed_out` 규칙은 이렇다. `timed_out`이면 다시 보내지 말고 `rt_read`로 이어 읽는다. 이때 `after_seq`에는 `timed_out:true` 결과에만 붙는 `resume_after_seq`를 쓴다. 이 값은 보낸 seq와, 아직 `streaming`이거나 예산 밖으로 빠진 답 중 가장 작은 seq−1 가운데 작은 값이다. 빠진 답은 배열에 없어도 이 값에 들어간다. `live:true`면 기존 답의 seq가 보낸 seq보다 작으므로 보낸 seq를 그대로 쓰면 그 답이 빠진다. 사람이 진행 중인 방에서 토론 시작·요청 취소·결정 확정처럼 흐름을 바꾸는 호출은 먼저 사람에게 확인받는다.
 
 `rt_list_rooms`는 최근 갱신순으로 `limit`개(기본 20, 최대 100)를 반환한다. 방마다 id·제목·모드·실행 여부와 좌석의 id·이름·공급사·모델·`enabled`만 담는다. 삭제된 좌석은 호출할 수 없으므로 빼고, 꺼진 좌석은 `enabled:false`로 남긴다. 좌석 역할 같은 나머지 정보는 방 화면에서 본다.
@@ -156,6 +158,7 @@ roundtable rt post --help                            # 명령별 전체 설명�
 roundtable rt list_rooms --limit 5                   # 최근 갱신순 5개
 roundtable rt post --room <방ID> --text "검토해 줘" --wait_seconds 300
 cat 긴_설명.md | roundtable rt post --room <방ID> --text -   # 값 - 는 stdin에서 읽음
+echo "사용량 41%" | roundtable rt post --room <방ID> --target <좌석> --text - --notice true   # 알림: 턴 없이 기록만
 roundtable rt read --room <방ID> --after_seq 12
 roundtable rt update_decision --room <방ID> --id <결정ID> --status active   # 제안 카드 확정
 roundtable rt create_room --title "작업 1" --workspace <폴더> --mode write --participants '[{"provider":"codex","fork_from":{"room":"<기반방ID>","seat":"<기반좌석ID>"}}]'   # 기반 세션 포크

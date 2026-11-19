@@ -149,6 +149,7 @@ type Message struct {
 	NoticeMarker     string            `json:"notice_marker,omitempty"` // marker feedback: attach | request | request_result | decision | discussion
 	NoticeMsg        string            `json:"notice_msg,omitempty"`    // reply whose marker was rejected
 	UserOnly         bool              `json:"user_only,omitempty"`     // for people and the orchestrator; never in a seat's history (usage warnings)
+	Notice           bool              `json:"notice,omitempty"`        // user message kept for reading only: starts no turn and is not injected (Hub.PostNotice)
 	Attachments      []Attachment      `json:"attachments,omitempty"`
 	Requests         []string          `json:"requests,omitempty"`
 	Decisions        []string          `json:"decisions,omitempty"`          // decision cards recorded by this reply's markers

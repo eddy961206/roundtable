@@ -231,6 +231,7 @@ func (rs *roomState) autoStreak() int {
 		case m.Kind == "agent" && m.Reason == "auto":
 			n++
 		case m.Kind == "agent" && m.Reason == "auto-reply": // a seat's own answer is not an answer from people
+		case m.Notice: // a report that woke nobody is not a conversation either
 		case m.Kind == "agent" || m.Kind == "user":
 			return n
 		}

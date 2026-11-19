@@ -463,6 +463,17 @@ func resumeAfterSeq(sent int64, read *readResult) int64 {
 }
 
 func (s *Server) post(ctx context.Context, a arguments) (any, error) {
+	if a.Notice {
+		// A notice starts no turn, so there is no answer to wait for.
+		var sent apiMessage
+		if err := s.api(ctx, "POST", "/api/rooms/"+a.Room+"/messages", map[string]any{"text": a.Text, "target": a.Target, "notice": true}, &sent); err != nil {
+			return nil, err
+		}
+		if sent.ID == "" || sent.Seq < 1 {
+			return nil, fmt.Errorf("전송 응답의 id 또는 seq가 없음; 재전송 전에 방을 조회해")
+		}
+		return map[string]any{"seq": sent.Seq, "notice": true}, nil
+	}
 	var watch *observer
 	if a.WaitSeconds != nil {
 		var err error

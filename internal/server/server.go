@@ -309,12 +309,23 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		Attachments []string `json:"attachments"`
 		Text        string   `json:"text"`
 		Target      string   `json:"target"`
+		Notice      bool     `json:"notice"` // record only: start no turn (Hub.PostNotice)
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
-	m, err := s.hub.PostUser(r.PathValue("id"), body.Text, body.Target, body.Attachments...)
+	if body.Notice && len(body.Attachments) > 0 {
+		writeErr(w, 400, errors.New("알림 메시지에는 첨부를 붙일 수 없음"))
+		return
+	}
+	var m *room.Message
+	var err error
+	if body.Notice {
+		m, err = s.hub.PostNotice(r.PathValue("id"), body.Text, body.Target)
+	} else {
+		m, err = s.hub.PostUser(r.PathValue("id"), body.Text, body.Target, body.Attachments...)
+	}
 	if errors.Is(err, room.ErrWorkspaceBusy) {
 		writeErr(w, 409, err)
 		return

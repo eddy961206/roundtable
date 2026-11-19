@@ -72,6 +72,9 @@ func ParseSignal(text string) (clean, signal string) {
 func speaker(m *Message, r *Room) string {
 	switch m.Kind {
 	case "user":
+		if m.Notice {
+			return "User (알림, 답 불필요)"
+		}
 		if m.Forward != nil {
 			return "User (" + forwardLabel(m.Forward) + ")"
 		}

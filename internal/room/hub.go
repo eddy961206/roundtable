@@ -1065,6 +1065,41 @@ func (h *Hub) PostUser(id, text, target string, attachmentIDs ...string) (*Messa
 	return h.postUser(id, text, target, nil, attachmentIDs, "")
 }
 
+// PostNotice records a user message that wakes no seat: it starts no turn,
+// is never injected into a running one, and its @mentions call nobody. The
+// target (or every seat, without one) reads it as ordinary history in its next
+// turn. For information that needs no answer, such as status or usage reports.
+func (h *Hub) PostNotice(id, text, target string) (*Message, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, fmt.Errorf("빈 메시지")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing {
+		return nil, fmt.Errorf("서버가 종료 중이야")
+	}
+	rs, ok := h.rooms[id]
+	if !ok {
+		return nil, fmt.Errorf("방 없음: %s", id)
+	}
+	if target != "" {
+		if p := rs.room.participant(target); p == nil || p.Removed {
+			return nil, fmt.Errorf("대상 없음: %s", target)
+		}
+	}
+	m := rs.nextMessage("user", "user", text)
+	m.Target, m.Notice = target, true
+	m.Mentions = &[]string{}
+	if err := h.store.AppendMessage(id, m); err != nil {
+		rs.msgs = rs.msgs[:len(rs.msgs)-1]
+		return nil, h.reportPersistenceError(rs, "알림 메시지", err)
+	}
+	rs.broadcast("message", m)
+	mc := *m
+	return &mc, nil
+}
+
 // postUser accepts a user message; fwd marks a forwarded copy (forward.go),
 // whose quoted @mentions are not parsed. by names a person on another PC (people.go).
 func (h *Hub) postUser(id, text, target string, fwd *ForwardSource, attachmentIDs []string, by string) (*Message, error) {
